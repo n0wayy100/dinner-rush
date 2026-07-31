@@ -1,0 +1,20 @@
+{
+  "name": "Lobby",
+  "tree": {
+    "$className": "DataModel",
+
+    "ReplicatedStorage": {
+      "Shared": { "$path": "../src/shared" }
+    },
+
+    "ServerScriptService": {
+      "Server": { "$path": "../src/lobby/server" }
+    },
+
+    "StarterPlayer": {
+      "StarterPlayerScripts": {
+        "Client": { "$path": "../src/lobby/client" }
+      }
+    }
+  }
+}
