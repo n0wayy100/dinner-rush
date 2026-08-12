@@ -1,6 +1,8 @@
 --// Services
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
+print("[QueueClient] script started")
+
 --// Player Stuff
 local Plr = game.Players.LocalPlayer
 local PlayerGui = Plr:WaitForChild("PlayerGui")
@@ -12,17 +14,28 @@ local QueueRemote = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Queu
 --// Everything below tolerates the UI being missing or misnamed in Studio,
 --// so the Leave button always exists and is always clickable.
 
-local MatchMaking_UI = PlayerGui:WaitForChild("MatchMaking_UI", 5)
+--// Nested under the Inparty folder from StarterGui, so search descendants
+local MatchMaking_UI
+local Elapsed = 0
+repeat
+    MatchMaking_UI = PlayerGui:FindFirstChild("MatchMaking_UI", true)
+    if not MatchMaking_UI then
+        task.wait(0.1)
+        Elapsed += 0.1
+    end
+until MatchMaking_UI or Elapsed >= 10
+
 if not MatchMaking_UI then
-    warn("[QueueClient] No MatchMaking_UI in StarterGui - building a fallback one")
+    warn("[QueueClient] No MatchMaking_UI anywhere in PlayerGui - building a fallback one")
     MatchMaking_UI = Instance.new("ScreenGui")
     MatchMaking_UI.Name = "MatchMaking_UI"
     MatchMaking_UI.Parent = PlayerGui
 end
 
+print("[QueueClient] using", MatchMaking_UI:GetFullName())
+
 --// Keeps our connections valid after the player respawns
 MatchMaking_UI.ResetOnSpawn = false
-MatchMaking_UI.IgnoreGuiInset = true
 
 local InParty = MatchMaking_UI:FindFirstChild("InParty", true)
 if not InParty then
@@ -74,11 +87,9 @@ if not LeaveButton then
     Corner.Parent = LeaveButton
 end
 
---// A hidden parent hides the button even when the button itself is visible,
---// so walk up the chain from the button to the ScreenGui.
+--// MainPanel shares this ScreenGui, so only toggle our own branch of it -
+--// PartySettings owns MainPanel and would fight us over ScreenGui.Enabled.
 local function SetPartyVisible(State)
-    MatchMaking_UI.Enabled = State
-
     local Object = LeaveButton
     while Object and Object ~= MatchMaking_UI do
         if Object:IsA("GuiObject") then
@@ -88,6 +99,8 @@ local function SetPartyVisible(State)
     end
 end
 
+MatchMaking_UI.Enabled = true
+
 --// Behaviour ------------------------------------------------------------
 
 LeaveButton.Active = true
@@ -95,10 +108,14 @@ LeaveButton.Selectable = true
 SetPartyVisible(false)
 
 QueueRemote.OnClientEvent:Connect(function(Action)
-    if Action == "JoinParty" then
+    if Action == "JoinParty" or Action == "HostParty" then
         SetPartyVisible(true)
     elseif Action == "LeaveParty" then
         SetPartyVisible(false)
+    elseif Action == "PartyNotReady" then
+        warn("[QueueClient] That party is still being set up by its host")
+    elseif Action == "PartyFull" then
+        warn("[QueueClient] That party is full")
     end
 end)
 

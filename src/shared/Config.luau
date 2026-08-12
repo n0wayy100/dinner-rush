@@ -1,0 +1,374 @@
+--[[
+	Dinner Rush - Config
+	ReplicatedStorage.Shared.Config
+
+	THE one place every tunable number lives. Systems read from here; nothing
+	hard-codes a value. Sources: Gameplay Review & Tuning Spec, Improvement
+	catalog, Easy/Normal/Hard, Map Details v2, Rates and Bars (Aug 2026).
+
+	Rules:
+	  * NORMAL is the balance reference. EASY/HARD are defined relative to it.
+	  * Cooking windows NEVER scale with difficulty (demand scales, not dexterity).
+	  * All timers run on the SERVER; clients only render replicated values.
+
+	Usage:
+		local Config = require(ReplicatedStorage.Shared.Config)
+		local diff = Config.ForDifficulty(shiftDifficulty)   -- "EASY"/"NORMAL"/"HARD"
+		local interval = Config.Customers.PhaseIntervals.Crescendo / diff.SpawnRate
+		local weight = Config.WeightFor("RushHour", shiftDifficulty)
+]]
+
+local Config = {}
+
+----------------------------------------------------------------
+-- SHIFT STRUCTURE
+----------------------------------------------------------------
+Config.Shift = {
+	LengthSeconds = 480,              -- 8 min MVP shift
+	PrepTimeSeconds = 45,             -- vote-skippable
+	Phases = {                        -- shift-time boundaries (seconds)
+		CalmEndsAt = 120,             -- 0:00-2:00 tutorial-in-motion
+		BuildingEndsAt = 300,         -- 2:00-5:00 pressure ramps
+		-- 5:00-8:00 = Crescendo
+	},
+}
+
+----------------------------------------------------------------
+-- COOKING (identical across difficulties - non-negotiable)
+----------------------------------------------------------------
+Config.Cooking = {
+	Frying   = { CookTime = 10, PerfectWindow = 5, OvercookAfter = 4, BurntAfter = 5 },
+	Grilling = { CookTime = 14, PerfectWindow = 6, OvercookAfter = 5, BurntAfter = 6 },
+	-- Baking reserved for post-MVP update (20-30s, wide windows, fire-and-forget)
+}
+
+----------------------------------------------------------------
+-- CUSTOMERS: spawning, patience, eating
+-- Base values = NORMAL. Difficulty table scales them (see usage note above).
+----------------------------------------------------------------
+Config.Customers = {
+	PhaseIntervals = {                -- seconds per party, NORMAL base
+		Calm = 35, Building = 22, Crescendo = 15,
+	},
+	QueueSpotsOnMap = 5,              -- physical spots; DoorQueueMax caps per mode
+
+	DoorPatienceSeconds = 40,         -- spawn -> seating INITIATED
+	VIPDoorPatienceSeconds = 25,
+	SeatedPatienceSeconds = 75,       -- seated -> LAST dish served (one bar!)
+	VIPSeatedPatienceSeconds = 45,
+
+	WaterPourFirstBonus = 18,
+	WaterPourRepeatBonus = 10,        -- diminishing, same table
+	WaterStationHoldSeconds = 3,
+	PerDishServeBonus = 5,            -- multi-dish orders: grace per dish landed
+	PaySeconds = 5,
+	SeatingWalkIsFree = true,         -- door bar dies on INITIATE; walk untimed
+	WrongDishPausesBar = false,       -- punishing; revisit for EASY in playtest
+	TakingOrderRefreshesBar = false,  -- NEVER true - deletes kitchen urgency
+}
+
+----------------------------------------------------------------
+-- TOILET / BUSSING / CLEANING
+-- Fuse length is per-difficulty: Difficulty[*].ToiletFuseSeconds
+----------------------------------------------------------------
+Config.Toilet = {
+	WarningAtFraction = 0.5,          -- second, louder cue at 50% fuse
+	PlungerRequired = true,           -- fetched from kitchen PlungerMount
+}
+
+Config.Bussing = {
+	HoldSeconds = 5,
+	-- AutoBusAfterSeconds lives in Difficulty (EASY-only mercy)
+}
+
+----------------------------------------------------------------
+-- SUPPLIER
+-- Delivery time is per-difficulty: Difficulty[*].SupplierDeliverySeconds
+----------------------------------------------------------------
+Config.Supplier = {
+	PriceEventDecisionSeconds = 10,
+	FreeItemThreshold = 5,            -- failure odds scale per item over this
+}
+
+----------------------------------------------------------------
+-- REPUTATION (bar 0-100, empty = angry-manager early game over)
+----------------------------------------------------------------
+Config.Reputation = {
+	Start = 60,
+	Max = 100,
+	PerfectDish = 1,                  -- flat everywhere: HARD's oxygen
+	-- per-difficulty values live in Difficulty[*].Reputation
+	UpdateEventScale = { EASY = 0.7, NORMAL = 1.0, HARD = 1.3 },
+}
+
+----------------------------------------------------------------
+-- DIFFICULTY: the three evenings
+--
+-- PartySizeWeights = how many CUSTOMERS arrive in one group. Capped at 2 for
+-- the MVP; add a [3]/[4] entry per mode to raise it and the spawner picks it
+-- up on its own. Weights must sum to 1.0 within a mode.
+-- Not to be confused with Config.PartySizeSpawnMult, which is keyed by
+-- how many PLAYERS are in the shift (1-6).
+----------------------------------------------------------------
+Config.Difficulty = {
+
+	EASY = {
+		Label = "Cozy Shift",
+		Patience = 1.2,               -- multiplies both bars
+		SpawnRate = 0.8,              -- interval = base / SpawnRate
+		PartySizeWeights = { [1] = 0.35, [2] = 0.65 },
+		VIPChance = 0.05,
+		DoorQueueMax = 3,
+		GreetingBonus = 12,
+		PitcherCapacity = 5,
+		EatingSeconds = 10,
+		DashWindowSeconds = 20,
+		ToiletFuseSeconds = 120,
+		UnclogChannelSeconds = 6,
+		AutoBusAfterSeconds = 30,     -- EASY-only training wheels
+		SupplierDeliverySeconds = 22,
+		SupplierScenarioOdds = { Normal = 0.80, PriceHike = 0.10, Lucky = 0.10 },
+		DeliveryFailBase = 0.05, DeliveryFailPerItem = 0.02,
+		SafetyFloorPriceMult = 2, SafetyFloorDeliveryMult = 1,
+		Events = {
+			IntervalSeconds = 90,
+			MaxConcurrent = 1,
+			SecondEventAt = nil,      -- never 2 at once
+			FirstEventAt = 150,       -- 2:30
+			RushHourGuaranteed = false,
+			WeightSet = "EASY",
+			ExclusivePool = {},
+		},
+		Consequences = {
+			ToiletFloodEndsGame = false,
+			ToiletFloodRep = -30,     -- bathroom also closes 60s
+			BathroomClosedSeconds = 60,
+			SeatedWalkoutRep = -7,
+			DoorWalkoutRep = -3,
+			DashUncaughtRep = 0,
+			InspectorFinePerMess = 5,
+			InspectorFirstVisitWarns = true,
+			InspectorCleanBonus = 40,
+			FireSpreadSeconds = 12,
+		},
+		Reputation = { SatisfiedParty = 3, VIPSatisfied = 5 },
+		Rewards = {
+			CoinMult = 0.8, CompletionBonus = 100,
+			StreakCap = 2.0, XPMult = 0.9,
+			TargetParties = 11,       -- of ~18 arrivals
+		},
+	},
+
+	NORMAL = {
+		Label = "Dinner Rush",
+		Patience = 1.0,
+		SpawnRate = 1.0,
+		PartySizeWeights = { [1] = 0.25, [2] = 0.75 },
+		VIPChance = 0.10,
+		DoorQueueMax = 4,
+		GreetingBonus = 10,
+		PitcherCapacity = 4,
+		EatingSeconds = 12,
+		DashWindowSeconds = 15,
+		ToiletFuseSeconds = 105,
+		UnclogChannelSeconds = 8,
+		AutoBusAfterSeconds = nil,    -- no mercy
+		SupplierDeliverySeconds = 25,
+		SupplierScenarioOdds = { Normal = 0.65, PriceHike = 0.20, Lucky = 0.15 },
+		DeliveryFailBase = 0.10, DeliveryFailPerItem = 0.03,
+		SafetyFloorPriceMult = 3, SafetyFloorDeliveryMult = 1,
+		Events = {
+			IntervalSeconds = 60,
+			MaxConcurrent = 2,
+			SecondEventAt = 300,      -- 2 allowed only in crescendo
+			FirstEventAt = 120,       -- 2:00
+			RushHourGuaranteed = true,
+			WeightSet = "NORMAL",
+			ExclusivePool = {},
+		},
+		Consequences = {
+			ToiletFloodEndsGame = true,
+			SeatedWalkoutRep = -10,
+			DoorWalkoutRep = -5,
+			DashUncaughtRep = 0,
+			InspectorFinePerMess = 10,
+			InspectorFirstVisitWarns = false,
+			InspectorCleanBonus = 60,
+			FireSpreadSeconds = 8,
+		},
+		Reputation = { SatisfiedParty = 2, VIPSatisfied = 4 },
+		Rewards = {
+			CoinMult = 1.0, CompletionBonus = 150,
+			StreakCap = 2.5, XPMult = 1.0,
+			TargetParties = 15,       -- of ~23 arrivals
+		},
+	},
+
+	HARD = {
+		Label = "Friday Frenzy",
+		Patience = 0.85,
+		SpawnRate = 1.3,
+		PartySizeWeights = { [1] = 0.20, [2] = 0.80 },
+		VIPChance = 0.15,
+		DoorQueueMax = 5,
+		GreetingBonus = 8,
+		PitcherCapacity = 3,
+		EatingSeconds = 14,           -- slow eaters throttle table turnover
+		DashWindowSeconds = 10,
+		ToiletFuseSeconds = 90,
+		UnclogChannelSeconds = 10,
+		AutoBusAfterSeconds = nil,
+		SupplierDeliverySeconds = 30,
+		SupplierScenarioOdds = { Normal = 0.55, PriceHike = 0.30, Lucky = 0.15 },
+		DeliveryFailBase = 0.15, DeliveryFailPerItem = 0.04,
+		SafetyFloorPriceMult = 4, SafetyFloorDeliveryMult = 2,
+		Events = {
+			IntervalSeconds = 45,
+			MaxConcurrent = 2,
+			SecondEventAt = 120,      -- 2 allowed from 2:00
+			FirstEventAt = 90,        -- 1:30
+			RushHourGuaranteed = true, -- + weighted second
+			WeightSet = "HARD",
+			ExclusivePool = { "CelebrityVisit", "BloggerLivestream" },
+			ExclusiveUnlockAt = 240,  -- 4:00
+		},
+		Consequences = {
+			ToiletFloodEndsGame = true,
+			SeatedWalkoutRep = -13,
+			DoorWalkoutRep = -7,
+			DashUncaughtRep = -3,
+			InspectorFinePerMess = 15,
+			InspectorFirstVisitWarns = false,
+			InspectorCleanBonus = 90,
+			FireSpreadSeconds = 6,
+		},
+		Reputation = { SatisfiedParty = 2, VIPSatisfied = 4 },
+		Rewards = {
+			CoinMult = 1.5, CompletionBonus = 250,
+			StreakCap = 3.0, XPMult = 1.25,
+			TargetParties = 19,       -- of ~30 arrivals
+		},
+	},
+}
+
+----------------------------------------------------------------
+-- EVENT WEIGHTS (relative within active pool; 0 = never in that mode)
+-- Launch pool at MVP; update-tier entries pre-tuned for when they ship.
+-- Read these through Config.WeightFor - the E/N/H keys do not match the
+-- "EASY"/"NORMAL"/"HARD" strings used everywhere else.
+----------------------------------------------------------------
+Config.EventWeights = {
+	--                          EASY  NORMAL  HARD
+	Spill              = { E = 8, N = 6, H = 5 },  -- launch
+	ToiletEmergency    = { E = 5, N = 6, H = 7 },  -- launch
+	GreaseFire         = { E = 2, N = 5, H = 8 },  -- launch
+	RushHour           = { E = 4, N = 6, H = 8 },  -- launch
+	HealthInspector    = { E = 3, N = 5, H = 7 },  -- MVP candidate
+	PowerOutage        = { E = 2, N = 4, H = 6 },  -- MVP candidate
+	BirthdayTable      = { E = 7, N = 5, H = 3 },  -- update
+	MysteryOrder       = { E = 6, N = 5, H = 4 },  -- update
+	BulkDiscount       = { E = 6, N = 5, H = 4 },  -- update
+	DishPileup         = { E = 4, N = 5, H = 6 },  -- update
+	RainStorm          = { E = 4, N = 4, H = 5 },  -- update
+	FreezerMalfunction = { E = 3, N = 4, H = 5 },  -- update
+	WrongDelivery      = { E = 3, N = 5, H = 6 },  -- update
+	BigFamilyWalkIn    = { E = 3, N = 5, H = 6 },  -- update
+	TheComplainer      = { E = 2, N = 5, H = 7 },  -- update
+	BrokenStove        = { E = 1, N = 4, H = 6 },  -- update
+	TruckBreakdown     = { E = 2, N = 4, H = 6 },  -- update
+	TheRat             = { E = 5, N = 5, H = 5 },  -- update: comedy is universal
+	CelebrityVisit     = { E = 0, N = 0, H = 5 },  -- update, HARD exclusive
+	BloggerLivestream  = { E = 0, N = 0, H = 4 },  -- update, HARD exclusive
+}
+
+--// Maps a difficulty name onto the shorthand key used by EventWeights
+local WEIGHT_KEY = { EASY = "E", NORMAL = "N", HARD = "H" }
+
+----------------------------------------------------------------
+-- PARTY-SIZE SCALING (stacks multiplicatively with Difficulty.SpawnRate)
+-- Keyed by PLAYER count in the shift, not customer group size.
+-- Open decision: solo players default to EASY at matchmaking (recommended).
+----------------------------------------------------------------
+Config.PartySizeSpawnMult = {
+	[1] = 0.6, [2] = 0.75, [3] = 0.9, [4] = 1.0, [5] = 1.15, [6] = 1.3,
+}
+
+Config.MinPlayers = 1
+Config.MaxPlayers = 6
+
+----------------------------------------------------------------
+-- INTERACTION / UI CONSTANTS
+----------------------------------------------------------------
+Config.Interaction = {
+	PromptRangeStuds = 8,
+	PromptRequiresLineOfSight = false, -- mobile mercy
+	EatingIsUntimedPressure = true,    -- eating/pay happen AFTER bars die
+}
+
+----------------------------------------------------------------
+-- Accessors
+----------------------------------------------------------------
+
+--// Merged view for a difficulty (base + mode table)
+function Config.ForDifficulty(name)
+	local diff = Config.Difficulty[name]
+	assert(diff ~= nil, "Unknown difficulty: " .. tostring(name))
+	return diff
+end
+
+function Config.IsValidDifficulty(name)
+	return type(name) == "string" and Config.Difficulty[name] ~= nil
+end
+
+--// Weight of one event in one mode. 0 means it never appears in that mode,
+--// which is also what an unknown event name returns.
+function Config.WeightFor(eventName, difficultyName)
+	local weights = Config.EventWeights[eventName]
+	if not weights then
+		return 0
+	end
+
+	local key = WEIGHT_KEY[difficultyName]
+	assert(key ~= nil, "Unknown difficulty: " .. tostring(difficultyName))
+
+	return weights[key] or 0
+end
+
+--// Spawn interval for a phase, after difficulty and player count.
+--// Phase is "Calm" / "Building" / "Crescendo".
+function Config.SpawnIntervalFor(phase, difficultyName, playerCount)
+	local base = Config.Customers.PhaseIntervals[phase]
+	assert(base ~= nil, "Unknown phase: " .. tostring(phase))
+
+	local diff = Config.ForDifficulty(difficultyName)
+	local clamped = math.clamp(playerCount or 1, Config.MinPlayers, Config.MaxPlayers)
+	local partyMult = Config.PartySizeSpawnMult[clamped]
+
+	--// Higher rate means shorter gaps between arrivals
+	return base / (diff.SpawnRate * partyMult)
+end
+
+--// Which shift phase a given elapsed time falls in
+function Config.PhaseAt(elapsedSeconds)
+	if elapsedSeconds < Config.Shift.Phases.CalmEndsAt then
+		return "Calm"
+	elseif elapsedSeconds < Config.Shift.Phases.BuildingEndsAt then
+		return "Building"
+	end
+	return "Crescendo"
+end
+
+----------------------------------------------------------------
+-- Config is read-only: a system that writes to it would silently
+-- rebalance the game for everything else sharing this module.
+----------------------------------------------------------------
+local function deepFreeze(t)
+	for _, value in pairs(t) do
+		if type(value) == "table" and not table.isfrozen(value) then
+			deepFreeze(value)
+		end
+	end
+	return table.freeze(t)
+end
+
+return deepFreeze(Config)
