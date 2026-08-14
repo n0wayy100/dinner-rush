@@ -626,16 +626,99 @@ local function findCarried(player, predicate)
 	return nil
 end
 
-local function findHeldDish(player, tableId)
-	return findCarried(player, function(tool)
-		return tool:GetAttribute("TableId") == tableId
-	end)
+--// Dishes are cooked by KitchenService now, so they carry a Dish name rather
+--// than a TableId - a grilled steak is a grilled steak, not "table 3's". The
+--// match is therefore ticket-based: does this party still want what you are
+--// holding? Returns the tool and the dish name.
+local function findTicketDish(player, party)
+	if not party.Ticket then return nil end
+
+	for _, wanted in ipairs(party.Ticket) do
+		local tool = findCarried(player, function(candidate)
+			return candidate:GetAttribute("Dish") == wanted
+		end)
+		if tool then
+			return tool, wanted
+		end
+	end
+
+	return nil
 end
 
-local function isCarryingAnyDish(player)
-	return findCarried(player, function(tool)
-		return tool:GetAttribute("TableId") ~= nil
-	end) ~= nil
+--// Ticket sign over the party, so players can see what to cook without
+--// walking to the table. Icons come from Config.Recipes[*].Icon; until those
+--// asset ids are filled in it falls back to the dish name as text.
+local function showTicket(party)
+	if not party.Root or not party.Ticket then return end
+
+	local gui = party.TicketGui
+	if not gui then
+		gui = Instance.new("BillboardGui")
+		gui.Name = "Ticket"
+		gui.Size = UDim2.fromOffset(200, 44)
+		gui.StudsOffsetWorldSpace = Vector3.new(0, 7, 0)
+		gui.AlwaysOnTop = true
+		gui.Parent = party.Root
+		party.TicketGui = gui
+
+		local layout = Instance.new("UIListLayout")
+		layout.FillDirection = Enum.FillDirection.Horizontal
+		layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+		layout.VerticalAlignment = Enum.VerticalAlignment.Center
+		layout.Padding = UDim.new(0, 4)
+		layout.Parent = gui
+	end
+
+	for _, child in ipairs(gui:GetChildren()) do
+		if not child:IsA("UIListLayout") then
+			child:Destroy()
+		end
+	end
+
+	if #party.Ticket == 0 then
+		gui.Enabled = false
+		return
+	end
+	gui.Enabled = true
+
+	for index, dishName in ipairs(party.Ticket) do
+		local recipe = Config.Recipes[dishName]
+		local icon = recipe and recipe.Icon
+
+		if icon and icon ~= "" and icon ~= "rbxassetid://0" then
+			local image = Instance.new("ImageLabel")
+			image.Size = UDim2.fromOffset(40, 40)
+			image.BackgroundTransparency = 1
+			image.Image = icon
+			image.LayoutOrder = index
+			image.Parent = gui
+		else
+			local label = Instance.new("TextLabel")
+			label.Size = UDim2.fromOffset(96, 40)
+			label.BackgroundTransparency = 1
+			label.TextScaled = true
+			label.Font = Enum.Font.FredokaOne
+			label.TextColor3 = Color3.new(1, 1, 1)
+			label.TextStrokeTransparency = 0.2
+			label.Text = recipe and recipe.Display or dishName
+			label.LayoutOrder = index
+			label.Parent = gui
+		end
+	end
+end
+
+--// What this party is still waiting on, for prompts and the ticket sign
+local function ticketText(party)
+	if not party.Ticket or #party.Ticket == 0 then
+		return ""
+	end
+
+	local names = {}
+	for _, dishName in ipairs(party.Ticket) do
+		local recipe = Config.Recipes[dishName]
+		table.insert(names, recipe and recipe.Display or dishName)
+	end
+	return table.concat(names, " + ")
 end
 
 local function findHeldPitcher(player)
@@ -899,52 +982,6 @@ local function spawnPartyPawn(party, atPosition)
 end
 
 ----------------------------------------------------------------
--- The Pass: dish slots (one per dish; parties order Size dishes)
-----------------------------------------------------------------
-local dishSlotOffset = 0
-local function spawnDishAtPass(tableId)
-	local slot = Instance.new("Part")
-	slot.Name = ("DishSlot_T%d"):format(tableId)
-	slot.Size = Vector3.new(2, 1, 2)
-	slot.Color = Color3.fromRGB(200, 200, 200)
-	slot.Material = Enum.Material.SmoothPlastic
-	slot.Anchored = true
-	slot.CanCollide = false
-	dishSlotOffset = (dishSlotOffset % 8) + 1
-	-- pass counter is long: spread slots along its LONGEST axis
-	local axis = (passPart.Size.X >= passPart.Size.Z)
-		and passPart.CFrame.RightVector or passPart.CFrame.LookVector
-	slot.Position = pointAbove(passPart, 0.5) + axis * ((dishSlotOffset - 4.5) * 4)
-	slot.Parent = workspace
-
-	local prompt = Instance.new("ProximityPrompt")
-	prompt.ActionText = "Pick up"
-	prompt.ObjectText = ("Dish for Table %d"):format(tableId)
-	prompt.HoldDuration = 0.4
-	prompt.MaxActivationDistance = Config.Interaction.PromptRangeStuds
-	prompt.RequiresLineOfSight = Config.Interaction.PromptRequiresLineOfSight
-	prompt.Parent = slot
-
-	prompt.Triggered:Connect(function(player)
-		local character = player.Character
-		if not character then return end
-		if isCarryingAnyDish(player) then return end
-
-		local tool = Instance.new("Tool")
-		tool.Name = ("Dish (T%d)"):format(tableId)
-		tool.RequiresHandle = true
-		tool:SetAttribute("TableId", tableId)
-		local handle = Instance.new("Part")
-		handle.Name = "Handle"
-		handle.Size = Vector3.new(2, 0.6, 2)
-		handle.Color = Color3.fromRGB(200, 200, 200)
-		handle.Parent = tool
-		tool.Parent = character
-		slot:Destroy()
-	end)
-end
-
-----------------------------------------------------------------
 -- Water: pitcher tool + pour prompt (only if WaterStation tagged)
 ----------------------------------------------------------------
 local pourPrompts = {}
@@ -1024,8 +1061,16 @@ local function onPartySatisfied(party, tableId, collector)
 	shift.Satisfied += 1
 	local repGain = party.IsVIP and diff.Reputation.VIPSatisfied or diff.Reputation.SatisfiedParty
 	repChange(repGain, party.IsVIP and "VIP satisfied" or "party satisfied")
+	--// Cook quality pays: a party served entirely in the perfect window is
+	--// worth more than one scraped together from overcooked plates.
+	local perfect = party.PerfectDishes or 0
+	local overcooked = party.OvercookedDishes or 0
+	local served = math.max(perfect + overcooked, 1)
+	local qualityMult = ((perfect * Config.Kitchen.PerfectPayMult)
+		+ (overcooked * Config.Kitchen.OvercookedPayMult)) / served
+
 	local payout = math.floor(BASE_COINS_PER_PARTY * party.Size * diff.Rewards.CoinMult
-		* (party.IsVIP and VIP_TIP_MULT or 1))
+		* (party.IsVIP and VIP_TIP_MULT or 1) * qualityMult)
 	awardCoins(collector, payout)
 	print(("[Service] %s collected %d coins (Table %d)%s. Served %d/%d")
 		:format(collector.Name, payout, tableId, party.IsVIP and " VIP" or "",
@@ -1087,20 +1132,42 @@ local function setupTable(tableId, tablePart)
 		if not party or shift.State ~= "RUNNING" then return end
 
 		if party.State == STATE.SEATED then
+			--// The ticket was rolled when the party spawned; taking the order
+			--// is what reveals it to the kitchen.
 			setPartyState(party, STATE.WAITING_FOOD)
+			showTicket(party)
 			refreshTablePrompt(tableId)
-			for _ = 1, party.Size do
-				spawnDishAtPass(tableId)
-			end
-			print(("[Service] Order for Table %d: %d dish(es) at the pass"):format(tableId, party.Size))
+			print(("[Service] Order for Table %d: %s"):format(tableId, ticketText(party)))
 
 		elseif party.State == STATE.WAITING_FOOD then
-			local dish = findHeldDish(player, tableId)
+			local dish, dishName = findTicketDish(player, party)
 			if not dish then
-				prompt.ObjectText = ("Table %d - bring a dish from the pass!"):format(tableId)
+				prompt.ObjectText = ("Table %d wants %s"):format(tableId, ticketText(party))
 				return
 			end
+
+			--// Quality rides on the Tool from KitchenService and decides both
+			--// the tip multiplier and the reputation on this dish
+			local quality = dish:GetAttribute("Quality")
+			if quality == "Perfect" then
+				party.PerfectDishes = (party.PerfectDishes or 0) + 1
+				repChange(Config.Reputation.PerfectDish, "perfect dish")
+			elseif quality == "Overcooked" then
+				party.OvercookedDishes = (party.OvercookedDishes or 0) + 1
+				if Config.Kitchen.OvercookedRep ~= 0 then
+					repChange(Config.Kitchen.OvercookedRep, "overcooked dish")
+				end
+			end
+
 			dish:Destroy()
+
+			--// Remove that one dish from the ticket
+			local index = table.find(party.Ticket, dishName)
+			if index then
+				table.remove(party.Ticket, index)
+			end
+			showTicket(party)
+
 			party.DishesRemaining -= 1
 			if party.DishesRemaining > 0 then
 				extendBar(party, Config.Customers.PerDishServeBonus, "dish landed")
@@ -1250,6 +1317,13 @@ local function spawnParty()
 		DishesRemaining = 0,
 	}
 	party.DishesRemaining = party.Size
+
+	--// One dish per customer, rolled from Config.OrderWeights. The ticket is
+	--// what the kitchen has to produce; it shrinks as dishes land.
+	party.Ticket = {}
+	for _ = 1, party.Size do
+		table.insert(party.Ticket, Config.RollDish())
+	end
 	parties[party.Id] = party
 	spotOccupant[spot] = party
 	--// Floor level: the top face of the queue pad. Rigs and the placeholder

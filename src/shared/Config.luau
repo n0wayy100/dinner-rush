@@ -42,6 +42,134 @@ Config.Cooking = {
 	-- Baking reserved for post-MVP update (20-30s, wide windows, fire-and-forget)
 }
 
+--// CookStation parts carry a Method attribute of "Fry"/"Grill", while the
+--// timing table above is keyed "Frying"/"Grilling". Map both ways so neither
+--// spelling silently misses.
+Config.CookMethodAliases = {
+	Fry = "Frying", Frying = "Frying",
+	Grill = "Grilling", Grilling = "Grilling",
+}
+
+function Config.CookingFor(method)
+	local key = Config.CookMethodAliases[method]
+	return key and Config.Cooking[key], key
+end
+
+----------------------------------------------------------------
+-- INGREDIENTS
+-- Source is the tag of the part that dispenses it: cold things come from
+-- parts tagged Fridge, dry things from parts tagged DryShelf. Any part with
+-- that tag works, so three dry shelves are three valid pickup points.
+----------------------------------------------------------------
+--// Icon: fill these in with your uploaded images.
+--//   RawPatty -> raw_patty   RawSteak -> raw_steak   RawPotato -> raw_potato
+Config.Ingredients = {
+	RawPatty = {
+		Display = "Raw Patty", Icon = "rbxassetid://0",
+		Source = "Fridge", Color = Color3.fromRGB(190, 95, 95),
+	},
+	RawSteak = {
+		Display = "Raw Steak", Icon = "rbxassetid://0",
+		Source = "Fridge", Color = Color3.fromRGB(160, 70, 80),
+	},
+	RawPotato = {
+		Display = "Raw Potato", Icon = "rbxassetid://0",
+		Source = "DryShelf", Color = Color3.fromRGB(200, 175, 130),
+	},
+}
+
+----------------------------------------------------------------
+-- RECIPES: the three starter dishes
+-- Ingredients must all be carried to the station before cooking starts, so
+-- keep these at 1-2 items while the carry limit is 2.
+----------------------------------------------------------------
+--// Keyed by dish. A recipe is (Ingredient + Method) -> dish, so RawPatty and
+--// RawSteak can both use the Grill and still make different things.
+--// Timing names the Config.Cooking table this dish cooks by - difficulty
+--// never scales those.
+--//   Burger -> burger   GrilledSteak -> grilled_steak   Fries -> fries
+Config.Recipes = {
+	Burger = {
+		Display = "Burger", Icon = "rbxassetid://0",
+		Ingredient = "RawPatty", Method = "Grill", Timing = "Grilling",
+		Color = Color3.fromRGB(180, 120, 70), PriceMult = 1.0,
+	},
+	GrilledSteak = {
+		Display = "Grilled Steak", Icon = "rbxassetid://0",
+		Ingredient = "RawSteak", Method = "Grill", Timing = "Grilling",
+		Color = Color3.fromRGB(140, 85, 70), PriceMult = 1.4,
+	},
+	Fries = {
+		Display = "Fries", Icon = "rbxassetid://0",
+		Ingredient = "RawPotato", Method = "Fry", Timing = "Frying",
+		Color = Color3.fromRGB(240, 205, 110), PriceMult = 0.8,
+	},
+}
+
+--// What customers order, and how often
+Config.OrderWeights = {
+	Burger = 5,
+	Fries = 4,
+	GrilledSteak = 3,
+}
+
+----------------------------------------------------------------
+-- KITCHEN: carrying, stations, and what a cook is worth
+----------------------------------------------------------------
+Config.Kitchen = {
+	MaxCarriedItems = 2,          -- the design's two-item inventory rule
+	PickupHoldSeconds = 0.4,      -- fridge / dry shelf prompt
+	StationLoadHoldSeconds = 0.5, -- starting a cook
+	CollectHoldSeconds = 0.4,     -- taking the result off the station
+	BurntCleanupSeconds = 1.0,    -- clearing a ruined pan
+
+	--// Payout multipliers applied when the dish is served
+	PerfectPayMult = 1.5,
+	OvercookedPayMult = 0.6,
+
+	--// Reputation. PerfectDish already exists in Config.Reputation and is
+	--// awarded on serving a perfect dish; these are the other two outcomes.
+	OvercookedRep = 0,
+	BurntRep = -1,                -- charged when a burnt dish is binned
+}
+
+--// (ingredient, method) -> dishName, recipe. Returns nil when this station
+--// cannot cook what the player is carrying.
+function Config.RecipeFor(ingredient, method)
+	if ingredient == nil or method == nil then
+		return nil
+	end
+
+	local wanted = Config.CookMethodAliases[method]
+	for dishName, recipe in pairs(Config.Recipes) do
+		if recipe.Ingredient == ingredient
+			and Config.CookMethodAliases[recipe.Method] == wanted then
+			return dishName, recipe
+		end
+	end
+
+	return nil
+end
+
+--// Picks a dish name using OrderWeights
+function Config.RollDish()
+	local total = 0
+	for _, weight in pairs(Config.OrderWeights) do
+		total += weight
+	end
+
+	local roll = math.random() * total
+	local acc = 0
+	for name, weight in pairs(Config.OrderWeights) do
+		acc += weight
+		if roll <= acc then
+			return name
+		end
+	end
+
+	return "Burger"
+end
+
 ----------------------------------------------------------------
 -- CUSTOMERS: spawning, patience, eating
 -- Base values = NORMAL. Difficulty table scales them (see usage note above).
