@@ -31,6 +31,28 @@ local Config = require(sharedFolder:WaitForChild("Config", 10))
 
 print("[Kitchen] script started")
 
+----------------------------------------------------------------
+-- Remote for the ingredient menu.
+--
+-- A prompt would do for one ingredient, but two prompts on one part both
+-- answer to E and only one ever fires - which is why the fridge only ever
+-- handed out steak. Sources with several ingredients open a menu instead.
+-- The menu is intent only: the server re-checks everything below.
+----------------------------------------------------------------
+local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+if not remotes then
+	remotes = Instance.new("Folder")
+	remotes.Name = "Remotes"
+	remotes.Parent = ReplicatedStorage
+end
+
+local kitchenRemote = remotes:FindFirstChild("KitchenRemote")
+if not kitchenRemote then
+	kitchenRemote = Instance.new("RemoteEvent")
+	kitchenRemote.Name = "KitchenRemote"
+	kitchenRemote.Parent = remotes
+end
+
 local STATE_COLOR = {
 	COOKING = Color3.fromRGB(245, 184, 65),
 	PERFECT = Color3.fromRGB(76, 175, 109),
@@ -131,6 +153,16 @@ local function makeTool(name, icon, color, attributes)
 	return tool
 end
 
+local function giveIngredient(player, ingredientName)
+	local data = Config.Ingredients[ingredientName]
+	local character = player.Character
+	if not data or not character then return end
+
+	local tool = makeTool(data.Display, data.Icon, data.Color, { Ingredient = ingredientName })
+	tool.Parent = character
+	print(("[Kitchen] %s took %s"):format(player.Name, ingredientName))
+end
+
 --// Briefly says why a prompt did nothing, then restores its normal text
 local function flash(prompt, message, normal)
 	prompt.ObjectText = message
@@ -139,6 +171,80 @@ local function flash(prompt, message, normal)
 			prompt.ObjectText = normal
 		end
 	end)
+end
+
+----------------------------------------------------------------
+-- STOCK: authoritative, server-only. The client is told the counts so it can
+-- draw them; it never decides whether a take is allowed.
+----------------------------------------------------------------
+local stock = {}
+for name, data in pairs(Config.Ingredients) do
+	stock[name] = data.Stock or 0
+end
+
+local function ingredientsFor(sourceTag)
+	local names = {}
+	for name, data in pairs(Config.Ingredients) do
+		if data.Source == sourceTag then
+			table.insert(names, name)
+		end
+	end
+	table.sort(names) --// stable order so menu rows never jump around
+	return names
+end
+
+--// What the client menu draws: one row per ingredient, with its live count
+local function menuPayload(sourceTag)
+	local items = {}
+	for _, name in ipairs(ingredientsFor(sourceTag)) do
+		local data = Config.Ingredients[name]
+		table.insert(items, {
+			Name = name,
+			Display = data.Display,
+			Icon = data.Icon,
+			Count = stock[name] or 0,
+		})
+	end
+	return items
+end
+
+--// Counts live in the menu only - a world sign over every source stops
+--// scaling the moment a fridge holds more than two or three ingredients.
+--// Anyone with a menu open gets fresh counts; the client ignores sources it
+--// is not currently showing, so no stale "3x" that is really 2x.
+local function pushStockUpdate()
+	for _, sourceTag in ipairs({ "Fridge", "DryShelf" }) do
+		kitchenRemote:FireAllClients("StockChanged", sourceTag, menuPayload(sourceTag))
+	end
+end
+
+--// ENTRY POINT FOR THE SUPPLIER SYSTEM (not built yet).
+--// Adds stock and pushes the update everywhere. Call it from the delivery
+--// code when a crate lands:
+--//   ServerStorage.RestockIngredient:Invoke("RawPatty", 6)
+local function restockIngredient(ingredientName, amount)
+	if not Config.Ingredients[ingredientName] then
+		warn(("[Kitchen] restock asked for unknown ingredient '%s'"):format(tostring(ingredientName)))
+		return false
+	end
+
+	amount = tonumber(amount) or 0
+	if amount <= 0 then
+		return false
+	end
+
+	stock[ingredientName] = (stock[ingredientName] or 0) + amount
+	pushStockUpdate()
+	print(("[Kitchen] restocked %s by %d (now %d)"):format(
+		ingredientName, amount, stock[ingredientName]))
+	return true
+end
+
+do
+	local bindable = Instance.new("BindableFunction")
+	bindable.Name = "RestockIngredient"
+	bindable.OnInvoke = restockIngredient
+	bindable.Parent = game:GetService("ServerStorage")
 end
 
 ----------------------------------------------------------------
@@ -152,53 +258,79 @@ local function setupSource(instance, sourceTag)
 		return
 	end
 
-	--// Every ingredient whose Source is this tag
-	local offered = {}
-	for name, data in pairs(Config.Ingredients) do
-		if data.Source == sourceTag then
-			table.insert(offered, name)
-		end
-	end
-	table.sort(offered)
-
+	local offered = ingredientsFor(sourceTag)
 	if #offered == 0 then
 		warn(("[Kitchen] nothing in Config.Ingredients has Source '%s'"):format(sourceTag))
 		return
 	end
 
-	--// One prompt per ingredient, so a fridge holding two things offers both
-	--// without needing a menu. Stacked with UIOffset so they do not overlap.
-	for index, ingredientName in ipairs(offered) do
-		local data = Config.Ingredients[ingredientName]
-		local normalText = data.Display
+	--// Every source opens the same menu, even one holding a single ingredient.
+	--// One consistent interaction, and a shelf that gains a second ingredient
+	--// later needs no code change.
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.Name = "Open_" .. sourceTag
+	prompt.ActionText = "Open"
+	prompt.ObjectText = sourceTag == "DryShelf" and "Dry Shelf" or sourceTag
+	prompt.HoldDuration = Config.Kitchen.PickupHoldSeconds
+	prompt.MaxActivationDistance = Config.Interaction.PromptRangeStuds
+	prompt.RequiresLineOfSight = Config.Interaction.PromptRequiresLineOfSight
+	prompt.Parent = part
 
-		local prompt = Instance.new("ProximityPrompt")
-		prompt.Name = "Take_" .. ingredientName
-		prompt.ActionText = "Take"
-		prompt.ObjectText = normalText
-		prompt.HoldDuration = Config.Kitchen.PickupHoldSeconds
-		prompt.MaxActivationDistance = Config.Interaction.PromptRangeStuds
-		prompt.RequiresLineOfSight = Config.Interaction.PromptRequiresLineOfSight
-		prompt.UIOffset = Vector2.new(0, (index - 1) * 60)
-		prompt.Parent = part
-
-		prompt.Triggered:Connect(function(player)
-			local character = player.Character
-			if not character then return end
-
-			if isFull(player) then
-				flash(prompt, ("Hands full (max %d)"):format(Config.Kitchen.MaxCarriedItems), normalText)
-				return
-			end
-
-			local tool = makeTool(data.Display, data.Icon, data.Color, { Ingredient = ingredientName })
-			tool.Parent = character
-			print(("[Kitchen] %s took %s"):format(player.Name, ingredientName))
-		end)
-	end
+	prompt.Triggered:Connect(function(player)
+		kitchenRemote:FireClient(player, "OpenSourceMenu", sourceTag, menuPayload(sourceTag))
+	end)
 
 	print(("[Kitchen] %s offers %s"):format(part:GetFullName(), table.concat(offered, ", ")))
 end
+
+----------------------------------------------------------------
+-- Menu picks come back here. The client chose; the server decides.
+----------------------------------------------------------------
+local function playerNearTag(player, tag, maxDistance)
+	local character = player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	if not root then return false end
+
+	for _, instance in ipairs(taggedInWorkspace(tag)) do
+		local part = resolvePart(instance)
+		if part and (part.Position - root.Position).Magnitude <= maxDistance then
+			return true
+		end
+	end
+	return false
+end
+
+kitchenRemote.OnServerEvent:Connect(function(player, action, ingredientName)
+	if action ~= "Take" then return end
+	if typeof(ingredientName) ~= "string" then return end
+
+	local data = Config.Ingredients[ingredientName]
+	if not data then return end
+
+	--// Must actually be standing at a source that stocks this ingredient,
+	--// so a crafted "Take" from across the map is ignored. A little slack
+	--// for stepping back while the menu is open.
+	if not playerNearTag(player, data.Source, Config.Interaction.PromptRangeStuds + 6) then
+		return
+	end
+
+	if isFull(player) then
+		kitchenRemote:FireClient(player, "TakeDenied",
+			("Hands full (max %d)"):format(Config.Kitchen.MaxCarriedItems))
+		return
+	end
+
+	--// Stock is checked and spent here, on the server, after every other
+	--// validation. The count the client drew is only ever a display.
+	if (stock[ingredientName] or 0) <= 0 then
+		kitchenRemote:FireClient(player, "TakeDenied", "Out of stock!")
+		return
+	end
+
+	stock[ingredientName] -= 1
+	giveIngredient(player, ingredientName)
+	pushStockUpdate()
+end)
 
 ----------------------------------------------------------------
 -- Cook stations

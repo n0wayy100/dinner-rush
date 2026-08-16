@@ -417,6 +417,41 @@ local function repChange(amount, why)
 	print(("[Service] Rep %+d (%s) -> %d"):format(amount, why, shift.Reputation))
 end
 
+--// REPUTATION BRIDGE for other server systems (EventSystem, and anything
+--// later). There is exactly one reputation number and it lives here; nothing
+--// else keeps its own. Same BindableFunction pattern as
+--// ServerStorage.RestockIngredient.
+--//   ServerStorage.ApplyReputation:Invoke(-3, "toilet flood")
+do
+	local bridge = Instance.new("BindableFunction")
+	bridge.Name = "ApplyReputation"
+	bridge.OnInvoke = function(amount, why)
+		amount = tonumber(amount)
+		if not amount or amount == 0 then
+			return false
+		end
+		repChange(amount, tostring(why or "event"))
+		return true
+	end
+	bridge.Parent = game:GetService("ServerStorage")
+end
+
+--// Lets other systems check whether the shift is live without duplicating
+--// the state machine
+do
+	local bridge = Instance.new("BindableFunction")
+	bridge.Name = "GetShiftInfo"
+	bridge.OnInvoke = function()
+		return {
+			State = shift.State,
+			Elapsed = shift.Elapsed,
+			Phase = shift.Phase,
+			Difficulty = DIFFICULTY,
+		}
+	end
+	bridge.Parent = game:GetService("ServerStorage")
+end
+
 ----------------------------------------------------------------
 -- PLACEHOLDER VISUAL 1/2: scoreboard billboard above the pass.
 -- Replaced by your ScreenGui reading ReplicatedStorage.ShiftState.

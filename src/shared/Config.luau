@@ -64,17 +64,24 @@ end
 --// Icon: fill these in with your uploaded images.
 --//   RawPatty -> raw_patty   RawSteak -> raw_steak   RawPotato -> raw_potato
 Config.Ingredients = {
+	--// Stock is what the kitchen opens the shift with. Deliberately generous:
+	--// until the Supplier delivery system exists there is no way to refill,
+	--// so running dry would soft-lock a shift rather than create pressure.
+	--// Potato is highest because fries are the cheap, common order.
 	RawPatty = {
-		Display = "Raw Patty", Icon = "rbxassetid://0",
+		Display = "Raw Patty", Icon = "rbxassetid://126279923200605",
 		Source = "Fridge", Color = Color3.fromRGB(190, 95, 95),
+		Stock = 12,
 	},
 	RawSteak = {
-		Display = "Raw Steak", Icon = "rbxassetid://0",
+		Display = "Raw Steak", Icon = "rbxassetid://95127663931794",
 		Source = "Fridge", Color = Color3.fromRGB(160, 70, 80),
+		Stock = 10,
 	},
 	RawPotato = {
-		Display = "Raw Potato", Icon = "rbxassetid://0",
+		Display = "Raw Potato", Icon = "rbxassetid://136806783641400",
 		Source = "DryShelf", Color = Color3.fromRGB(200, 175, 130),
+		Stock = 15,
 	},
 }
 
@@ -90,17 +97,17 @@ Config.Ingredients = {
 --//   Burger -> burger   GrilledSteak -> grilled_steak   Fries -> fries
 Config.Recipes = {
 	Burger = {
-		Display = "Burger", Icon = "rbxassetid://0",
+		Display = "Burger", Icon = "rbxassetid://124168239195461",
 		Ingredient = "RawPatty", Method = "Grill", Timing = "Grilling",
 		Color = Color3.fromRGB(180, 120, 70), PriceMult = 1.0,
 	},
 	GrilledSteak = {
-		Display = "Grilled Steak", Icon = "rbxassetid://0",
+		Display = "Grilled Steak", Icon = "rbxassetid://76036299162989",
 		Ingredient = "RawSteak", Method = "Grill", Timing = "Grilling",
 		Color = Color3.fromRGB(140, 85, 70), PriceMult = 1.4,
 	},
 	Fries = {
-		Display = "Fries", Icon = "rbxassetid://0",
+		Display = "Fries", Icon = "rbxassetid://92544312542938",
 		Ingredient = "RawPotato", Method = "Fry", Timing = "Frying",
 		Color = Color3.fromRGB(240, 205, 110), PriceMult = 0.8,
 	},
@@ -411,6 +418,38 @@ Config.EventWeights = {
 
 --// Maps a difficulty name onto the shorthand key used by EventWeights
 local WEIGHT_KEY = { EASY = "E", NORMAL = "N", HARD = "H" }
+
+----------------------------------------------------------------
+-- EVENTS: scheduling, and the per-event numbers that are not already
+-- somewhere else in this file.
+--
+-- Deliberately NOT redefined here, because they already exist:
+--   fuse length    Difficulty[*].ToiletFuseSeconds     (120 / 105 / 90)
+--   plunge time    Difficulty[*].UnclogChannelSeconds  (6 / 8 / 10)
+--   roll weights   Config.EventWeights.ToiletEmergency via Config.WeightFor
+--   warning cue    Config.Toilet.WarningAtFraction
+----------------------------------------------------------------
+Config.Events = {
+	Scheduler = {
+		FirstEventAfterSeconds = 60,  -- the opening calm stays calm
+		MinGapSeconds = 45,           -- breathing room between events
+		RollIntervalSeconds = 10,     -- how often a roll is considered
+		MaxActive = 1,                -- MVP: never two at once
+	},
+
+	ToiletEmergency = {
+		FloodInstantRepHit = 3,       -- charged the moment it floods
+		FloodRepDrainPer10s = 1,      -- ongoing bleed until someone plunges
+		FixRepReward = 1,             -- for fixing it at any stage
+		FloodChannelMultiplier = 1.5, -- plunging a flooded toilet takes longer
+
+		--// Cosmetic flood spread
+		PuddleCount = 7,
+		PuddleRadiusStuds = 14,
+		PuddleSizeStuds = 6,
+		PuddleGrowSeconds = 6,        -- puddles fade in over this long
+	},
+}
 
 ----------------------------------------------------------------
 -- PARTY-SIZE SCALING (stacks multiplicatively with Difficulty.SpawnRate)
