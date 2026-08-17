@@ -68,15 +68,17 @@ Config.Ingredients = {
 	--// until the Supplier delivery system exists there is no way to refill,
 	--// so running dry would soft-lock a shift rather than create pressure.
 	--// Potato is highest because fries are the cheap, common order.
+	--// Patty/steak bumped for 3-player playtests (burger demand at 3p NORMAL
+	--// is ~15-16 patties); retune DOWN when the Supplier restock ships.
 	RawPatty = {
 		Display = "Raw Patty", Icon = "rbxassetid://126279923200605",
 		Source = "Fridge", Color = Color3.fromRGB(190, 95, 95),
-		Stock = 12,
+		Stock = 18,
 	},
 	RawSteak = {
 		Display = "Raw Steak", Icon = "rbxassetid://95127663931794",
 		Source = "Fridge", Color = Color3.fromRGB(160, 70, 80),
-		Stock = 10,
+		Stock = 12,
 	},
 	RawPotato = {
 		Display = "Raw Potato", Icon = "rbxassetid://136806783641400",
@@ -470,6 +472,159 @@ Config.Interaction = {
 	PromptRangeStuds = 8,
 	PromptRequiresLineOfSight = false, -- mobile mercy
 	EatingIsUntimedPressure = true,    -- eating/pay happen AFTER bars die
+}
+
+----------------------------------------------------------------
+-- SPRINT / STAMINA (client-side movement feel - see SprintClient)
+-- Difficulty NEVER touches these: hands feel the same everywhere.
+----------------------------------------------------------------
+Config.Sprint = {
+	BaseWalkSpeed = 16,           -- Roblox default; THE source of truth for normal speed
+	SprintSpeed = 24,             -- while sprinting (1.5x)
+	StaminaMax = 100,
+	DrainPerSecond = 20,          -- ~5s of continuous full sprint
+	RegenPerSecond = 15,          -- empty -> full in ~6.7s once regen starts
+	RegenDelaySeconds = 1.0,      -- pause after sprinting stops before regen begins
+	MinStaminaToStart = 15,       -- can't START a sprint below this; an ongoing one may run to 0
+	SprintAnimationId = "",       -- optional custom sprint anim; "" = default run anim,
+	                              -- which already speeds up with WalkSpeed on its own
+	FovKick = 6,                  -- degrees added to camera FOV while sprinting; 0 disables
+
+	--// Stamina bar feel
+	LowStaminaFraction = 0.2,     -- below this the fill flips mustard -> tomato
+	BarLingerSeconds = 1.0,       -- bar stays this long after refilling, then fades out
+	TweenSeconds = 0.25,          -- FOV kick and bar fade tween length
+}
+
+----------------------------------------------------------------
+-- ORDER DIALOGUE (the take-order conversation - see DialogueClient)
+-- {DISH} in a phrase is replaced at runtime with the dish display name
+-- (or the whole ticket, e.g. "Burger + Fries", in the direct flow).
+----------------------------------------------------------------
+Config.Dialogue = {
+	RecommendChance = 0.25,       -- chance the customer asks for a recommendation
+	TimeoutSeconds = 15,          -- unfinished dialogue auto-resolves; party never stuck
+	RecommendPatienceBonus = 5,   -- seated-bar refresh for a great suggestion; 0 disables
+	CloseAfterSeconds = 1.0,      -- panel lingers this long after the closing line
+
+	--// Customer-voiced pools come in Singular/Plural: a party of one says
+	--// "I", a party of two or more says "we". The server picks the voice
+	--// from party.Size.
+	WaiterGreetings = {
+		"Welcome in! What can I get you?",
+		"Hi there! What are you craving today?",
+		"Good evening! Ready to order?",
+		"What'll it be, friend?",
+		"Hey hey! Hungry tonight?",
+		"Welcome to Dinner Rush! What sounds good?",
+	},
+	--// The small-talk opener: the second button at the start of the chat.
+	--// Customer rigs have no gender, so these stay neutral.
+	WaiterSmallTalk = {
+		Singular = {
+			"How is your day going?",
+			"Lovely evening! How are you doing?",
+			"How's everything today, friend?",
+		},
+		Plural = {
+			"How's everyone's day going?",
+			"You all look cheerful! Good day so far?",
+			"How's everything with you folks tonight?",
+		},
+	},
+	--// Reply to small talk; the order/ask line is appended after it, so
+	--// these read like "It's been great! I'll have the Burger, please!"
+	CustomerMoods = {
+		Singular = {
+			"It's been great, thanks for asking!",
+			"Long day... I am SO hungry!",
+			"Wonderful as always!",
+		},
+		Plural = {
+			"We've been having the best day!",
+			"Busy day - we're all starving!",
+			"It's been lovely, thanks for asking!",
+		},
+	},
+	CustomerOrders = {
+		Singular = {
+			"I'll have the {DISH}, please!",
+			"One {DISH} for me!",
+			"Ooh, the {DISH} sounds perfect!",
+			"{DISH}! I've been thinking about it all day!",
+		},
+		Plural = {
+			"We'll have the {DISH}, please!",
+			"The {DISH} for us, please!",
+			"We've been dreaming about the {DISH} all day!",
+			"Ooh, the {DISH} sounds perfect for us!",
+		},
+	},
+	CustomerAsksRecommend = {
+		Singular = {
+			"Hmm... what do YOU recommend?",
+			"I can't decide - what's good here?",
+			"Surprise me! What's the chef's favorite?",
+			"First time here - what should I try?",
+		},
+		Plural = {
+			"We can't decide - what's good here?",
+			"What do YOU recommend for us?",
+			"Surprise us! What's the chef's favorite?",
+			"First time here - what should we try?",
+		},
+	},
+	WaiterRecommends = {
+		"The {DISH} is excellent here!",
+		"You can't go wrong with the {DISH}.",
+		"Chef's special today: the {DISH}!",
+		"Between us? The {DISH} is the best thing on the menu.",
+		"Folks drive across town for the {DISH}!",
+		"Trust me - the {DISH}. Every time.",
+	},
+	CustomerAccepts = {
+		Singular = {
+			"Perfect, I'll have that!",
+			"Sold! One of those, please!",
+			"You're the expert - {DISH} it is!",
+			"Ooh yes, that's the one!",
+		},
+		Plural = {
+			"Perfect, we'll have that!",
+			"Sold! That's what we're having!",
+			"You're the expert - {DISH} for the table!",
+			"Great choice - we're in!",
+		},
+	},
+	WaiterConfirms = {
+		"Coming right up!",
+		"Excellent choice!",
+		"On its way!",
+		"One {DISH}, coming up!",
+		"Won't be long!",
+		"Great pick - kitchen's on it!",
+	},
+}
+
+----------------------------------------------------------------
+-- PAYMENT COLLECTION (money waits on the table and melts - see
+-- ServiceLoop's payment section)
+--
+-- The split, as implemented:
+--   BASE = what a plain order pays with zero perfect cooks and no VIP:
+--          BASE_COINS_PER_PARTY * Size * CoinMult * OvercookedPayMult
+--   TIP  = everything the actual payout adds above that (the perfect-cook
+--          surplus and the VIP surplus)
+-- Base decays to BaseFloorPercent and stops; tip decays all the way out.
+-- Hustle is rewarded, success is never zeroed.
+----------------------------------------------------------------
+Config.Payment = {
+	GraceSeconds = 8,             -- full value this long; walking over isn't a sin
+	DecaySeconds = 20,            -- after grace, the melt takes this long to finish
+	BaseFloorPercent = 0.45,      -- base never drops below this fraction
+	TipFloorPercent = 0,          -- tips melt completely (kept tunable anyway)
+	LingerSeconds = 6,            -- fully-decayed money stays this long, then vanishes
+	CollectHoldSeconds = 1.0,     -- hold time on the collect prompt
 }
 
 ----------------------------------------------------------------

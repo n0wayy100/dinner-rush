@@ -845,6 +845,7 @@ end
 -- Walkouts & departures
 ----------------------------------------------------------------
 local refreshTablePrompt -- forward declared
+local cancelDialogue -- forward declared (order-dialogue section, below the table code)
 
 --// Customers still in the queue are already outside, so they leave directly.
 --// Seated ones walk their table's ExitVia route back out through the door.
@@ -885,6 +886,7 @@ local function doorWalkout(party)
 end
 
 local function seatedWalkout(party)
+	cancelDialogue(party) --// a mid-dialogue walkout closes the waiter's panel
 	shift.SeatedWalkouts += 1
 	repChange(diff.Consequences.SeatedWalkoutRep, "seated walkout")
 	removeBar(party)
@@ -1082,22 +1084,60 @@ refreshTablePrompt = function(tableId)
 		prompt.ObjectText = ("Table %d - %d dish%s left"):format(
 			tableId, party.DishesRemaining, party.DishesRemaining == 1 and "" or "es")
 		prompt.HoldDuration = 0.5
-	elseif party.State == STATE.PAYING then
-		prompt.Enabled = true
-		prompt.ActionText = "Collect payment"
-		prompt.ObjectText = ("Table %d"):format(tableId)
-		prompt.HoldDuration = 2
 	else
 		prompt.Enabled = false
 	end
 end
 
-local function onPartySatisfied(party, tableId, collector)
-	shift.Satisfied += 1
-	local repGain = party.IsVIP and diff.Reputation.VIPSatisfied or diff.Reputation.SatisfiedParty
-	repChange(repGain, party.IsVIP and "VIP satisfied" or "party satisfied")
-	--// Cook quality pays: a party served entirely in the perfect window is
-	--// worth more than one scraped together from overcooked plates.
+----------------------------------------------------------------
+-- Payments. Finishing a meal no longer pays instantly: the money waits
+-- ON the table as a collect point and melts while nobody grabs it.
+-- Full value through GraceSeconds, then a linear decay over DecaySeconds:
+-- BASE (what a plain no-perfect, no-VIP order pays) floors at
+-- BaseFloorPercent; TIP (perfect-cook surplus + VIP surplus) melts to
+-- zero. After the melt finishes it lingers LingerSeconds, then the
+-- remainder is lost - no rep penalty, the lost coins ARE the penalty.
+-- The party leaves on its normal schedule; turnover never waits on money.
+----------------------------------------------------------------
+local payments = {} --// tableId -> { Base, Tip, CreatedAt, Gui, Prompt, Amount }
+
+--// Current value plus where in the melt we are (0 = grace, 1 = floored)
+local function paymentValue(payment)
+	local P = Config.Payment
+	local elapsed = os.clock() - payment.CreatedAt
+	local t = math.clamp((elapsed - P.GraceSeconds) / P.DecaySeconds, 0, 1)
+	local baseVal = payment.Base * (1 - t * (1 - P.BaseFloorPercent))
+	local tipVal = payment.Tip * (1 - t * (1 - P.TipFloorPercent))
+	return math.floor(baseVal + tipVal), t
+end
+
+local function destroyPayment(tableId)
+	local payment = payments[tableId]
+	if not payment then return end
+	payments[tableId] = nil
+	if payment.Gui then payment.Gui:Destroy() end
+	if payment.Prompt then payment.Prompt:Destroy() end
+end
+
+local function collectPayment(tableId, collector)
+	local payment = payments[tableId]
+	if not payment then return end
+	local value = paymentValue(payment)
+	destroyPayment(tableId)
+	awardCoins(collector, value)
+	print(("[Service] %s collected %d coins (Table %d)"):format(
+		collector.Name, value, tableId))
+end
+
+local PAY_COLOR = {
+	GRACE = Color3.fromRGB(76, 175, 109),   -- basil: full value
+	DECAY = Color3.fromRGB(245, 184, 65),   -- mustard: melting
+	FLOOR = Color3.fromRGB(229, 72, 77),    -- tomato: floored, about to vanish
+}
+
+local function createPayment(party, tableId)
+	--// Exactly the money the old instant flow would have paid - same
+	--// math, just deferred to the collect point.
 	local perfect = party.PerfectDishes or 0
 	local overcooked = party.OvercookedDishes or 0
 	local served = math.max(perfect + overcooked, 1)
@@ -1106,15 +1146,291 @@ local function onPartySatisfied(party, tableId, collector)
 
 	local payout = math.floor(BASE_COINS_PER_PARTY * party.Size * diff.Rewards.CoinMult
 		* (party.IsVIP and VIP_TIP_MULT or 1) * qualityMult)
-	awardCoins(collector, payout)
-	print(("[Service] %s collected %d coins (Table %d)%s. Served %d/%d")
-		:format(collector.Name, payout, tableId, party.IsVIP and " VIP" or "",
+
+	--// The split: BASE is the plain-order guarantee, TIP is everything above
+	local base = math.floor(BASE_COINS_PER_PARTY * party.Size * diff.Rewards.CoinMult
+		* Config.Kitchen.OvercookedPayMult)
+	base = math.min(base, payout)
+	local tip = payout - base
+
+	local tablePart = tableById[tableId]
+	if not tablePart then return end
+
+	--// Same table somehow still holding leftovers (linger is short, so this
+	--// is a rare edge): fold them in at their current value, clock restarts
+	local existing = payments[tableId]
+	if existing then
+		base += (paymentValue(existing))
+		destroyPayment(tableId)
+	end
+
+	--// Compact money sign: sits low over the table so it coexists with a
+	--// newly seated party's billboards (which hang higher, at 7 studs)
+	local gui = Instance.new("BillboardGui")
+	gui.Name = "Payment"
+	gui.Size = UDim2.fromOffset(110, 34)
+	gui.StudsOffsetWorldSpace = Vector3.new(0, 3.5, 0)
+	gui.AlwaysOnTop = true
+	gui.Parent = tablePart
+
+	local layout = Instance.new("UIListLayout")
+	layout.FillDirection = Enum.FillDirection.Horizontal
+	layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	layout.VerticalAlignment = Enum.VerticalAlignment.Center
+	layout.Padding = UDim.new(0, 4)
+	layout.Parent = gui
+
+	--// No money art in the asset registry yet, so the icon is a mustard "$"
+	local sign = Instance.new("TextLabel")
+	sign.Size = UDim2.fromOffset(26, 30)
+	sign.BackgroundTransparency = 1
+	sign.Font = Enum.Font.FredokaOne
+	sign.TextScaled = true
+	sign.TextColor3 = Color3.fromRGB(245, 184, 65)
+	sign.TextStrokeColor3 = Color3.fromRGB(59, 43, 32)
+	sign.TextStrokeTransparency = 0
+	sign.Text = "$"
+	sign.LayoutOrder = 1
+	sign.Parent = gui
+
+	local amount = Instance.new("TextLabel")
+	amount.Size = UDim2.fromOffset(70, 30)
+	amount.BackgroundTransparency = 1
+	amount.Font = Enum.Font.FredokaOne
+	amount.TextScaled = true
+	amount.TextXAlignment = Enum.TextXAlignment.Left
+	amount.TextColor3 = PAY_COLOR.GRACE
+	amount.TextStrokeColor3 = Color3.fromRGB(59, 43, 32)
+	amount.TextStrokeTransparency = 0
+	amount.Text = tostring(payout)
+	amount.LayoutOrder = 2
+	amount.Parent = gui
+
+	--// Its own prompt (G), offset below the table's main prompt (E) and
+	--// the pour prompt (F), so three prompts on one part stay readable
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.Name = "CollectPayment"
+	prompt.ActionText = "Collect payment"
+	prompt.ObjectText = ("Table %d"):format(tableId)
+	prompt.KeyboardKeyCode = Enum.KeyCode.G
+	prompt.UIOffset = Vector2.new(0, -70)
+	prompt.HoldDuration = Config.Payment.CollectHoldSeconds
+	prompt.MaxActivationDistance = Config.Interaction.PromptRangeStuds
+	prompt.RequiresLineOfSight = Config.Interaction.PromptRequiresLineOfSight
+	prompt.Parent = tablePart
+
+	prompt.Triggered:Connect(function(player)
+		collectPayment(tableId, player)
+	end)
+
+	payments[tableId] = {
+		Base = base, Tip = tip, CreatedAt = os.clock(),
+		Gui = gui, Prompt = prompt, Amount = amount,
+	}
+	print(("[Service] Table %d payment on the table: %d base + %d tip%s")
+		:format(tableId, base, tip, party.IsVIP and " (VIP)" or ""))
+end
+
+--// ~2x/sec from the heartbeat: tick every billboard, expire the stale
+local function updatePayments()
+	local P = Config.Payment
+	local expired = nil
+	for tableId, payment in pairs(payments) do
+		local value, t = paymentValue(payment)
+		payment.Amount.Text = tostring(value)
+		payment.Amount.TextColor3 = (t <= 0 and PAY_COLOR.GRACE)
+			or (t < 1 and PAY_COLOR.DECAY) or PAY_COLOR.FLOOR
+
+		--// The party leaves the moment the payment appears, so the linger
+		--// clock runs from the END of the melt, not from "party left"
+		local lifetime = P.GraceSeconds + P.DecaySeconds + P.LingerSeconds
+		if os.clock() - payment.CreatedAt >= lifetime then
+			expired = expired or {}
+			table.insert(expired, tableId)
+			print(("[Service] Table %d payment vanished - %d coins lost")
+				:format(tableId, value))
+		end
+	end
+	if expired then
+		for _, tableId in ipairs(expired) do
+			destroyPayment(tableId)
+		end
+	end
+end
+
+--// Eating done: the party is satisfied HERE (rep, served count) and
+--// leaves on schedule; only the money waits behind on the table.
+local function onPartyFinishedEating(party, tableId)
+	shift.Satisfied += 1
+	local repGain = party.IsVIP and diff.Reputation.VIPSatisfied or diff.Reputation.SatisfiedParty
+	repChange(repGain, party.IsVIP and "VIP satisfied" or "party satisfied")
+
+	createPayment(party, tableId)
+	print(("[Service] Table %d finished eating%s. Served %d/%d")
+		:format(tableId, party.IsVIP and " VIP" or "",
 			shift.Satisfied, diff.Rewards.TargetParties))
+
 	setPartyState(party, STATE.LEAVING)
 	tableOccupant[tableId] = nil
 	refreshTablePrompt(tableId)
 	departTo(party, exitPos)
 end
+
+----------------------------------------------------------------
+-- Order dialogue. Taking an order is now a short conversation rendered
+-- by DialogueClient on the interacting player's screen. The server stays
+-- in charge: it rolls the flow, picks every phrase, holds a per-party
+-- lock, validates the recommendation pick, and auto-resolves on timeout
+-- so a party can never be stranded un-ordered. The seated patience bar
+-- keeps draining throughout - the conversation is charm, not a pause.
+----------------------------------------------------------------
+local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+if not remotes then
+	remotes = Instance.new("Folder")
+	remotes.Name = "Remotes"
+	remotes.Parent = ReplicatedStorage
+end
+
+local dialogueRemote = remotes:FindFirstChild("DialogueRemote")
+if not dialogueRemote then
+	dialogueRemote = Instance.new("RemoteEvent")
+	dialogueRemote.Name = "DialogueRemote"
+	dialogueRemote.Parent = remotes
+end
+
+local dialogueByToken = {}
+local nextDialogueToken = 0
+
+local function pickLine(pool)
+	return pool[math.random(#pool)]
+end
+
+--// Customer-voiced pools have Singular/Plural variants: parties of one
+--// say "I", parties of two or more say "we"
+local function pickVoiced(pool, isPlural)
+	return pickLine(isPlural and pool.Plural or pool.Singular)
+end
+
+--// Ends a dialogue and, if the order is still takeable, completes it -
+--// the same sequence the old instant take-order ran. pickedKey (recommend
+--// flow only, already validated) swaps the ASKING customer's dish, which
+--// is Ticket[1]; the rest of a multi-dish ticket is untouched.
+--// notifyClient closes the panel for timeouts; a completion the player
+--// tapped themselves skips it so the closing line can play out.
+local function resolveDialogue(dlg, pickedKey, notifyClient)
+	if dialogueByToken[dlg.Token] ~= dlg then return end
+	dialogueByToken[dlg.Token] = nil
+
+	local party = dlg.Party
+	if party.Dialogue == dlg then
+		party.Dialogue = nil
+	end
+
+	if notifyClient and dlg.Player.Parent then
+		dialogueRemote:FireClient(dlg.Player, "Cancel", dlg.Token)
+	end
+
+	--// Shift over / party gone: nothing left to order
+	if party.State ~= STATE.SEATED or shift.State ~= "RUNNING" then return end
+
+	if pickedKey and dlg.Flow == "recommend" then
+		party.Ticket[1] = pickedKey
+		if Config.Dialogue.RecommendPatienceBonus > 0 then
+			extendBar(party, Config.Dialogue.RecommendPatienceBonus, "great recommendation")
+		end
+	end
+
+	setPartyState(party, STATE.WAITING_FOOD)
+	showTicket(party)
+	refreshTablePrompt(party.TableId)
+	print(("[Service] Order for Table %d: %s%s"):format(party.TableId, ticketText(party),
+		pickedKey and " (waiter's recommendation)" or ""))
+end
+
+--// Pure close, NO completion - for walkouts. The panel disappears and the
+--// party's fate is whatever the caller is already doing to them.
+cancelDialogue = function(party)
+	local dlg = party.Dialogue
+	if not dlg then return end
+	dialogueByToken[dlg.Token] = nil
+	party.Dialogue = nil
+	if dlg.Player.Parent then
+		dialogueRemote:FireClient(dlg.Player, "Cancel", dlg.Token)
+	end
+end
+
+local function beginDialogue(player, party, tableId)
+	nextDialogueToken += 1
+	local token = nextDialogueToken
+	local flow = (math.random() < Config.Dialogue.RecommendChance) and "recommend" or "direct"
+
+	local dlg = { Player = player, Party = party, Token = token, Flow = flow }
+	party.Dialogue = dlg
+	dialogueByToken[token] = dlg
+
+	--// The server picks every phrase; the client only renders, substituting
+	--// {DISH} with DishText (direct) or the picked dish's display (recommend)
+	local plural = party.Size > 1
+	local payload = {
+		Token = token,
+		Flow = flow,
+		Timeout = Config.Dialogue.TimeoutSeconds,
+		CloseAfter = Config.Dialogue.CloseAfterSeconds,
+		DishText = ticketText(party),
+		Lines = {
+			Greet = pickLine(Config.Dialogue.WaiterGreetings),
+			SmallTalkQ = pickVoiced(Config.Dialogue.WaiterSmallTalk, plural),
+			Mood = pickVoiced(Config.Dialogue.CustomerMoods, plural),
+			Customer = pickVoiced(flow == "recommend"
+				and Config.Dialogue.CustomerAsksRecommend
+				or Config.Dialogue.CustomerOrders, plural),
+			Accept = pickVoiced(Config.Dialogue.CustomerAccepts, plural),
+			Confirm = pickLine(Config.Dialogue.WaiterConfirms),
+		},
+	}
+
+	if flow == "recommend" then
+		payload.Dishes = {}
+		for dishName, recipe in pairs(Config.Recipes) do
+			table.insert(payload.Dishes, {
+				Key = dishName,
+				Display = recipe.Display,
+				Icon = recipe.Icon,
+				Line = pickLine(Config.Dialogue.WaiterRecommends),
+			})
+		end
+		--// pairs order is undefined; sort so the buttons never shuffle
+		table.sort(payload.Dishes, function(a, b) return a.Display < b.Display end)
+	end
+
+	dialogueRemote:FireClient(player, "Begin", payload)
+
+	--// Walked off / died / left: the party orders what they were always
+	--// going to order, and the table unlocks.
+	task.delay(Config.Dialogue.TimeoutSeconds, function()
+		local pending = dialogueByToken[token]
+		if pending then
+			print(("[Service] Dialogue for Table %d timed out - auto-resolving"):format(tableId))
+			resolveDialogue(pending, nil, true)
+		end
+	end)
+end
+
+dialogueRemote.OnServerEvent:Connect(function(player, action, token, pickedKey)
+	if action ~= "Complete" then return end
+
+	local dlg = dialogueByToken[token]
+	--// Only the waiter who opened this dialogue may finish it
+	if not dlg or dlg.Player ~= player then return end
+
+	--// Validate the pick; a bad or absent key falls back to the party's
+	--// original ticket (the direct flow always lands here with nil)
+	if pickedKey ~= nil and (type(pickedKey) ~= "string" or Config.Recipes[pickedKey] == nil) then
+		pickedKey = nil
+	end
+
+	resolveDialogue(dlg, pickedKey, false)
+end)
 
 local function setupTable(tableId, tablePart)
 	local prompt = Instance.new("ProximityPrompt")
@@ -1167,12 +1483,16 @@ local function setupTable(tableId, tablePart)
 		if not party or shift.State ~= "RUNNING" then return end
 
 		if party.State == STATE.SEATED then
-			--// The ticket was rolled when the party spawned; taking the order
-			--// is what reveals it to the kitchen.
-			setPartyState(party, STATE.WAITING_FOOD)
-			showTicket(party)
-			refreshTablePrompt(tableId)
-			print(("[Service] Order for Table %d: %s"):format(tableId, ticketText(party)))
+			--// The ticket was rolled when the party spawned. Taking the order
+			--// is now a short dialogue on the waiter's screen; the ticket is
+			--// revealed to the kitchen when it resolves (or times out).
+			if party.Dialogue then
+				--// Another waiter is already mid-conversation with this table
+				prompt.ObjectText = "Being served!"
+				task.delay(1.5, function() refreshTablePrompt(tableId) end)
+				return
+			end
+			beginDialogue(player, party, tableId)
 
 		elseif party.State == STATE.WAITING_FOOD then
 			local dish, dishName = findTicketDish(player, party)
@@ -1221,14 +1541,13 @@ local function setupTable(tableId, tablePart)
 						departTo(party, exitPos)
 						return
 					end
-					setPartyState(party, STATE.PAYING)
-					refreshTablePrompt(tableId)
+					onPartyFinishedEating(party, tableId)
 				end)
 			end
 
-		elseif party.State == STATE.PAYING then
-			onPartySatisfied(party, tableId, player)
 		end
+		--// Collecting payment is its own prompt now (see the payment
+		--// section) - the party is long gone by the time money is grabbed
 	end)
 end
 
@@ -1248,7 +1567,11 @@ local function findFreeTable()
 	table.sort(ids)
 
 	for _, tableId in ipairs(ids) do
-		if tableOccupant[tableId] == nil then return tableId end
+		--// A table with uncollected money on it is not clear yet: grab the
+		--// payment (or let it melt away) before the next party sits down
+		if tableOccupant[tableId] == nil and payments[tableId] == nil then
+			return tableId
+		end
 	end
 	return nil
 end
@@ -1284,7 +1607,16 @@ local function attachQueuePrompts(party)
 		if party.State ~= STATE.QUEUED then return end
 		local tableId = findFreeTable()
 		if not tableId then
-			seat.ObjectText = "No free tables!"
+			--// Teach the rule: if a table is empty but has money on it,
+			--// collecting is what unlocks the seat
+			local moneyBlocked = false
+			for tid in pairs(tableById) do
+				if tableOccupant[tid] == nil and payments[tid] ~= nil then
+					moneyBlocked = true
+					break
+				end
+			end
+			seat.ObjectText = moneyBlocked and "Collect the payment first!" or "No free tables!"
 			task.delay(1.5, function()
 				if seat.Parent then seat.ObjectText = ("Party of %d"):format(party.Size) end
 			end)
@@ -1408,6 +1740,29 @@ local function endShift(success, reason)
 		end
 	end
 
+	--// Money still melting on tables banks at its current value - never
+	--// strand earned coins at the buzzer. Split evenly, remainder to the
+	--// first player in the list.
+	local uncollected = 0
+	local paymentTables = {}
+	for tableId, payment in pairs(payments) do
+		uncollected += (paymentValue(payment))
+		table.insert(paymentTables, tableId)
+	end
+	for _, tableId in ipairs(paymentTables) do
+		destroyPayment(tableId)
+	end
+	if uncollected > 0 then
+		local everyone = Players:GetPlayers()
+		if #everyone > 0 then
+			local share = math.floor(uncollected / #everyone)
+			for i, player in ipairs(everyone) do
+				awardCoins(player, share + (i == 1 and (uncollected - share * #everyone) or 0))
+			end
+			print(("[Service] Auto-collected %d coins left on tables at shift end"):format(uncollected))
+		end
+	end
+
 	publishShift()
 	refreshScoreboard()
 end
@@ -1416,6 +1771,8 @@ end
 -- Heartbeat: the one clock that drains every bar
 ----------------------------------------------------------------
 local sincePublish = 0
+local PAYMENT_TICK = 0.5 --// billboard update rate for melting payments
+local sincePaymentTick = 0
 
 RunService.Heartbeat:Connect(function(dt)
 	--// Attribute writes replicate, so publish on a throttle rather than per
@@ -1454,6 +1811,12 @@ RunService.Heartbeat:Connect(function(dt)
 				end
 			end
 		end
+	end
+
+	sincePaymentTick += dt
+	if sincePaymentTick >= PAYMENT_TICK then
+		sincePaymentTick = 0
+		updatePayments()
 	end
 
 	if shift.Reputation <= 0 then
