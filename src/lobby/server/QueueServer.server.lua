@@ -57,7 +57,7 @@ local MIN_PLAYERS_TO_START = 1
 
 --// The MainGame place inside the DinnerRush experience.
 --// Left at 0 the countdown still runs, it just does not teleport anyone.
-local GAME_PLACE_ID = 138360216187462
+local GAME_PLACE_ID = 97952115394249 --// MainGame place inside the group's DinnerRush experience
 
 local ZoneData = {}
 local PlayerZone = {} --// [Player] = TpZones the player is currently queued in
