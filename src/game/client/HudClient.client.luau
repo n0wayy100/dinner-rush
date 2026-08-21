@@ -36,6 +36,7 @@ local PHASE_LABELS = {
 	Calm = "OPENING",
 	Building = "BUSY",
 	Crescendo = "RUSH",
+	Closing = "LAST TABLES",   -- doors shut, finishing the room
 }
 
 --// Text templates, so the HUD wording lives in one place
@@ -64,6 +65,7 @@ local SLOTS = {
 	{ key = "difficulty", names = { "DiffLabel", "DifficultyLabel" } },
 	{ key = "status",     names = { "StatusLabel" } },
 	{ key = "walkouts",   names = { "WalkoutsLabel" } },
+	{ key = "till",       names = { "TillLabel", "MoneyLabel", "CashLabel" } },
 }
 
 local ui = {}
@@ -313,6 +315,9 @@ local function refresh()
 	end
 
 	setText(ui.served, servedText(attr("Satisfied", 0), attr("TargetParties", 0)))
+
+	--// The shared shift till, not anyone's personal balance
+	setText(ui.till, ("$%d"):format(attr("Till", 0)))
 
 	setText(ui.walkouts, tostring(
 		(ShiftState:GetAttribute("DoorWalkouts") or 0)

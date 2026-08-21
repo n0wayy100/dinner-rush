@@ -26,6 +26,12 @@ local Config = {}
 Config.Shift = {
 	LengthSeconds = 480,              -- 8 min MVP shift
 	PrepTimeSeconds = 45,             -- vote-skippable
+
+	--// When the clock runs out the doors close but the room is not empty.
+	--// CLOSING lets everyone already inside finish eating and paying; no new
+	--// customers arrive. This is a safety cap so a stuck party cannot hold the
+	--// shift open forever.
+	ClosingMaxSeconds = 150,
 	Phases = {                        -- shift-time boundaries (seconds)
 		CalmEndsAt = 120,             -- 0:00-2:00 tutorial-in-motion
 		BuildingEndsAt = 300,         -- 2:00-5:00 pressure ramps
@@ -225,6 +231,31 @@ Config.Bussing = {
 Config.Supplier = {
 	PriceEventDecisionSeconds = 10,
 	FreeItemThreshold = 5,            -- failure odds scale per item over this
+
+	--// Delivery time is NOT here: Difficulty[*].SupplierDeliverySeconds
+	--// already holds 22 / 25 / 30, so difficulty changes it for free.
+
+	UnitsPerCrate = 5,                -- one crate restocks this many
+	MaxCratesPerIngredient = 3,       -- per order, so a single order caps at 15
+	CollectHoldSeconds = 0.6,         -- holding E on a crate
+	TruckLingerSeconds = 45,          -- truck leaves; uncollected crates go with it
+
+	--// Money is OFF for the MVP. Coins are per-player leaderstats, so charging
+	--// one player for the whole restaurant's supplies is odd in co-op, and a
+	--// broke team could soft-lock. Flip this on once there is a shared till.
+	ChargeForOrders = true,
+	CratePrice = {                    -- coins per crate when charging is on
+		RawPatty = 20,
+		RawSteak = 30,
+		RawPotato = 12,
+	},
+
+	--// Placeholder delivery props, replaced by your own truck model later
+	TruckSize = Vector3.new(10, 8, 18),
+	TruckColor = Color3.fromRGB(210, 90, 80),
+	CrateSize = Vector3.new(3, 3, 3),
+	CrateColor = Color3.fromRGB(178, 138, 88),
+	CrateSpacingStuds = 4,
 }
 
 ----------------------------------------------------------------
@@ -451,6 +482,17 @@ Config.Events = {
 		PuddleSizeStuds = 6,
 		PuddleGrowSeconds = 6,        -- puddles fade in over this long
 	},
+}
+
+----------------------------------------------------------------
+-- MONEY
+-- Every shift opens a shared till at zero. Customer payments go into it,
+-- the Supplier spends out of it, and whatever survives to the buzzer is
+-- split evenly into each player's own balance.
+----------------------------------------------------------------
+Config.Money = {
+	ShiftStartingTill = 0,
+	RemainderToFirstPlayer = true,  -- odd coins go somewhere rather than vanishing
 }
 
 ----------------------------------------------------------------
