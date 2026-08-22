@@ -301,6 +301,18 @@ supplierRemote.OnServerEvent:Connect(function(player, action, payload)
 	if action ~= "Order" then return end
 	if typeof(payload) ~= "table" then return end
 
+	--// A wall screen can be clicked from anywhere on the map, so the range
+	--// check the ProximityPrompt used to provide has to happen here instead.
+	local board = firstTaggedPart("SupplierBoard")
+	local character = player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	if board and root then
+		local reach = Config.Interaction.PromptRangeStuds + 6
+		if (board.Position - root.Position).Magnitude > reach then
+			return
+		end
+	end
+
 	--// One delivery at a time. The board says so, but never trust that.
 	if delivery.Status ~= "IDLE" then
 		supplierRemote:FireClient(player, "OrderDenied", "A delivery is already on its way!")
@@ -412,6 +424,17 @@ task.spawn(function()
 			Status = delivery.Status,
 			Summary = delivery.Summary,
 		})
+	end)
+
+	--// The wall screen is always on, so clients ask for the catalogue when
+	--// they build it rather than waiting for a prompt
+	supplierRemote.OnServerEvent:Connect(function(player, action)
+		if action == "RequestBoard" then
+			supplierRemote:FireClient(player, "OpenBoard", catalog(), {
+				Status = delivery.Status,
+				Summary = delivery.Summary,
+			})
+		end
 	end)
 
 	print(("[Supplier] board ready at %s, delivery zone %s"):format(

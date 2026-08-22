@@ -6,11 +6,20 @@
 	is intent only. Quantities are clamped and re-validated on the server, and
 	the server owns whether a delivery can be placed at all.
 
-	One row per ingredient with - / + steppers, then ORDER. A live strip at the
-	bottom shows the delivery status from ReplicatedStorage.SupplierState so
-	you can see the truck coming without standing at the board.
+	This is a WALL SCREEN, not a popup: a SurfaceGui drawn onto the part tagged
+	SupplierBoard, always on, clicked directly in the world.
+
+	Two properties make that work and are easy to miss:
+	  SurfaceGui.Active = true    without it the screen renders but ignores clicks
+	  SurfaceGui.Face             which side of the part to draw on, from the
+	                              part's optional ScreenFace attribute
+
+	Built per client, so each player dials in their own quantities on the same
+	physical screen. The order itself is still server-validated, including a
+	range check - a wall screen can be clicked from anywhere on the map.
 --]]
 
+local CollectionService = game:GetService("CollectionService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
@@ -33,23 +42,52 @@ local GREY = Color3.fromRGB(196, 188, 178)
 ----------------------------------------------------------------
 -- Panel, built once
 ----------------------------------------------------------------
-local gui = Instance.new("ScreenGui")
+--// Wait for the board to replicate in, then draw onto it
+local board
+do
+	local waited = 0
+	repeat
+		for _, instance in ipairs(CollectionService:GetTagged("SupplierBoard")) do
+			if instance:IsDescendantOf(workspace) then
+				board = instance:IsA("BasePart") and instance
+					or (instance:IsA("Model") and instance.PrimaryPart)
+				if board then break end
+			end
+		end
+		if not board then
+			task.wait(0.5)
+			waited += 0.5
+		end
+	until board or waited >= 30
+end
+
+if not board then
+	warn("[SupplierClient] no part tagged SupplierBoard - the order screen cannot be drawn")
+	return
+end
+
+local faceName = board:GetAttribute("ScreenFace")
+local face = Enum.NormalId[faceName or "Front"] or Enum.NormalId.Front
+
+local gui = Instance.new("SurfaceGui")
 gui.Name = "SupplierBoard_UI"
+gui.Face = face
+gui.Active = true             --// REQUIRED, or buttons are decoration
+gui.AlwaysOnTop = false       --// sits on the surface like a real screen
+gui.LightInfluence = 0        --// stays readable in a dim kitchen
+gui.PixelsPerStud = 60        --// crispness; raise for sharper text
+gui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
 gui.ResetOnSpawn = false
-gui.Enabled = false
-gui.DisplayOrder = 20
-gui.Parent = playerGui
+gui.Parent = board
+
+print(("[SupplierClient] screen on %s (%s face)"):format(board:GetFullName(), face.Name))
 
 local panel = Instance.new("Frame")
 panel.AnchorPoint = Vector2.new(0.5, 0.5)
 panel.Position = UDim2.fromScale(0.5, 0.5)
-panel.Size = UDim2.fromScale(0.34, 0.46)
+panel.Size = UDim2.fromScale(1, 1)
 panel.BackgroundColor3 = CREAM
 panel.Parent = gui
-
-local ratio = Instance.new("UIAspectRatioConstraint")
-ratio.AspectRatio = 1.05
-ratio.Parent = panel
 
 local corner = Instance.new("UICorner")
 corner.CornerRadius = UDim.new(0, 14)
@@ -75,26 +113,6 @@ title.TextScaled = true
 title.TextColor3 = CHOC
 title.Text = "SUPPLY ORDERS"
 title.Parent = panel
-
-local closeBtn = Instance.new("TextButton")
-closeBtn.AnchorPoint = Vector2.new(1, 0)
-closeBtn.Position = UDim2.fromScale(0.97, 0.03)
-closeBtn.Size = UDim2.fromScale(0.11, 0.1)
-closeBtn.BackgroundColor3 = TOMATO
-closeBtn.Font = Enum.Font.FredokaOne
-closeBtn.TextScaled = true
-closeBtn.TextColor3 = Color3.new(1, 1, 1)
-closeBtn.Text = "X"
-closeBtn.Parent = panel
-
-local cbc = Instance.new("UICorner")
-cbc.CornerRadius = UDim.new(0, 8)
-cbc.Parent = closeBtn
-
-local cbs = Instance.new("UIStroke")
-cbs.Thickness = 2
-cbs.Color = CHOC
-cbs.Parent = closeBtn
 
 local list = Instance.new("Frame")
 list.Name = "Rows"
@@ -148,12 +166,6 @@ status.Parent = panel
 local quantities = {}  -- [ingredientName] = crates
 local rows = {}        -- [ingredientName] = { Count = TextLabel }
 local catalogItems = {}
-
-local function closeBoard()
-	gui.Enabled = false
-end
-
-closeBtn.Activated:Connect(closeBoard)
 
 local function refreshRow(item)
 	local row = rows[item.Name]
@@ -304,7 +316,6 @@ end
 
 orderBtn.Activated:Connect(function()
 	supplierRemote:FireServer("Order", quantities)
-	closeBoard()
 end)
 
 ----------------------------------------------------------------
@@ -357,10 +368,8 @@ supplierRemote.OnClientEvent:Connect(function(action, a, b)
 		catalogItems = a
 		buildRows(catalogItems)
 		refreshStatus()
-		gui.Enabled = true
 	elseif action == "OrderDenied" then
 		status.Text = tostring(a or "Order refused")
-		gui.Enabled = true
 	end
 end)
 
@@ -369,7 +378,9 @@ RunService.Heartbeat:Connect(function(dt)
 	since += dt
 	if since < 0.25 then return end
 	since = 0
-	if gui.Enabled then
-		refreshStatus()
-	end
+	refreshStatus()
 end)
+
+--// The screen is always on, so ask for the catalogue instead of waiting for
+--// a prompt to push it
+supplierRemote:FireServer("RequestBoard")
