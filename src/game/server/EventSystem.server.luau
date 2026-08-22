@@ -15,13 +15,15 @@
 	exist.
 
 	TAGS USED:  Toilet (one part or model)  ·  PlungerMount (kitchen wall)
+	            ExtinguisherMount (kitchen wall - grease fire)
 
 	Published for the client at ReplicatedStorage.EventState:
-	  ActiveEvent   "" or "ToiletEmergency"
+	  ActiveEvent   "" / "ToiletEmergency" / "GreaseFire"
 	  Phase         "" / "ERUPTING" / "FLOODED"
-	  FuseRemaining seconds, 0 when not counting
+	  FuseRemaining seconds, 0 when not counting (GreaseFire: the SOONEST fuse)
 	  FuseTotal     seconds
 	  AlertText     what to shout at the team
+	  Toast         center-screen lesson text ("" = hidden) - the water trap
 --]]
 
 local CollectionService = game:GetService("CollectionService")
@@ -65,6 +67,8 @@ local function publish(activeEvent, phase, fuseRemaining, fuseTotal, alertText)
 end
 
 publish()
+EventState:SetAttribute("Toast", "") --// independent of publish(): a toast may
+                                     --// outlive the event that raised it
 
 ----------------------------------------------------------------
 -- Bridges into ServiceLoop
@@ -506,6 +510,542 @@ local function setupToilet()
 end
 
 ----------------------------------------------------------------
+-- THE EXTINGUISHER
+-- Mirrors the plunger exactly: one exists, lives on its wall mount, and
+-- returns the moment the fire ends or its carrier disappears. Deliberately
+-- NOT counted by KitchenService's carry limit: that count filters on the
+-- Ingredient and Dish attributes, and this tool has neither.
+----------------------------------------------------------------
+local extinguisherHolder = nil
+local extinguisherTool = nil
+local extinguisherMountPrompt = nil
+local onExtinguisherActivated --// assigned in the grease-fire section below;
+                              --// the tool connects its click to this
+
+local function returnExtinguisher()
+	if extinguisherTool then
+		extinguisherTool:Destroy()
+		extinguisherTool = nil
+	end
+	extinguisherHolder = nil
+
+	if extinguisherMountPrompt then
+		extinguisherMountPrompt.ActionText = "Take"
+		extinguisherMountPrompt.ObjectText = "Extinguisher"
+	end
+end
+
+local function setupExtinguisherMount()
+	local mount = firstTaggedPart("ExtinguisherMount")
+	if not mount then
+		warn("[Events] no part tagged ExtinguisherMount - grease fires cannot be fought")
+		return false
+	end
+
+	extinguisherMountPrompt = Instance.new("ProximityPrompt")
+	extinguisherMountPrompt.Name = "TakeExtinguisher"
+	extinguisherMountPrompt.ActionText = "Take"
+	extinguisherMountPrompt.ObjectText = "Extinguisher"
+	extinguisherMountPrompt.HoldDuration = Config.Kitchen.PickupHoldSeconds
+	extinguisherMountPrompt.MaxActivationDistance = Config.Interaction.PromptRangeStuds
+	extinguisherMountPrompt.RequiresLineOfSight = Config.Interaction.PromptRequiresLineOfSight
+	extinguisherMountPrompt.Parent = mount
+
+	extinguisherMountPrompt.Triggered:Connect(function(player)
+		local character = player.Character
+		if not character then return end
+
+		if extinguisherTool then
+			extinguisherMountPrompt.ObjectText = "Extinguisher taken!"
+			task.delay(1.5, function()
+				if extinguisherMountPrompt and not extinguisherTool then
+					extinguisherMountPrompt.ObjectText = "Extinguisher"
+				end
+			end)
+			return
+		end
+
+		local tool = Instance.new("Tool")
+		tool.Name = "Extinguisher"
+		tool.RequiresHandle = true
+		tool.CanBeDropped = false
+		tool:SetAttribute("Extinguisher", true)
+
+		local handle = Instance.new("Part")
+		handle.Name = "Handle"
+		handle.Size = Vector3.new(0.9, 2.2, 0.9)
+		handle.Color = Color3.fromRGB(200, 45, 45)
+		handle.Material = Enum.Material.SmoothPlastic
+		handle.Parent = tool
+
+		local nozzle = Instance.new("Part")
+		nozzle.Name = "Nozzle"
+		nozzle.Size = Vector3.new(0.3, 0.6, 0.3)
+		nozzle.Color = Color3.fromRGB(30, 30, 30)
+		nozzle.Material = Enum.Material.SmoothPlastic
+		nozzle.CanCollide = false
+		nozzle.Massless = true
+		nozzle.Parent = tool
+
+		local weld = Instance.new("WeldConstraint")
+		weld.Part0 = handle
+		weld.Part1 = nozzle
+		weld.Parent = nozzle
+		nozzle.CFrame = handle.CFrame * CFrame.new(0.4, 1.3, 0) * CFrame.Angles(0, 0, math.rad(-35))
+
+		tool.Parent = character
+		extinguisherTool = tool
+		extinguisherHolder = player
+
+		--// Left-click / tap / gamepad trigger = spray. The channel itself
+		--// runs server-side in the heartbeat.
+		tool.Activated:Connect(function()
+			if onExtinguisherActivated then
+				onExtinguisherActivated(player)
+			end
+		end)
+
+		extinguisherMountPrompt.ObjectText = "Extinguisher taken!"
+		print(("[Events] %s took the extinguisher"):format(player.Name))
+	end)
+
+	print(("[Events] extinguisher mount ready at %s"):format(mount:GetFullName()))
+	return true
+end
+
+--// The extinguisher must never be lost with its carrier
+Players.PlayerRemoving:Connect(function(player)
+	if extinguisherHolder == player then
+		returnExtinguisher()
+		print("[Events] carrier left - extinguisher returned to the mount")
+	end
+end)
+
+Players.PlayerAdded:Connect(function(player)
+	player.CharacterRemoving:Connect(function()
+		if extinguisherHolder == player then
+			returnExtinguisher()
+			print("[Events] carrier died - extinguisher returned to the mount")
+		end
+	end)
+end)
+
+----------------------------------------------------------------
+-- THE GREASE FIRE
+-- A cook station ignites (its in-progress dish is destroyed), burns on a
+-- per-station fuse, and when any fuse runs out every station within
+-- SpreadRadiusStuds of any burning one catches too - chain spread is
+-- intended. The extinguisher is the fix, one channel-hold per station.
+-- Thrown water is an instant spread plus a lesson on the screen.
+--
+-- Stations are driven through ServerStorage.KitchenStationControl -
+-- EventSystem never reaches into KitchenService's internals.
+----------------------------------------------------------------
+local FIRE = Config.Events.GreaseFire
+
+local fire = {
+	Active = false,
+	Burning = {},        -- station Id -> burn record
+	Count = 0,
+	DrainAccum = 0,
+	AlertOverride = nil, -- "<player> threw water..." wins the banner briefly
+	AlertUntil = 0,
+}
+
+local function kitchenStations(...)
+	local bridge = ServerStorage:FindFirstChild("KitchenStationControl")
+	if not bridge then return nil end
+	return bridge:Invoke(...)
+end
+
+local stopFire --// forward declared: the scheduler and heartbeat need it
+
+local function fireAlertText()
+	if fire.AlertOverride and os.clock() < fire.AlertUntil then
+		return fire.AlertOverride
+	end
+	if fire.Count >= 2 then
+		return ("%d stations are on FIRE! Spray them out!"):format(fire.Count)
+	end
+	return "GREASE FIRE! Grab the extinguisher and CLICK the flames!"
+end
+
+--// The banner fuse is the SOONEST-to-spread fire
+local function publishFire()
+	local soonest, total = math.huge, 0
+	for _, burn in pairs(fire.Burning) do
+		if burn.Remaining < soonest then
+			soonest, total = burn.Remaining, burn.Total
+		end
+	end
+	if soonest == math.huge then
+		soonest, total = 0, 0
+	end
+	publish("GreaseFire", "ERUPTING", math.max(0, soonest), total, fireAlertText())
+end
+
+--// Same attribute ServiceLoop stamps on the water pitcher Tool. Equipped
+--// only: throwing water is a deliberate (mis)action, not a pocket check.
+local function findHeldPitcher(player)
+	local character = player.Character
+	if not character then return nil end
+	for _, child in ipairs(character:GetChildren()) do
+		if child:IsA("Tool") and child:GetAttribute("PitcherUses") ~= nil then
+			return child
+		end
+	end
+	return nil
+end
+
+local function showToast(message)
+	EventState:SetAttribute("Toast", message)
+	task.delay(FIRE.ToastSeconds, function()
+		if EventState:GetAttribute("Toast") == message then
+			EventState:SetAttribute("Toast", "")
+		end
+	end)
+end
+
+local function buildFireUi(part)
+	local gui = Instance.new("BillboardGui")
+	gui.Name = "FireAlert"
+	gui.Size = UDim2.fromOffset(200, 56)
+	gui.StudsOffsetWorldSpace = Vector3.new(0, 5.5, 0)
+	gui.AlwaysOnTop = true
+	gui.Parent = part
+
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.fromScale(1, 0.55)
+	label.BackgroundTransparency = 1
+	label.TextScaled = true
+	label.Font = Enum.Font.FredokaOne
+	label.TextColor3 = Color3.fromRGB(229, 72, 77)
+	label.TextStrokeColor3 = Color3.fromRGB(59, 43, 32)
+	label.TextStrokeTransparency = 0
+	label.Text = "🔥 GREASE FIRE!"
+	label.Parent = gui
+
+	local back = Instance.new("Frame")
+	back.Position = UDim2.fromScale(0.05, 0.62)
+	back.Size = UDim2.fromScale(0.9, 0.3)
+	back.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+	back.BorderSizePixel = 0
+	back.Parent = gui
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 6)
+	corner.Parent = back
+
+	local fill = Instance.new("Frame")
+	fill.Size = UDim2.fromScale(1, 1)
+	fill.BackgroundColor3 = Color3.fromRGB(245, 184, 65)
+	fill.BorderSizePixel = 0
+	fill.Parent = back
+
+	local fillCorner = Instance.new("UICorner")
+	fillCorner.CornerRadius = UDim.new(0, 6)
+	fillCorner.Parent = fill
+
+	return gui, fill, label
+end
+
+local function refreshFireUi(burn)
+	--// Someone is spraying: the bar becomes their basil progress and the
+	--// spread fuse is on hold
+	if burn.Dousing then
+		burn.Label.Text = ("DOUSING... %ds"):format(math.max(0, math.ceil(burn.Dousing.Remaining)))
+		local progress = 1 - math.clamp(burn.Dousing.Remaining / burn.Dousing.Total, 0, 1)
+		burn.Fill.Size = UDim2.fromScale(progress, 1)
+		burn.Fill.BackgroundColor3 = Color3.fromRGB(76, 175, 109)
+		return
+	end
+
+	burn.Label.Text = ("🔥 FIRE! %ds"):format(math.max(0, math.ceil(burn.Remaining)))
+	local fraction = burn.Total > 0 and math.clamp(burn.Remaining / burn.Total, 0, 1) or 0
+	burn.Fill.Size = UDim2.fromScale(fraction, 1)
+	burn.Fill.BackgroundColor3 = fraction <= 0.5
+		and Color3.fromRGB(229, 72, 77)
+		or Color3.fromRGB(245, 184, 65)
+end
+
+local function clearBurnVisuals(burn)
+	if burn.Gui then burn.Gui:Destroy() end
+	if burn.Fx then burn.Fx:Destroy() end
+	if burn.Light then burn.Light:Destroy() end
+	if burn.Steam then burn.Steam:Destroy() end
+	if burn.WaterPrompt then burn.WaterPrompt:Destroy() end
+end
+
+local igniteStation  --// forward declared: spreadFrom calls it
+local extinguishStation
+
+--// One fuse ran out (or water was thrown): every station within radius of
+--// ANY burning station catches. The source keeps raging with a fresh fuse,
+--// so it re-arms for stations that enter range later - future-proof for a
+--// third station.
+local function spreadFrom(sourceBurn, cause)
+	local list = kitchenStations("List")
+	if list then
+		--// Targets are collected BEFORE any ignition: igniting while walking
+		--// fire.Burning would mutate the table mid-iteration. It also means
+		--// one spread moment doesn't chain instantly - a freshly caught
+		--// station spreads on its OWN fuse, which is the intended pacing.
+		local toIgnite = {}
+		for _, entry in ipairs(list) do
+			if not fire.Burning[entry.Id] then
+				for _, burn in pairs(fire.Burning) do
+					if (entry.Part.Position - burn.Part.Position).Magnitude <= FIRE.SpreadRadiusStuds then
+						table.insert(toIgnite, entry)
+						break
+					end
+				end
+			end
+		end
+
+		for _, entry in ipairs(toIgnite) do
+			igniteStation(entry)
+		end
+		if #toIgnite > 0 then
+			print(("[Events] the fire spread to %d station(s) (%s)"):format(#toIgnite, cause))
+		end
+	end
+
+	sourceBurn.Remaining = sourceBurn.Total
+	publishFire()
+end
+
+igniteStation = function(entry)
+	if fire.Burning[entry.Id] then return end
+	local diff = difficultyBlock()
+	local part = entry.Part
+
+	--// The in-progress dish dies and the station stops taking orders
+	kitchenStations("CancelCook", entry.Id)
+	kitchenStations("SetDisabled", entry.Id, true)
+
+	local fx = Instance.new("Fire")
+	fx.Size = FIRE.FireSize
+	fx.Heat = 12
+	fx.Parent = part
+
+	local light = Instance.new("PointLight")
+	light.Color = Color3.fromRGB(255, 140, 40)
+	light.Range = FIRE.LightRange
+	light.Brightness = 2
+	light.Parent = part
+
+	local gui, fill, label = buildFireUi(part)
+
+	--// No extinguish prompt: putting a fire out is click-to-spray with the
+	--// extinguisher equipped (see onExtinguisherActivated below)
+
+	--// The trap. F like the water-pour at tables, so muscle memory walks
+	--// straight into the lesson.
+	local waterPrompt = Instance.new("ProximityPrompt")
+	waterPrompt.Name = "ThrowWater"
+	waterPrompt.ActionText = "Throw water"
+	waterPrompt.ObjectText = "It might help...?"
+	waterPrompt.KeyboardKeyCode = Enum.KeyCode.F
+	waterPrompt.UIOffset = Vector2.new(0, 60)
+	waterPrompt.HoldDuration = 0.4
+	waterPrompt.MaxActivationDistance = Config.Interaction.PromptRangeStuds
+	waterPrompt.RequiresLineOfSight = Config.Interaction.PromptRequiresLineOfSight
+	waterPrompt.Parent = part
+
+	local burn = {
+		Id = entry.Id,
+		Method = entry.Method,
+		Part = part,
+		Total = diff.Consequences.FireSpreadSeconds,
+		Remaining = diff.Consequences.FireSpreadSeconds,
+		Gui = gui, Fill = fill, Label = label,
+		Fx = fx, Light = light,
+		WaterPrompt = waterPrompt,
+	}
+	fire.Burning[entry.Id] = burn
+	fire.Count += 1
+	refreshFireUi(burn)
+
+	--// Every station ablaze is the catastrophe this event threatens. EASY
+	--// keeps its training wheels (rep drain only) - same shape as
+	--// ToiletFloodEndsGame.
+	local all = kitchenStations("List")
+	if all and #all > 0 and fire.Count >= #all and diff.Consequences.FireBurnoutEndsGame then
+		print("[Events] every station is burning - the kitchen is lost")
+		local endBridge = ServerStorage:FindFirstChild("ForceEndShift")
+		if endBridge then
+			endBridge:Invoke("the kitchen burned down!")
+		end
+	end
+
+	waterPrompt.Triggered:Connect(function(player)
+		local active = fire.Burning[entry.Id]
+		if not active then return end
+
+		local pitcher = findHeldPitcher(player)
+		if not pitcher or (pitcher:GetAttribute("PitcherUses") or 0) <= 0 then
+			waterPrompt.ObjectText = "Need a filled pitcher!"
+			task.delay(2, function()
+				if fire.Burning[entry.Id] then
+					waterPrompt.ObjectText = "It might help...?"
+				end
+			end)
+			return
+		end
+
+		--// The lesson is the punishment: instant spread, no extra rep hit
+		pitcher:SetAttribute("PitcherUses", 0)
+		pitcher.Name = "Water Pitcher (0)"
+
+		fire.AlertOverride = ("%s threw water on a grease fire!!"):format(player.Name)
+		fire.AlertUntil = os.clock() + FIRE.ToastSeconds
+		showToast(FIRE.WaterTrapMessage)
+		print(("[Events] %s threw water on the %s fire - it spreads!"):format(
+			player.Name, active.Method))
+		spreadFrom(active, "water!!")
+	end)
+
+	print(("[Events] the %s station is on fire - fuse %ds"):format(entry.Method, burn.Total))
+end
+
+extinguishStation = function(id, player)
+	local burn = fire.Burning[id]
+	if not burn then return end
+
+	fire.Burning[id] = nil
+	fire.Count -= 1
+	clearBurnVisuals(burn)
+	kitchenStations("SetDisabled", id, false)
+	print(("[Events] %s extinguished the %s station (%d still burning)"):format(
+		player.Name, burn.Method, fire.Count))
+
+	if fire.Count <= 0 then
+		stopFire(player)
+	else
+		publishFire()
+	end
+end
+
+--// Left-click / tap / gamepad trigger with the extinguisher equipped:
+--// start spraying the nearest burning station in range. The channel runs
+--// in the heartbeat; walking away, dying, or unequipping cancels it, and
+--// the spread fuse pauses while the spray is on.
+onExtinguisherActivated = function(player)
+	if not fire.Active then return end
+	local character = player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	if not root then return end
+
+	local best, bestDist = nil, math.huge
+	for _, burn in pairs(fire.Burning) do
+		if not burn.Dousing then
+			local dist = (burn.Part.Position - root.Position).Magnitude
+			if dist <= FIRE.DouseRangeStuds and dist < bestDist then
+				best, bestDist = burn, dist
+			end
+		end
+	end
+	if not best then return end
+
+	local diff = difficultyBlock()
+	best.Dousing = {
+		Player = player,
+		Remaining = diff.ExtinguishChannelSeconds,
+		Total = diff.ExtinguishChannelSeconds,
+	}
+
+	--// Code-built spray: white steam billowing off the station while the
+	--// channel runs (the Fire instance also shrinks - see the heartbeat)
+	if not best.Steam then
+		local steam = Instance.new("ParticleEmitter")
+		steam.Name = "DouseSteam"
+		steam.Color = ColorSequence.new(Color3.fromRGB(240, 240, 240))
+		steam.Size = NumberSequence.new(2, 4)
+		steam.Lifetime = NumberRange.new(0.6, 1.1)
+		steam.Rate = 40
+		steam.Speed = NumberRange.new(4, 7)
+		steam.SpreadAngle = Vector2.new(35, 35)
+		steam.Transparency = NumberSequence.new(0.3, 1)
+		steam.Enabled = false
+		steam.Parent = best.Part
+		best.Steam = steam
+	end
+	best.Steam.Enabled = true
+
+	print(("[Events] %s is dousing the %s station"):format(player.Name, best.Method))
+end
+
+local function startFire()
+	local list = kitchenStations("List")
+	if not list or #list == 0 then
+		warn("[Events] GreaseFire rolled but no cook stations exist - skipped")
+		return
+	end
+
+	fire.Active = true
+	fire.DrainAccum = 0
+	fire.AlertOverride = nil
+
+	--// Prefer a station mid-cook: grease + heat is the fiction, and losing
+	--// the dish is the crueler, more memorable opening
+	local busy = {}
+	for _, entry in ipairs(list) do
+		if entry.Busy then
+			table.insert(busy, entry)
+		end
+	end
+	local target = #busy > 0 and busy[math.random(#busy)] or list[math.random(#list)]
+
+	igniteStation(target)
+	publishFire()
+	print(("[Events] grease fire started on the %s station"):format(target.Method))
+end
+
+stopFire = function(fixedBy)
+	if not fire.Active then return end
+	fire.Active = false
+
+	for _, burn in pairs(fire.Burning) do
+		clearBurnVisuals(burn)
+	end
+	fire.Burning = {}
+	fire.Count = 0
+	fire.DrainAccum = 0
+	fire.AlertOverride = nil
+
+	--// Defensive: EVERY station re-enabled no matter how the event died -
+	--// a disabled station must never outlive its fire
+	local list = kitchenStations("List")
+	if list then
+		for _, entry in ipairs(list) do
+			kitchenStations("SetDisabled", entry.Id, false)
+		end
+	end
+
+	returnExtinguisher()
+
+	--// Stamp the scheduler gap directly (same reasoning as stopToilet)
+	local elapsed = shiftInfo().Elapsed
+	scheduler.LastEndedAt = elapsed
+	scheduler.NextRollAt = elapsed + SCHEDULER.RollIntervalSeconds
+
+	if fixedBy then
+		applyRep(FIRE.FixRepReward, "fire extinguished")
+		publish("", "", 0, 0, ("%s put out the fire!"):format(fixedBy.Name))
+		task.delay(3, function()
+			if not fire.Active and not toilet.Active then
+				publish()
+			end
+		end)
+	else
+		publish()
+	end
+
+	print(("[Events] grease fire ended%s"):format(
+		fixedBy and (" (last flame doused by " .. fixedBy.Name .. ")") or ""))
+end
+
+----------------------------------------------------------------
 -- Event registry. New events add an entry here; the scheduler only ever
 -- picks from what is registered AND weighted, so unimplemented entries in
 -- Config.EventWeights are skipped rather than crashing.
@@ -561,6 +1101,9 @@ RunService.Heartbeat:Connect(function(dt)
 		if toilet.Active then
 			stopToilet(nil)
 		end
+		if fire.Active then
+			stopFire(nil)
+		end
 		return
 	end
 
@@ -580,6 +1123,88 @@ RunService.Heartbeat:Connect(function(dt)
 				toilet.DrainAccum -= 10
 				applyRep(-TOILET.FloodRepDrainPer10s, "flooded bathroom")
 			end
+		end
+	end
+
+	--// Tick the fire: every burning station's fuse runs independently,
+	--// except while someone is actively spraying it
+	if fire.Active then
+		local expired, doused = nil, nil
+		local soonest = math.huge
+		for _, burn in pairs(fire.Burning) do
+			local douse = burn.Dousing
+			if douse then
+				--// Cancel if the sprayer let go of the tool, died, or
+				--// wandered out of range; finish when the channel completes
+				local character = douse.Player and douse.Player.Character
+				local holding = character and extinguisherTool
+					and extinguisherTool.Parent == character
+				local root = character and character:FindFirstChild("HumanoidRootPart")
+				local inRange = root
+					and (burn.Part.Position - root.Position).Magnitude <= FIRE.DouseRangeStuds
+
+				if not (holding and inRange) then
+					burn.Dousing = nil
+					if burn.Steam then burn.Steam.Enabled = false end
+					if burn.Fx then burn.Fx.Size = FIRE.FireSize end
+				else
+					douse.Remaining -= dt
+					--// The flames visibly die back as the spray works
+					if burn.Fx then
+						burn.Fx.Size = math.max(2,
+							FIRE.FireSize * math.clamp(douse.Remaining / douse.Total, 0, 1))
+					end
+					if douse.Remaining <= 0 then
+						doused = doused or {}
+						table.insert(doused, burn)
+					end
+				end
+			else
+				burn.Remaining -= dt
+				if burn.Remaining <= 0 then
+					expired = expired or {}
+					table.insert(expired, burn)
+				end
+			end
+
+			refreshFireUi(burn)
+			if burn.Remaining < soonest then
+				soonest = burn.Remaining
+			end
+		end
+		if soonest < math.huge then
+			EventState:SetAttribute("FuseRemaining", math.max(0, soonest))
+		end
+
+		if doused then
+			for _, burn in ipairs(doused) do
+				if fire.Burning[burn.Id] and burn.Dousing then
+					extinguishStation(burn.Id, burn.Dousing.Player)
+				end
+			end
+		end
+
+		if expired then
+			for _, burn in ipairs(expired) do
+				if fire.Active and fire.Burning[burn.Id] then
+					spreadFrom(burn, "the fuse ran out")
+				end
+			end
+		end
+
+		--// Each burning station bleeds reputation independently
+		fire.DrainAccum += dt
+		if fire.DrainAccum >= 10 then
+			fire.DrainAccum -= 10
+			if fire.Count > 0 then
+				applyRep(-FIRE.RepDrainPer10sPerFire * fire.Count, "kitchen on fire")
+			end
+		end
+
+		--// Let the "<player> threw water" banner line expire back to normal
+		if fire.AlertOverride and os.clock() >= fire.AlertUntil then
+			fire.AlertOverride = nil
+			publishFire()
 		end
 	end
 
@@ -619,6 +1244,25 @@ task.spawn(function()
 			Stop = function() stopToilet(nil) end,
 			IsActive = function() return toilet.Active end,
 		})
+	end
+
+	--// GreaseFire needs its mount AND the kitchen's station bridge. The
+	--// bridge appears when KitchenService boots; give it a moment.
+	local hasMount = setupExtinguisherMount()
+	local bridgeWaited = 0
+	while not ServerStorage:FindFirstChild("KitchenStationControl") and bridgeWaited < 10 do
+		task.wait(0.5)
+		bridgeWaited += 0.5
+	end
+
+	if hasMount and ServerStorage:FindFirstChild("KitchenStationControl") then
+		registerEvent("GreaseFire", {
+			Start = startFire,
+			Stop = function() stopFire(nil) end,
+			IsActive = function() return fire.Active end,
+		})
+	elseif hasMount then
+		warn("[Events] GreaseFire not registered - KitchenStationControl bridge never appeared")
 	end
 
 	local names = {}

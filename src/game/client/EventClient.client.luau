@@ -93,6 +93,48 @@ fillCorner.CornerRadius = UDim.new(0, 6)
 fillCorner.Parent = barFill
 
 ----------------------------------------------------------------
+-- Centre-screen toast: the water-trap lesson ("NEVER put water on a
+-- grease fire!"). Driven by EventState.Toast; big, tomato, unmissable.
+----------------------------------------------------------------
+local toastGui = Instance.new("ScreenGui")
+toastGui.Name = "EventToast_UI"
+toastGui.ResetOnSpawn = false
+toastGui.IgnoreGuiInset = true
+toastGui.DisplayOrder = 40 --// above the banner - the lesson interrupts
+toastGui.Enabled = false
+toastGui.Parent = playerGui
+
+local toastFrame = Instance.new("Frame")
+toastFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+toastFrame.Position = UDim2.fromScale(0.5, 0.35)
+toastFrame.Size = UDim2.fromScale(0.52, 0.12)
+toastFrame.BackgroundColor3 = TOMATO
+toastFrame.Parent = toastGui
+
+local toastCorner = Instance.new("UICorner")
+toastCorner.CornerRadius = UDim.new(0, 14)
+toastCorner.Parent = toastFrame
+
+local toastStroke = Instance.new("UIStroke")
+toastStroke.Thickness = 3
+toastStroke.Color = CHOC
+toastStroke.Parent = toastFrame
+
+local toastLabel = Instance.new("TextLabel")
+toastLabel.AnchorPoint = Vector2.new(0.5, 0.5)
+toastLabel.Position = UDim2.fromScale(0.5, 0.5)
+toastLabel.Size = UDim2.fromScale(0.92, 0.7)
+toastLabel.BackgroundTransparency = 1
+toastLabel.Font = Enum.Font.FredokaOne
+toastLabel.TextScaled = true
+toastLabel.TextWrapped = true
+toastLabel.TextColor3 = Color3.new(1, 1, 1)
+toastLabel.TextStrokeColor3 = CHOC
+toastLabel.TextStrokeTransparency = 0
+toastLabel.Text = ""
+toastLabel.Parent = toastFrame
+
+----------------------------------------------------------------
 -- A gentle pulse while something is wrong, so it reads as urgent
 -- without a flashing screen
 ----------------------------------------------------------------
@@ -121,6 +163,11 @@ local function refresh()
 	local active = EventState:GetAttribute("ActiveEvent") or ""
 	local alert = EventState:GetAttribute("AlertText") or ""
 	local phase = EventState:GetAttribute("Phase") or ""
+
+	--// Toast is independent of the banner: it may outlive the event
+	local toast = EventState:GetAttribute("Toast") or ""
+	toastGui.Enabled = toast ~= ""
+	toastLabel.Text = toast
 
 	if alert == "" then
 		gui.Enabled = false

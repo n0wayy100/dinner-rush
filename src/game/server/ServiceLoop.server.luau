@@ -1767,6 +1767,21 @@ local function endShift(success, reason)
 	refreshScoreboard()
 end
 
+--// SHIFT-END BRIDGE: an event that constitutes catastrophic failure (the
+--// kitchen burning down) ends the shift through the same single path as
+--// the timer and the reputation floor. Same pattern as ApplyReputation;
+--// created down here because endShift is a local defined just above.
+--//   ServerStorage.ForceEndShift:Invoke("the kitchen burned down!")
+do
+	local bridge = Instance.new("BindableFunction")
+	bridge.Name = "ForceEndShift"
+	bridge.OnInvoke = function(reason)
+		endShift(false, tostring(reason or "event catastrophe"))
+		return true
+	end
+	bridge.Parent = game:GetService("ServerStorage")
+end
+
 ----------------------------------------------------------------
 -- Heartbeat: the one clock that drains every bar
 ----------------------------------------------------------------
