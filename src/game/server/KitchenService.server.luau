@@ -337,71 +337,137 @@ end)
 ----------------------------------------------------------------
 local stations = {} --// list of station records, ticked by one Heartbeat
 
-local function stationLabel(station)
-	if station.State == "IDLE" then
-		return ""
+--// A station is an appliance; a slot is one pan on it. A stove with three
+--// burners is ONE station with three slots, not three stations - three
+--// separate anchors would put three prompts inside each other's range, all
+--// bound to E, and ProximityPromptService only shows two at a time.
+--// Slots comes from the anchor's "Slots" attribute; absent means 1.
+local MAX_SLOTS = 6
+
+local function slotDisplay(slot)
+	local recipe = Config.Recipes[slot.Dish]
+	return recipe and recipe.Display or tostring(slot.Dish)
+end
+
+--// First empty pan, or nil when every burner is going
+local function freeSlot(station)
+	for _, slot in ipairs(station.Slots) do
+		if slot.State == "IDLE" then
+			return slot
+		end
 	end
-	local recipe = Config.Recipes[station.Dish]
-	local display = recipe and recipe.Display or station.Dish
-	if station.State == "COOKING" then
-		return ("%s - cooking"):format(display)
-	elseif station.State == "PERFECT" then
-		return ("%s - READY"):format(display)
-	elseif station.State == "OVERCOOKED" then
-		return ("%s - overcooked"):format(display)
+	return nil
+end
+
+--// What Collect should hand over. Burnt first - it has to be cleared before
+--// that burner is usable again - then whichever finished pan has been sitting
+--// longest, which is always the one closest to burning.
+local function collectableSlot(station)
+	local burnt, ready = nil, nil
+	for _, slot in ipairs(station.Slots) do
+		if slot.State == "BURNT" then
+			if not burnt or slot.Elapsed > burnt.Elapsed then
+				burnt = slot
+			end
+		elseif slot.State == "PERFECT" or slot.State == "OVERCOOKED" then
+			if not ready or slot.Elapsed > ready.Elapsed then
+				ready = slot
+			end
+		end
 	end
-	return ("%s - BURNT"):format(display)
+	return burnt or ready
+end
+
+local function activeCount(station)
+	local count = 0
+	for _, slot in ipairs(station.Slots) do
+		if slot.State ~= "IDLE" then
+			count += 1
+		end
+	end
+	return count
+end
+
+local function stationBusy(station)
+	return activeCount(station) > 0
 end
 
 local function refreshStationUi(station)
-	local gui = station.Gui
-	gui.Enabled = station.State ~= "IDLE"
-	if station.State == "IDLE" then
+	local anyActive = stationBusy(station)
+	station.Gui.Enabled = anyActive
+
+	for _, slot in ipairs(station.Slots) do
+		if slot.State == "IDLE" then
+			slot.Fill.Size = UDim2.fromScale(0, 1)
+		else
+			slot.Fill.BackgroundColor3 = STATE_COLOR[slot.State] or STATE_COLOR.COOKING
+			--// Bar fills while cooking, then holds full through the later
+			--// windows so colour alone communicates the state
+			local fraction = 1
+			if slot.State == "COOKING" and slot.CookTime > 0 then
+				fraction = math.clamp(slot.Elapsed / slot.CookTime, 0, 1)
+			end
+			slot.Fill.Size = UDim2.fromScale(fraction, 1)
+		end
+	end
+
+	if not anyActive then
 		return
 	end
 
-	station.Label.Text = stationLabel(station)
-	station.Fill.BackgroundColor3 = STATE_COLOR[station.State] or STATE_COLOR.COOKING
-
-	--// Bar fills while cooking, then holds full through the eating states so
-	--// colour alone communicates the window
-	local fraction = 1
-	if station.State == "COOKING" and station.CookTime > 0 then
-		fraction = math.clamp(station.Elapsed / station.CookTime, 0, 1)
+	--// One line for the whole appliance, showing whatever is most urgent
+	local urgent = collectableSlot(station)
+	if urgent and urgent.State == "BURNT" then
+		station.Label.Text = ("%s - BURNT"):format(slotDisplay(urgent))
+	elseif urgent then
+		station.Label.Text = ("%s - READY"):format(slotDisplay(urgent))
+	else
+		station.Label.Text = ("%d cooking"):format(activeCount(station))
 	end
-	station.Fill.Size = UDim2.fromScale(fraction, 1)
 end
 
 local function refreshStationPrompt(station)
-	local prompt = station.Prompt
-	if station.State == "IDLE" then
-		prompt.ActionText = "Cook"
-		prompt.ObjectText = ("%s station"):format(station.Method)
-		prompt.HoldDuration = Config.Kitchen.StationLoadHoldSeconds
-	elseif station.State == "COOKING" then
-		prompt.ActionText = "Cooking..."
-		prompt.ObjectText = stationLabel(station)
-		prompt.HoldDuration = Config.Kitchen.CollectHoldSeconds
-	elseif station.State == "BURNT" then
-		prompt.ActionText = "Bin it"
-		prompt.ObjectText = stationLabel(station)
-		prompt.HoldDuration = Config.Kitchen.BurntCleanupSeconds
+	local capacity = #station.Slots
+	local busy = activeCount(station)
+
+	--// E: start another pan
+	local cook = station.CookPrompt
+	cook.Enabled = not station.Disabled
+	cook.ActionText = "Cook"
+	if freeSlot(station) then
+		cook.ObjectText = capacity > 1
+			and ("%s station (%d/%d)"):format(station.Method, busy, capacity)
+			or ("%s station"):format(station.Method)
 	else
-		prompt.ActionText = "Collect"
-		prompt.ObjectText = stationLabel(station)
-		prompt.HoldDuration = Config.Kitchen.CollectHoldSeconds
+		cook.ObjectText = "All burners full"
+	end
+
+	--// F: take whatever is done. Hidden entirely when nothing is.
+	local collectPrompt = station.CollectPrompt
+	local target = collectableSlot(station)
+	collectPrompt.Enabled = (target ~= nil) and not station.Disabled
+	if target then
+		if target.State == "BURNT" then
+			collectPrompt.ActionText = "Bin it"
+			collectPrompt.ObjectText = ("%s - ruined"):format(slotDisplay(target))
+			collectPrompt.HoldDuration = Config.Kitchen.BurntCleanupSeconds
+		else
+			collectPrompt.ActionText = "Collect"
+			collectPrompt.ObjectText = slotDisplay(target)
+			collectPrompt.HoldDuration = Config.Kitchen.CollectHoldSeconds
+		end
 	end
 end
 
-local function clearStation(station)
-	station.State = "IDLE"
-	station.Dish = nil
-	station.Elapsed = 0
+local function clearSlot(station, slot)
+	slot.State = "IDLE"
+	slot.Dish = nil
+	slot.Elapsed = 0
 	refreshStationUi(station)
 	refreshStationPrompt(station)
 end
 
-local function startCook(station, player, tool, dishName, recipe)
+local function startCook(station, slot, player, tool, dishName, recipe)
 	local timing = Config.Cooking[recipe.Timing]
 	if not timing then
 		warn(("[Kitchen] recipe %s has Timing '%s', which is not in Config.Cooking")
@@ -411,40 +477,43 @@ local function startCook(station, player, tool, dishName, recipe)
 
 	tool:Destroy() --// the raw ingredient is consumed
 
-	station.State = "COOKING"
-	station.Dish = dishName
-	station.Elapsed = 0
-	station.CookTime = timing.CookTime
-	station.PerfectUntil = timing.CookTime + timing.PerfectWindow
-	station.OvercookedUntil = station.PerfectUntil + timing.OvercookAfter
-	station.BurntAt = station.OvercookedUntil + timing.BurntAfter
+	slot.State = "COOKING"
+	slot.Dish = dishName
+	slot.Elapsed = 0
+	slot.CookTime = timing.CookTime
+	slot.PerfectUntil = timing.CookTime + timing.PerfectWindow
+	slot.OvercookedUntil = slot.PerfectUntil + timing.OvercookAfter
+	slot.BurntAt = slot.OvercookedUntil + timing.BurntAfter
 
 	refreshStationUi(station)
 	refreshStationPrompt(station)
-	print(("[Kitchen] %s started %s on the %s"):format(player.Name, dishName, station.Method))
+	print(("[Kitchen] %s started %s on the %s (%d/%d busy)"):format(
+		player.Name, dishName, station.Method, activeCount(station), #station.Slots))
 end
 
 local function collect(station, player)
 	local character = player.Character
 	if not character then return end
 
-	if station.State == "BURNT" then
-		--// Ruined. Binning it costs a little reputation via the served-dish
-		--// path being denied entirely; the number lives in Config.
-		print(("[Kitchen] %s binned a burnt %s"):format(player.Name, tostring(station.Dish)))
-		clearStation(station)
+	local slot = collectableSlot(station)
+	if not slot then return end
+
+	if slot.State == "BURNT" then
+		print(("[Kitchen] %s binned a burnt %s"):format(player.Name, tostring(slot.Dish)))
+		clearSlot(station, slot)
 		return
 	end
 
 	if isFull(player) then
-		flash(station.Prompt, ("Hands full (max %d)"):format(Config.Kitchen.MaxCarriedItems),
-			stationLabel(station))
+		flash(station.CollectPrompt,
+			("Hands full (max %d)"):format(Config.Kitchen.MaxCarriedItems),
+			slotDisplay(slot))
 		return
 	end
 
-	local dishName = station.Dish
+	local dishName = slot.Dish
 	local recipe = Config.Recipes[dishName]
-	local quality = station.State == "PERFECT" and "Perfect" or "Overcooked"
+	local quality = slot.State == "PERFECT" and "Perfect" or "Overcooked"
 
 	local tool = makeTool(recipe.Display, recipe.Icon, recipe.Color, {
 		Dish = dishName,
@@ -453,7 +522,23 @@ local function collect(station, player)
 	tool.Parent = character
 
 	print(("[Kitchen] %s collected a %s %s"):format(player.Name, quality, dishName))
-	clearStation(station)
+	clearSlot(station, slot)
+end
+
+--// Wipes every pan on an appliance. Used by the grease fire.
+local function cancelAllCooks(station)
+	local cancelled = false
+	for _, slot in ipairs(station.Slots) do
+		if slot.State ~= "IDLE" then
+			slot.State = "IDLE"
+			slot.Dish = nil
+			slot.Elapsed = 0
+			cancelled = true
+		end
+	end
+	refreshStationUi(station)
+	refreshStationPrompt(station)
+	return cancelled
 end
 
 local function setupStation(instance)
@@ -471,16 +556,23 @@ local function setupStation(instance)
 		return
 	end
 
+	local rawSlots = instance:GetAttribute("Slots") or part:GetAttribute("Slots")
+	local capacity = math.clamp(math.floor(tonumber(rawSlots) or 1), 1, MAX_SLOTS)
+	if rawSlots ~= nil and tonumber(rawSlots) == nil then
+		warn(("[Kitchen] %s has Slots '%s' - needs a number, using 1")
+			:format(instance:GetFullName(), tostring(rawSlots)))
+	end
+
 	local gui = Instance.new("BillboardGui")
 	gui.Name = "CookProgress"
-	gui.Size = UDim2.fromOffset(180, 40)
+	gui.Size = UDim2.fromOffset(180, 26 + (capacity * 14))
 	gui.StudsOffsetWorldSpace = Vector3.new(0, 4, 0)
 	gui.AlwaysOnTop = true
 	gui.Enabled = false
 	gui.Parent = part
 
 	local label = Instance.new("TextLabel")
-	label.Size = UDim2.fromScale(1, 0.5)
+	label.Size = UDim2.fromScale(1, 26 / (26 + capacity * 14))
 	label.BackgroundTransparency = 1
 	label.TextScaled = true
 	label.Font = Enum.Font.FredokaOne
@@ -488,85 +580,141 @@ local function setupStation(instance)
 	label.TextStrokeTransparency = 0.2
 	label.Parent = gui
 
-	local back = Instance.new("Frame")
-	back.Position = UDim2.fromScale(0, 0.55)
-	back.Size = UDim2.fromScale(1, 0.35)
-	back.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-	back.BorderSizePixel = 0
-	back.Parent = gui
+	--// One bar per burner, stacked, so the whole appliance reads at a glance
+	local bars = Instance.new("Frame")
+	bars.AnchorPoint = Vector2.new(0, 1)
+	bars.Position = UDim2.fromScale(0, 1)
+	bars.Size = UDim2.fromScale(1, (capacity * 14) / (26 + capacity * 14))
+	bars.BackgroundTransparency = 1
+	bars.Parent = gui
 
-	local fill = Instance.new("Frame")
-	fill.Size = UDim2.fromScale(0, 1)
-	fill.BackgroundColor3 = STATE_COLOR.COOKING
-	fill.BorderSizePixel = 0
-	fill.Parent = back
+	local layout = Instance.new("UIListLayout")
+	layout.FillDirection = Enum.FillDirection.Vertical
+	layout.Padding = UDim.new(0, 2)
+	layout.Parent = bars
 
-	local prompt = Instance.new("ProximityPrompt")
-	prompt.MaxActivationDistance = Config.Interaction.PromptRangeStuds
-	prompt.RequiresLineOfSight = Config.Interaction.PromptRequiresLineOfSight
-	prompt.Parent = part
+	local slots = {}
+	for index = 1, capacity do
+		local back = Instance.new("Frame")
+		back.Name = "Slot" .. index
+		back.Size = UDim2.new(1, 0, 1 / capacity, -2)
+		back.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+		back.BorderSizePixel = 0
+		back.Parent = bars
+
+		local fill = Instance.new("Frame")
+		fill.Size = UDim2.fromScale(0, 1)
+		fill.BackgroundColor3 = STATE_COLOR.COOKING
+		fill.BorderSizePixel = 0
+		fill.Parent = back
+
+		table.insert(slots, {
+			State = "IDLE",
+			Dish = nil,
+			Elapsed = 0,
+			CookTime = 0,
+			PerfectUntil = 0,
+			OvercookedUntil = 0,
+			BurntAt = 0,
+			Fill = fill,
+		})
+	end
+
+	--// Two prompts on different keys. One prompt cannot both start a pan and
+	--// take a finished one, and you often want to do both in the same breath.
+	local cookPrompt = Instance.new("ProximityPrompt")
+	cookPrompt.Name = "Cook"
+	cookPrompt.HoldDuration = Config.Kitchen.StationLoadHoldSeconds
+	cookPrompt.MaxActivationDistance = Config.Interaction.PromptRangeStuds
+	cookPrompt.RequiresLineOfSight = Config.Interaction.PromptRequiresLineOfSight
+	cookPrompt.Parent = part
+
+	local collectPrompt = Instance.new("ProximityPrompt")
+	collectPrompt.Name = "Collect"
+	collectPrompt.KeyboardKeyCode = Enum.KeyCode.F
+	collectPrompt.UIOffset = Vector2.new(0, 60)
+	collectPrompt.HoldDuration = Config.Kitchen.CollectHoldSeconds
+	collectPrompt.MaxActivationDistance = Config.Interaction.PromptRangeStuds
+	collectPrompt.RequiresLineOfSight = Config.Interaction.PromptRequiresLineOfSight
+	collectPrompt.Enabled = false
+	collectPrompt.Parent = part
 
 	local station = {
 		Part = part,
 		Method = method,
-		State = "IDLE",
-		Elapsed = 0,
+		Slots = slots,
 		Gui = gui,
 		Label = label,
-		Fill = fill,
-		Prompt = prompt,
-		Disabled = false, --// set by the event bridge (grease fire); prompt is
+		CookPrompt = cookPrompt,
+		CollectPrompt = collectPrompt,
+		Disabled = false, --// set by the event bridge (grease fire); prompts are
 		                  --// also turned off, this is belt-and-braces
 	}
 
-	prompt.Triggered:Connect(function(player)
+	cookPrompt.Triggered:Connect(function(player)
 		if station.Disabled then return end
-		if station.State == "IDLE" then
-			local tool = findCookableIngredient(player, station.Method)
-			if not tool then
-				flash(prompt, "Bring something this station can cook",
-					("%s station"):format(station.Method))
-				return
-			end
-			local dishName, recipe = Config.RecipeFor(tool:GetAttribute("Ingredient"), station.Method)
-			startCook(station, player, tool, dishName, recipe)
 
-		elseif station.State == "COOKING" then
-			flash(prompt, "Not ready yet", stationLabel(station))
-
-		else
-			collect(station, player)
+		local slot = freeSlot(station)
+		if not slot then
+			flash(cookPrompt, "All burners full", ("%s station"):format(station.Method))
+			return
 		end
+
+		local tool = findCookableIngredient(player, station.Method)
+		if not tool then
+			flash(cookPrompt, "Bring something this station can cook",
+				("%s station"):format(station.Method))
+			return
+		end
+
+		local dishName, recipe = Config.RecipeFor(tool:GetAttribute("Ingredient"), station.Method)
+		startCook(station, slot, player, tool, dishName, recipe)
+	end)
+
+	collectPrompt.Triggered:Connect(function(player)
+		if station.Disabled then return end
+		collect(station, player)
 	end)
 
 	refreshStationPrompt(station)
 	table.insert(stations, station)
-	print(("[Kitchen] station ready: %s (%s)"):format(part:GetFullName(), method))
+	print(("[Kitchen] station ready: %s (%s, %d slot%s)"):format(
+		part:GetFullName(), method, capacity, capacity == 1 and "" or "s"))
 end
 
 ----------------------------------------------------------------
--- One clock for every station
+-- One clock for every pan on every station
 ----------------------------------------------------------------
 RunService.Heartbeat:Connect(function(dt)
 	for _, station in ipairs(stations) do
-		if station.State ~= "IDLE" and station.State ~= "BURNT" then
-			station.Elapsed += dt
+		local changed = false
 
-			local previous = station.State
-			if station.Elapsed >= station.BurntAt then
-				station.State = "BURNT"
-			elseif station.Elapsed >= station.OvercookedUntil then
-				station.State = "OVERCOOKED"
-			elseif station.Elapsed >= station.CookTime then
-				station.State = "PERFECT"
-			else
-				station.State = "COOKING"
+		for _, slot in ipairs(station.Slots) do
+			if slot.State ~= "IDLE" and slot.State ~= "BURNT" then
+				slot.Elapsed += dt
+
+				local previous = slot.State
+				if slot.Elapsed >= slot.BurntAt then
+					slot.State = "BURNT"
+				elseif slot.Elapsed >= slot.OvercookedUntil then
+					slot.State = "OVERCOOKED"
+				elseif slot.Elapsed >= slot.CookTime then
+					slot.State = "PERFECT"
+				else
+					slot.State = "COOKING"
+				end
+
+				if slot.State ~= previous then
+					changed = true
+				end
 			end
+		end
 
+		if stationBusy(station) then
 			refreshStationUi(station)
-			if station.State ~= previous then
-				refreshStationPrompt(station)
-			end
+		end
+		if changed then
+			refreshStationPrompt(station)
 		end
 	end
 end)
@@ -592,7 +740,7 @@ do
 					Id = index,
 					Part = station.Part,
 					Method = station.Method,
-					Busy = station.State ~= "IDLE",
+					Busy = stationBusy(station),
 					Disabled = station.Disabled == true,
 				})
 			end
@@ -603,16 +751,18 @@ do
 		if not station then return false end
 
 		if action == "CancelCook" then
-			local wasBusy = station.State ~= "IDLE"
-			if wasBusy then
-				print(("[Kitchen] cook on the %s cancelled by event (station %d)")
+			--// A fire ruins every pan on the appliance, not just one burner
+			local cancelled = cancelAllCooks(station)
+			if cancelled then
+				print(("[Kitchen] cooks on the %s cancelled by event (station %d)")
 					:format(station.Method, id))
 			end
-			clearStation(station)
-			return wasBusy
+			return cancelled
 		elseif action == "SetDisabled" then
 			station.Disabled = value == true
-			station.Prompt.Enabled = not station.Disabled
+			station.CookPrompt.Enabled = not station.Disabled
+			station.CollectPrompt.Enabled = false --// refreshed below if anything is ready
+			refreshStationPrompt(station)
 			return true
 		end
 

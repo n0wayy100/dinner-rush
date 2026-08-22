@@ -66,8 +66,40 @@ if not board then
 	return
 end
 
-local faceName = board:GetAttribute("ScreenFace")
-local face = Enum.NormalId[faceName or "Front"] or Enum.NormalId.Front
+--// A screen belongs on the widest side of the slab, so work that out from
+--// the part's own dimensions rather than making anyone guess. ScreenFace
+--// overrides it when set to a real face name; leave it blank or "Auto" for this.
+local function largestFace(part)
+	local size = part.Size
+	local frontArea = size.X * size.Y   -- Front / Back
+	local sideArea  = size.Z * size.Y   -- Left / Right
+	local topArea   = size.X * size.Z   -- Top / Bottom
+
+	if frontArea >= sideArea and frontArea >= topArea then
+		return Enum.NormalId.Front
+	elseif sideArea >= topArea then
+		return Enum.NormalId.Right
+	end
+	return Enum.NormalId.Top
+end
+
+local function resolveFace(part)
+	local wanted = part:GetAttribute("ScreenFace")
+
+	if typeof(wanted) == "string" and wanted ~= "" and wanted ~= "Auto" then
+		local resolved = Enum.NormalId[wanted]
+		if resolved then
+			return resolved, ("set to %s"):format(resolved.Name)
+		end
+		warn(("[SupplierClient] '%s' is not a face - use Front/Back/Left/Right/Top/Bottom, or Auto")
+			:format(tostring(wanted)))
+	end
+
+	local auto = largestFace(part)
+	return auto, ("auto-picked %s, the widest face of %s"):format(auto.Name, tostring(part.Size))
+end
+
+local face, faceWhy = resolveFace(board)
 
 local gui = Instance.new("SurfaceGui")
 gui.Name = "SupplierBoard_UI"
@@ -80,7 +112,18 @@ gui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
 gui.ResetOnSpawn = false
 gui.Parent = board
 
-print(("[SupplierClient] screen on %s (%s face)"):format(board:GetFullName(), face.Name))
+print(("[SupplierClient] screen on %s - %s"):format(board:GetFullName(), faceWhy))
+
+--// Live, so you can flip through faces in the Properties panel mid-playtest
+--// instead of restarting to find the right one
+local function applyFace()
+	local resolved, why = resolveFace(board)
+	gui.Face = resolved
+	print(("[SupplierClient] screen face -> %s"):format(why))
+end
+
+board:GetAttributeChangedSignal("ScreenFace"):Connect(applyFace)
+board:GetPropertyChangedSignal("Size"):Connect(applyFace) --// resize re-picks it
 
 local panel = Instance.new("Frame")
 panel.AnchorPoint = Vector2.new(0.5, 0.5)

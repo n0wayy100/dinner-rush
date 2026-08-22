@@ -1816,6 +1816,16 @@ local function endShift(success, reason)
 		addToTill(uncollected, "uncollected table payments")
 	end
 
+	--// An order paid for but still on the road when the buzzer goes is money
+	--// the team never got food for. Hand it back before splitting.
+	local refundBridge = game:GetService("ServerStorage"):FindFirstChild("RefundInFlightOrder")
+	if refundBridge then
+		local ok, refunded = pcall(function() return refundBridge:Invoke() end)
+		if ok and tonumber(refunded) and refunded > 0 then
+			addToTill(refunded, "refund for undelivered order")
+		end
+	end
+
 	--// THE SPLIT. Everything the shift earned, minus everything the Supplier
 	--// spent, divided evenly. This is the only moment private balances move.
 	local everyone = Players:GetPlayers()
@@ -1911,6 +1921,25 @@ local function closingDone()
 	return true
 end
 
+--// Events can make patience melt faster - the power outage does, because
+--// customers get impatient in the dark. EventSystem publishes the factor;
+--// this only reads it, and falls back to normal speed if it is absent.
+local eventStateFolder = nil
+local function patienceMultiplier()
+	if not eventStateFolder or not eventStateFolder.Parent then
+		eventStateFolder = ReplicatedStorage:FindFirstChild("EventState")
+	end
+	if not eventStateFolder then
+		return 1
+	end
+
+	local value = tonumber(eventStateFolder:GetAttribute("PatienceMultiplier"))
+	if not value or value <= 0 then
+		return 1
+	end
+	return value
+end
+
 ----------------------------------------------------------------
 -- Heartbeat: the one clock that drains every bar
 ----------------------------------------------------------------
@@ -1950,7 +1979,7 @@ RunService.Heartbeat:Connect(function(dt)
 
 	for _, party in pairs(parties) do
 		if party.BarRemaining then
-			party.BarRemaining -= dt
+			party.BarRemaining -= dt * patienceMultiplier()
 			updateBarVisual(party, party.BarRemaining / party.BarTotal)
 			if shouldPublish then publishParty(party) end
 			if party.BarRemaining <= 0 then

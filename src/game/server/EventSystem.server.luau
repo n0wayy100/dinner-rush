@@ -40,6 +40,7 @@ print("[Events] script started")
 
 local SCHEDULER = Config.Events.Scheduler
 local TOILET = Config.Events.ToiletEmergency
+local OUTAGE = Config.Events.PowerOutage
 
 --// Declared up here because stopToilet writes to it. A local declared further
 --// down would not be in scope for a function defined above it.
@@ -67,6 +68,7 @@ local function publish(activeEvent, phase, fuseRemaining, fuseTotal, alertText)
 end
 
 publish()
+EventState:SetAttribute("PatienceMultiplier", 1) --// 1 = normal drain
 EventState:SetAttribute("Toast", "") --// independent of publish(): a toast may
                                      --// outlive the event that raised it
 
@@ -1046,6 +1048,182 @@ stopFire = function(fixedBy)
 end
 
 ----------------------------------------------------------------
+-- POWER OUTAGE
+--
+-- No fuse and no escalation: the darkness, the reputation bleed and the
+-- faster-melting patience are the whole pressure. Cook stations deliberately
+-- keep working - they are gas, and a second kitchen-disabling event on top of
+-- the grease fire would be too cruel.
+--
+-- Lighting is snapshotted rather than assumed, so restore puts back exactly
+-- what was there, including any light that was already switched off.
+----------------------------------------------------------------
+local Lighting = game:GetService("Lighting")
+
+local outage = {
+	Part = nil,
+	Active = false,
+	DrainAccum = 0,
+	Lights = nil,     -- { {Light=, Enabled=}, ... }
+	Sky = nil,        -- Lighting properties as they were
+	Gui = nil,
+	Prompt = nil,
+}
+
+local function snapshotAndDarken()
+	local saved = {}
+	for _, descendant in ipairs(workspace:GetDescendants()) do
+		if descendant:IsA("PointLight")
+			or descendant:IsA("SpotLight")
+			or descendant:IsA("SurfaceLight") then
+			table.insert(saved, { Light = descendant, Enabled = descendant.Enabled })
+			descendant.Enabled = false
+		end
+	end
+	outage.Lights = saved
+
+	outage.Sky = {
+		Ambient = Lighting.Ambient,
+		OutdoorAmbient = Lighting.OutdoorAmbient,
+		Brightness = Lighting.Brightness,
+	}
+
+	Lighting.Ambient = OUTAGE.DarkAmbient
+	Lighting.OutdoorAmbient = OUTAGE.DarkOutdoorAmbient
+	Lighting.Brightness = OUTAGE.DarkBrightness
+
+	print(("[Events] power out - %d light(s) killed"):format(#saved))
+end
+
+local function restoreLighting()
+	if outage.Lights then
+		for _, entry in ipairs(outage.Lights) do
+			--// The light may have been destroyed mid-outage
+			if entry.Light.Parent then
+				entry.Light.Enabled = entry.Enabled
+			end
+		end
+		outage.Lights = nil
+	end
+
+	if outage.Sky then
+		Lighting.Ambient = outage.Sky.Ambient
+		Lighting.OutdoorAmbient = outage.Sky.OutdoorAmbient
+		Lighting.Brightness = outage.Sky.Brightness
+		outage.Sky = nil
+	end
+end
+
+local function refreshOutageUi()
+	if outage.Gui then
+		outage.Gui.Enabled = outage.Active
+	end
+	if outage.Prompt then
+		outage.Prompt.Enabled = outage.Active
+		if outage.Active then
+			local diff = difficultyBlock()
+			local seconds = OUTAGE.FixChannelSeconds[
+				Config.IsValidDifficulty(shiftInfo().Difficulty) and shiftInfo().Difficulty or "NORMAL"]
+			outage.Prompt.HoldDuration = seconds or OUTAGE.FixChannelSeconds.NORMAL
+		end
+	end
+end
+
+local stopOutage --// forward declared
+
+local function startOutage()
+	if outage.Active or not outage.Part then return end
+
+	outage.Active = true
+	outage.DrainAccum = 0
+	snapshotAndDarken()
+
+	--// Seated bars drain faster while it is dark. ServiceLoop reads this.
+	EventState:SetAttribute("PatienceMultiplier", OUTAGE.PatienceDrainMultiplier)
+
+	refreshOutageUi()
+	publish("PowerOutage", "DARK", 0, 0,
+		"The power is out! Someone get to the breaker box!")
+
+	print("[Events] power outage started")
+end
+
+function stopOutage(fixedBy)
+	if not outage.Active then return end
+
+	outage.Active = false
+	outage.DrainAccum = 0
+	restoreLighting()
+	EventState:SetAttribute("PatienceMultiplier", 1)
+	refreshOutageUi()
+
+	local elapsed = shiftInfo().Elapsed
+	scheduler.LastEndedAt = elapsed
+	scheduler.NextRollAt = elapsed + SCHEDULER.RollIntervalSeconds
+
+	if fixedBy then
+		applyRep(OUTAGE.FixRepReward, "power restored")
+		publish("", "", 0, 0, ("%s got the lights back on!"):format(fixedBy.Name))
+		task.delay(3, function()
+			if not outage.Active then publish() end
+		end)
+	else
+		publish()
+	end
+
+	print(("[Events] power outage ended%s"):format(
+		fixedBy and (" (fixed by " .. fixedBy.Name .. ")") or ""))
+end
+
+local function setupBreaker()
+	outage.Part = firstTaggedPart("BreakerBox")
+	if not outage.Part then
+		warn("[Events] no part tagged BreakerBox - the power outage is disabled")
+		return false
+	end
+
+	local gui = Instance.new("BillboardGui")
+	gui.Name = "BreakerAlert"
+	gui.Size = UDim2.fromOffset(120, 48)
+	gui.StudsOffsetWorldSpace = Vector3.new(0, 3.5, 0)
+	gui.AlwaysOnTop = true
+	gui.Enabled = false
+	gui.Parent = outage.Part
+
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.fromScale(1, 1)
+	label.BackgroundTransparency = 1
+	label.TextScaled = true
+	label.Font = Enum.Font.FredokaOne
+	label.TextColor3 = Color3.fromRGB(255, 235, 120)
+	label.TextStrokeColor3 = Color3.fromRGB(59, 43, 32)
+	label.TextStrokeTransparency = 0
+	label.Text = "!"
+	label.Parent = gui
+
+	outage.Gui = gui
+
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.Name = "RestorePower"
+	prompt.ActionText = "Restore power"
+	prompt.ObjectText = "Breaker box"
+	prompt.MaxActivationDistance = Config.Interaction.PromptRangeStuds
+	prompt.RequiresLineOfSight = Config.Interaction.PromptRequiresLineOfSight
+	prompt.Enabled = false
+	prompt.Parent = outage.Part
+	outage.Prompt = prompt
+
+	--// No tool needed - the whole point is that anyone can run for it
+	prompt.Triggered:Connect(function(player)
+		if not outage.Active then return end
+		stopOutage(player)
+	end)
+
+	print(("[Events] breaker box ready at %s"):format(outage.Part:GetFullName()))
+	return true
+end
+
+----------------------------------------------------------------
 -- Event registry. New events add an entry here; the scheduler only ever
 -- picks from what is registered AND weighted, so unimplemented entries in
 -- Config.EventWeights are skipped rather than crashing.
@@ -1104,6 +1282,9 @@ RunService.Heartbeat:Connect(function(dt)
 		if fire.Active then
 			stopFire(nil)
 		end
+		if outage.Active then
+			stopOutage(nil)
+		end
 		return
 	end
 
@@ -1123,6 +1304,15 @@ RunService.Heartbeat:Connect(function(dt)
 				toilet.DrainAccum -= 10
 				applyRep(-TOILET.FloodRepDrainPer10s, "flooded bathroom")
 			end
+		end
+	end
+
+	--// Tick the outage: no fuse, just a steady bleed until someone fixes it
+	if outage.Active then
+		outage.DrainAccum += dt
+		if outage.DrainAccum >= 10 then
+			outage.DrainAccum -= 10
+			applyRep(-OUTAGE.RepDrainPer10s, "power outage")
 		end
 	end
 
@@ -1263,6 +1453,14 @@ task.spawn(function()
 		})
 	elseif hasMount then
 		warn("[Events] GreaseFire not registered - KitchenStationControl bridge never appeared")
+	end
+
+	if setupBreaker() then
+		registerEvent("PowerOutage", {
+			Start = startOutage,
+			Stop = function() stopOutage(nil) end,
+			IsActive = function() return outage.Active end,
+		})
 	end
 
 	local names = {}

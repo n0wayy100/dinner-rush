@@ -69,6 +69,7 @@ local delivery = {
 	Truck = nil,   -- Model holding the truck and its crates
 	CratesLeft = 0,
 	LingerLeft = 0,
+	Cost = 0,      -- what the till paid, so it can be handed back if undelivered
 }
 
 local function publish()
@@ -156,6 +157,7 @@ local function finishDelivery()
 	delivery.LingerLeft = 0
 	delivery.Order = nil
 	delivery.Summary = ""
+	delivery.Cost = 0
 	publish()
 	print("[Supplier] delivery closed - the board is free again")
 end
@@ -334,11 +336,14 @@ supplierRemote.OnServerEvent:Connect(function(player, action, payload)
 
 	--// Paid out of the shared till, which ServiceLoop owns. The client shows
 	--// a price, but only this check decides whether the order happens.
+	local orderCost = 0
 	if SUPPLIER.ChargeForOrders then
 		local cost = 0
 		for name, wanted in pairs(order) do
 			cost += wanted * (SUPPLIER.CratePrice[name] or 0)
 		end
+
+		orderCost = cost
 
 		local spend = ServerStorage:FindFirstChild("SpendFromTill")
 		if not spend then
@@ -353,6 +358,7 @@ supplierRemote.OnServerEvent:Connect(function(player, action, payload)
 	end
 
 	local diff = difficultyBlock()
+	delivery.Cost = orderCost
 	delivery.Order = order
 	delivery.Summary = orderSummary(order)
 	delivery.Status = "ORDERED"
@@ -362,6 +368,28 @@ supplierRemote.OnServerEvent:Connect(function(player, action, payload)
 	print(("[Supplier] %s ordered %s - arriving in %ds"):format(
 		player.Name, delivery.Summary, math.ceil(delivery.ArrivesIn)))
 end)
+
+--// Money paid for food that never arrived comes back at the buzzer. Returns
+--// the amount so ServiceLoop can bank it - the till stays ServiceLoop's to
+--// change, this only reports what is owed.
+--//   ServerStorage.RefundInFlightOrder:Invoke()  ->  number
+local function refundInFlightOrder()
+	if delivery.Status ~= "ORDERED" then
+		return 0
+	end
+
+	local owed = delivery.Cost or 0
+	print(("[Supplier] shift ended with an order still in transit - refunding %d"):format(owed))
+	finishDelivery()
+	return owed
+end
+
+do
+	local bridge = Instance.new("BindableFunction")
+	bridge.Name = "RefundInFlightOrder"
+	bridge.OnInvoke = refundInFlightOrder
+	bridge.Parent = ServerStorage
+end
 
 ----------------------------------------------------------------
 -- One clock
@@ -410,24 +438,18 @@ task.spawn(function()
 		warn("[Supplier] no part tagged DeliveryZone - orders cannot be delivered")
 	end
 
-	local prompt = Instance.new("ProximityPrompt")
-	prompt.Name = "OpenSupplierBoard"
-	prompt.ActionText = "Open"
-	prompt.ObjectText = "Supply Orders"
-	prompt.HoldDuration = Config.Kitchen.PickupHoldSeconds
-	prompt.MaxActivationDistance = Config.Interaction.PromptRangeStuds
-	prompt.RequiresLineOfSight = Config.Interaction.PromptRequiresLineOfSight
-	prompt.Parent = board
-
-	prompt.Triggered:Connect(function(player)
-		supplierRemote:FireClient(player, "OpenBoard", catalog(), {
-			Status = delivery.Status,
-			Summary = delivery.Summary,
-		})
-	end)
-
-	--// The wall screen is always on, so clients ask for the catalogue when
-	--// they build it rather than waiting for a prompt
+	--// No ProximityPrompt here on purpose: the wall screen is always on and
+	--// clicked directly, so a floating "Open" bubble over it is just clutter.
+	--// Clients ask for the catalogue when they build the screen instead.
+	--
+	--// Older builds DID put a prompt here, and one saved into the place file
+	--// would linger forever. Clear any that exists so the board self-heals.
+	for _, child in ipairs(board:GetChildren()) do
+		if child:IsA("ProximityPrompt") then
+			warn(("[Supplier] removing a stale %s prompt left on the board"):format(child.Name))
+			child:Destroy()
+		end
+	end
 	supplierRemote.OnServerEvent:Connect(function(player, action)
 		if action == "RequestBoard" then
 			supplierRemote:FireClient(player, "OpenBoard", catalog(), {

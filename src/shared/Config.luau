@@ -508,6 +508,24 @@ Config.Events = {
 		FireSize = 8,                 -- Roblox Fire instance size on a burning station
 		LightRange = 14,              -- orange glow radius
 	},
+
+	PowerOutage = {
+		--// Hold at the breaker. Per-difficulty, like the toilet's channel.
+		FixChannelSeconds = { EASY = 6, NORMAL = 8, HARD = 10 },
+
+		RepDrainPer10s = 1,           -- bleed while the lights are out
+		FixRepReward = 1,             -- for restoring power
+
+		--// Seated patience melts faster in the dark. Applied ONLY while the
+		--// outage is active, via EventState.PatienceMultiplier.
+		PatienceDrainMultiplier = 1.25,
+
+		--// Dim, never black. Young players on bright phone screens still have
+		--// to navigate the restaurant, so this stays readable on purpose.
+		DarkAmbient = Color3.fromRGB(74, 64, 54),
+		DarkOutdoorAmbient = Color3.fromRGB(64, 56, 48),
+		DarkBrightness = 0.6,
+	},
 }
 
 ----------------------------------------------------------------
