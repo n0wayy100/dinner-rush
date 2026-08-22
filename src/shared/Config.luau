@@ -293,6 +293,7 @@ Config.Difficulty = {
 		DashWindowSeconds = 20,
 		ToiletFuseSeconds = 120,
 		UnclogChannelSeconds = 6,
+		ExtinguishChannelSeconds = 4,  -- per burning station (GreaseFire)
 		AutoBusAfterSeconds = 30,     -- EASY-only training wheels
 		SupplierDeliverySeconds = 22,
 		SupplierScenarioOdds = { Normal = 0.80, PriceHike = 0.10, Lucky = 0.10 },
@@ -309,6 +310,8 @@ Config.Difficulty = {
 		},
 		Consequences = {
 			ToiletFloodEndsGame = false,
+			FireBurnoutEndsGame = false, -- EASY mercy: a fully burning kitchen
+			                             -- drains rep but does not end the shift
 			ToiletFloodRep = -30,     -- bathroom also closes 60s
 			BathroomClosedSeconds = 60,
 			SeatedWalkoutRep = -7,
@@ -317,7 +320,9 @@ Config.Difficulty = {
 			InspectorFinePerMess = 5,
 			InspectorFirstVisitWarns = true,
 			InspectorCleanBonus = 40,
-			FireSpreadSeconds = 12,
+			FireSpreadSeconds = 45,   -- fuse before the fire jumps stations (retuned
+			                          -- from 12 when GreaseFire shipped: the old value
+			                          -- predated the extinguisher fetch, unwinnable)
 		},
 		Reputation = { SatisfiedParty = 3, VIPSatisfied = 5 },
 		Rewards = {
@@ -340,6 +345,7 @@ Config.Difficulty = {
 		DashWindowSeconds = 15,
 		ToiletFuseSeconds = 105,
 		UnclogChannelSeconds = 8,
+		ExtinguishChannelSeconds = 5,
 		AutoBusAfterSeconds = nil,    -- no mercy
 		SupplierDeliverySeconds = 25,
 		SupplierScenarioOdds = { Normal = 0.65, PriceHike = 0.20, Lucky = 0.15 },
@@ -356,13 +362,14 @@ Config.Difficulty = {
 		},
 		Consequences = {
 			ToiletFloodEndsGame = true,
+			FireBurnoutEndsGame = true,  -- every station ablaze = shift over
 			SeatedWalkoutRep = -10,
 			DoorWalkoutRep = -5,
 			DashUncaughtRep = 0,
 			InspectorFinePerMess = 10,
 			InspectorFirstVisitWarns = false,
 			InspectorCleanBonus = 60,
-			FireSpreadSeconds = 8,
+			FireSpreadSeconds = 35,   -- retuned from 8, see EASY note
 		},
 		Reputation = { SatisfiedParty = 2, VIPSatisfied = 4 },
 		Rewards = {
@@ -385,6 +392,7 @@ Config.Difficulty = {
 		DashWindowSeconds = 10,
 		ToiletFuseSeconds = 90,
 		UnclogChannelSeconds = 10,
+		ExtinguishChannelSeconds = 6,
 		AutoBusAfterSeconds = nil,
 		SupplierDeliverySeconds = 30,
 		SupplierScenarioOdds = { Normal = 0.55, PriceHike = 0.30, Lucky = 0.15 },
@@ -402,13 +410,14 @@ Config.Difficulty = {
 		},
 		Consequences = {
 			ToiletFloodEndsGame = true,
+			FireBurnoutEndsGame = true,
 			SeatedWalkoutRep = -13,
 			DoorWalkoutRep = -7,
 			DashUncaughtRep = -3,
 			InspectorFinePerMess = 15,
 			InspectorFirstVisitWarns = false,
 			InspectorCleanBonus = 90,
-			FireSpreadSeconds = 6,
+			FireSpreadSeconds = 25,   -- retuned from 6, see EASY note
 		},
 		Reputation = { SatisfiedParty = 2, VIPSatisfied = 4 },
 		Rewards = {
@@ -459,7 +468,9 @@ local WEIGHT_KEY = { EASY = "E", NORMAL = "N", HARD = "H" }
 -- Deliberately NOT redefined here, because they already exist:
 --   fuse length    Difficulty[*].ToiletFuseSeconds     (120 / 105 / 90)
 --   plunge time    Difficulty[*].UnclogChannelSeconds  (6 / 8 / 10)
---   roll weights   Config.EventWeights.ToiletEmergency via Config.WeightFor
+--   fire fuse      Difficulty[*].Consequences.FireSpreadSeconds (45 / 35 / 25)
+--   douse time     Difficulty[*].ExtinguishChannelSeconds       (4 / 5 / 6)
+--   roll weights   Config.EventWeights.* via Config.WeightFor
 --   warning cue    Config.Toilet.WarningAtFraction
 ----------------------------------------------------------------
 Config.Events = {
@@ -481,6 +492,21 @@ Config.Events = {
 		PuddleRadiusStuds = 14,
 		PuddleSizeStuds = 6,
 		PuddleGrowSeconds = 6,        -- puddles fade in over this long
+	},
+
+	GreaseFire = {
+		SpreadRadiusStuds = 12,       -- a burning station ignites others in this range
+		                              -- (grill/fryer anchors must sit within it!)
+		DouseRangeStuds = 10,         -- click-to-spray works within this range;
+		                              -- walking out of it cancels the douse
+		RepDrainPer10sPerFire = 1,    -- each burning station bleeds independently
+		FixRepReward = 1,             -- for putting out the LAST fire
+		WaterTrapMessage = "NEVER put water on a grease fire!",
+		ToastSeconds = 4,             -- how long the water-trap lesson fills the screen
+
+		--// Cosmetics
+		FireSize = 8,                 -- Roblox Fire instance size on a burning station
+		LightRange = 14,              -- orange glow radius
 	},
 }
 

@@ -515,9 +515,12 @@ local function setupStation(instance)
 		Label = label,
 		Fill = fill,
 		Prompt = prompt,
+		Disabled = false, --// set by the event bridge (grease fire); prompt is
+		                  --// also turned off, this is belt-and-braces
 	}
 
 	prompt.Triggered:Connect(function(player)
+		if station.Disabled then return end
 		if station.State == "IDLE" then
 			local tool = findCookableIngredient(player, station.Method)
 			if not tool then
@@ -567,6 +570,56 @@ RunService.Heartbeat:Connect(function(dt)
 		end
 	end
 end)
+
+----------------------------------------------------------------
+-- EVENT BRIDGE (server-only). EventSystem drives grease fires through
+-- this, mirroring the RestockIngredient pattern above:
+--   local ctl = ServerStorage.KitchenStationControl
+--   ctl:Invoke("List")                  -> { {Id, Part, Method, Busy, Disabled}, ... }
+--   ctl:Invoke("CancelCook", id)        -> true if an in-progress cook was destroyed
+--                                          (dish + progress bar; the ingredient is lost)
+--   ctl:Invoke("SetDisabled", id, on)   -> station prompt on/off; a disabled station
+--                                          refuses all interaction. true on success.
+----------------------------------------------------------------
+do
+	local bindable = Instance.new("BindableFunction")
+	bindable.Name = "KitchenStationControl"
+	bindable.OnInvoke = function(action, id, value)
+		if action == "List" then
+			local list = {}
+			for index, station in ipairs(stations) do
+				table.insert(list, {
+					Id = index,
+					Part = station.Part,
+					Method = station.Method,
+					Busy = station.State ~= "IDLE",
+					Disabled = station.Disabled == true,
+				})
+			end
+			return list
+		end
+
+		local station = stations[tonumber(id) or -1]
+		if not station then return false end
+
+		if action == "CancelCook" then
+			local wasBusy = station.State ~= "IDLE"
+			if wasBusy then
+				print(("[Kitchen] cook on the %s cancelled by event (station %d)")
+					:format(station.Method, id))
+			end
+			clearStation(station)
+			return wasBusy
+		elseif action == "SetDisabled" then
+			station.Disabled = value == true
+			station.Prompt.Enabled = not station.Disabled
+			return true
+		end
+
+		return false
+	end
+	bindable.Parent = game:GetService("ServerStorage")
+end
 
 ----------------------------------------------------------------
 -- Setup. Waits for the kitchen the same way ServiceLoop waits for the
