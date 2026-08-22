@@ -333,6 +333,9 @@ end
 Players.PlayerAdded:Connect(ensureStats)
 for _, p in ipairs(Players:GetPlayers()) do ensureStats(p) end
 
+--// A player's own balance. Only ever touched by the end-of-shift split -
+--// during service, money belongs to the restaurant, not to whoever happened
+--// to walk to the table.
 local function awardCoins(player, amount)
 	local coins = player:FindFirstChild("leaderstats")
 		and player.leaderstats:FindFirstChild("Coins")
@@ -352,6 +355,7 @@ local shift = {
 	Phase = "Calm",
 	Reputation = Config.Reputation.Start,
 	Satisfied = 0,
+	Till = Config.Money.ShiftStartingTill, -- shared, resets every shift
 	DoorWalkouts = 0,
 	SeatedWalkouts = 0,
 }
@@ -385,6 +389,7 @@ local function publishShift()
 	ShiftState:SetAttribute("Reputation", shift.Reputation)
 	ShiftState:SetAttribute("ReputationMax", Config.Reputation.Max)
 	ShiftState:SetAttribute("Satisfied", shift.Satisfied)
+	ShiftState:SetAttribute("Till", shift.Till)
 	ShiftState:SetAttribute("TargetParties", diff.Rewards.TargetParties)
 	ShiftState:SetAttribute("Difficulty", DIFFICULTY)
 	ShiftState:SetAttribute("DifficultyLabel", diff.Label)
@@ -411,10 +416,62 @@ local function publishParty(party)
 	pawn:SetAttribute("PatienceFraction", fraction)
 end
 
+--// Service is "open" for the whole time customers are still being dealt
+--// with: RUNNING while the clock ticks, then CLOSING until the room empties.
+--// Anything a player does to a customer must work in both.
+local function serviceOpen()
+	return shift.State == "RUNNING" or shift.State == "CLOSING"
+end
+
 local function repChange(amount, why)
-	if shift.State ~= "RUNNING" then return end
+	if not serviceOpen() then return end
 	shift.Reputation = math.clamp(shift.Reputation + amount, 0, Config.Reputation.Max)
 	print(("[Service] Rep %+d (%s) -> %d"):format(amount, why, shift.Reputation))
+end
+
+----------------------------------------------------------------
+-- THE TILL: one shared pot per shift.
+--
+-- Customer payments go in, the Supplier spends out, and the balance is split
+-- evenly between everyone at the buzzer. Nobody has a private balance during
+-- service, so nobody is incentivised to hog the tables.
+----------------------------------------------------------------
+local function addToTill(amount, why)
+	amount = math.floor(tonumber(amount) or 0)
+	if amount <= 0 then return end
+
+	shift.Till += amount
+	print(("[Service] Till +%d (%s) -> %d"):format(amount, why or "income", shift.Till))
+end
+
+--// Returns false and spends nothing when the till cannot cover it
+local function spendFromTill(amount, why)
+	amount = math.floor(tonumber(amount) or 0)
+	if amount <= 0 then return true end
+
+	if shift.Till < amount then
+		return false
+	end
+
+	shift.Till -= amount
+	print(("[Service] Till -%d (%s) -> %d"):format(amount, why or "spend", shift.Till))
+	return true
+end
+
+do
+	local spend = Instance.new("BindableFunction")
+	spend.Name = "SpendFromTill"
+	spend.OnInvoke = function(amount, why)
+		return spendFromTill(amount, why)
+	end
+	spend.Parent = game:GetService("ServerStorage")
+
+	local balance = Instance.new("BindableFunction")
+	balance.Name = "GetTill"
+	balance.OnInvoke = function()
+		return shift.Till
+	end
+	balance.Parent = game:GetService("ServerStorage")
 end
 
 --// REPUTATION BRIDGE for other server systems (EventSystem, and anything
@@ -489,6 +546,9 @@ local function refreshScoreboard()
 		scoreboard.Text = "Waiting for players..."
 	elseif shift.State == "PREP" then
 		scoreboard.Text = ("Shift starts in %d...  (%s)"):format(math.ceil(shift.PrepRemaining or 0), diff.Label)
+	elseif shift.State == "CLOSING" then
+		scoreboard.Text = ("REP %d   |   LAST TABLES   |   Served %d/%d")
+			:format(shift.Reputation, shift.Satisfied, diff.Rewards.TargetParties)
 	elseif shift.State == "RUNNING" then
 		scoreboard.Text = ("REP %d   |   %s   |   %s   |   Served %d/%d")
 			:format(shift.Reputation, fmtClock(shift.Length - shift.Elapsed), shift.Phase,
@@ -1124,8 +1184,8 @@ local function collectPayment(tableId, collector)
 	if not payment then return end
 	local value = paymentValue(payment)
 	destroyPayment(tableId)
-	awardCoins(collector, value)
-	print(("[Service] %s collected %d coins (Table %d)"):format(
+	addToTill(value, ("payment from table %d"):format(tableId))
+	print(("[Service] %s banked %d coins (Table %d)"):format(
 		collector.Name, value, tableId))
 end
 
@@ -1331,7 +1391,7 @@ local function resolveDialogue(dlg, pickedKey, notifyClient)
 	end
 
 	--// Shift over / party gone: nothing left to order
-	if party.State ~= STATE.SEATED or shift.State ~= "RUNNING" then return end
+	if party.State ~= STATE.SEATED or not serviceOpen() then return end
 
 	if pickedKey and dlg.Flow == "recommend" then
 		party.Ticket[1] = pickedKey
@@ -1480,7 +1540,7 @@ local function setupTable(tableId, tablePart)
 
 	prompt.Triggered:Connect(function(player)
 		local party = tableOccupant[tableId]
-		if not party or shift.State ~= "RUNNING" then return end
+		if not party or not serviceOpen() then return end
 
 		if party.State == STATE.SEATED then
 			--// The ticket was rolled when the party spawned. Taking the order
@@ -1534,7 +1594,7 @@ local function setupTable(tableId, tablePart)
 				refreshTablePrompt(tableId)
 				task.delay(diff.EatingSeconds, function()
 					if party.State ~= STATE.SERVED then return end
-					if shift.State ~= "RUNNING" then
+					if not serviceOpen() then
 						setPartyState(party, STATE.LEAVING)
 						tableOccupant[tableId] = nil
 						refreshTablePrompt(tableId)
@@ -1721,9 +1781,9 @@ local function endShift(success, reason)
 	print(("[Service] Rep %d | Door walkouts %d | Seated walkouts %d")
 		:format(shift.Reputation, shift.DoorWalkouts, shift.SeatedWalkouts))
 	if success then
-		for _, player in ipairs(Players:GetPlayers()) do
-			awardCoins(player, diff.Rewards.CompletionBonus)
-		end
+		--// Paid once into the till, not once per player - the split below
+		--// shares it out
+		addToTill(diff.Rewards.CompletionBonus, "completion bonus")
 		print(("[Service] Completion bonus: %d coins to everyone"):format(diff.Rewards.CompletionBonus))
 	end
 	-- bars freeze (heartbeat stops draining); everyone still inside ambles out
@@ -1753,14 +1813,30 @@ local function endShift(success, reason)
 		destroyPayment(tableId)
 	end
 	if uncollected > 0 then
-		local everyone = Players:GetPlayers()
-		if #everyone > 0 then
-			local share = math.floor(uncollected / #everyone)
-			for i, player in ipairs(everyone) do
-				awardCoins(player, share + (i == 1 and (uncollected - share * #everyone) or 0))
+		addToTill(uncollected, "uncollected table payments")
+	end
+
+	--// THE SPLIT. Everything the shift earned, minus everything the Supplier
+	--// spent, divided evenly. This is the only moment private balances move.
+	local everyone = Players:GetPlayers()
+	if #everyone > 0 and shift.Till > 0 then
+		local share = math.floor(shift.Till / #everyone)
+		local remainder = shift.Till - (share * #everyone)
+
+		for index, member in ipairs(everyone) do
+			local paid = share
+			if index == 1 and Config.Money.RemainderToFirstPlayer then
+				paid += remainder
 			end
-			print(("[Service] Auto-collected %d coins left on tables at shift end"):format(uncollected))
+			awardCoins(member, paid)
 		end
+
+		print(("[Service] Till %d split %d ways - %d each%s"):format(
+			shift.Till, #everyone, share,
+			remainder > 0 and (" (+%d remainder)"):format(remainder) or ""))
+		shift.Till = 0
+	elseif shift.Till > 0 then
+		print("[Service] Nobody left to split the till with")
 	end
 
 	publishShift()
@@ -1780,6 +1856,59 @@ do
 		return true
 	end
 	bridge.Parent = game:GetService("ServerStorage")
+end
+
+----------------------------------------------------------------
+-- CLOSING: the doors shut, the room does not empty instantly.
+--
+-- Not overtime - nobody new arrives. Everyone already inside finishes their
+-- meal and pays, then the shift really ends. Queued customers outside are
+-- turned away with no penalty; they were never served.
+----------------------------------------------------------------
+local function beginClosing()
+	if shift.State ~= "RUNNING" then return end
+
+	shift.State = "CLOSING"
+	shift.Phase = "Closing"
+	shift.ClosingElapsed = 0
+
+	--// Turn away the queue. No reputation hit - the restaurant closed, they
+	--// did not storm out.
+	local turnedAway = 0
+	for _, party in pairs(parties) do
+		if party.State == STATE.QUEUED then
+			removeBar(party)
+			if party.Spot then
+				spotOccupant[party.Spot] = nil
+				party.Spot = nil
+			end
+			if party.SeatPrompt then
+				party.SeatPrompt:Destroy()
+				party.SeatPrompt = nil
+			end
+			setPartyState(party, STATE.LEAVING)
+			departTo(party, exitPos)
+			turnedAway += 1
+		end
+	end
+
+	publishShift()
+	print(("[Service] === CLOSING - doors shut, %d turned away, finishing the room ==="):format(turnedAway))
+end
+
+--// Everyone inside has gone, and no money is still sitting on a table
+local function closingDone()
+	for _, party in pairs(parties) do
+		if party.State ~= STATE.LEAVING and party.State ~= STATE.WALKOUT then
+			return false
+		end
+	end
+
+	for _ in pairs(payments) do
+		return false
+	end
+
+	return true
 end
 
 ----------------------------------------------------------------
@@ -1804,13 +1933,19 @@ RunService.Heartbeat:Connect(function(dt)
 		refreshScoreboard()
 		return
 	end
-	if shift.State ~= "RUNNING" then return end
+	if not serviceOpen() then return end
 
-	shift.Elapsed += dt
-	local phase = Config.PhaseAt(shift.Elapsed)
-	if phase ~= shift.Phase then
-		shift.Phase = phase
-		print(("[Service] === Phase: %s ==="):format(phase))
+	--// Elapsed freezes at closing time: the clock is done, only the room is
+	--// still working. Phases stop advancing with it.
+	if shift.State == "RUNNING" then
+		shift.Elapsed += dt
+		local phase = Config.PhaseAt(shift.Elapsed)
+		if phase ~= shift.Phase then
+			shift.Phase = phase
+			print(("[Service] === Phase: %s ==="):format(phase))
+		end
+	else
+		shift.ClosingElapsed = (shift.ClosingElapsed or 0) + dt
 	end
 
 	for _, party in pairs(parties) do
@@ -1836,8 +1971,20 @@ RunService.Heartbeat:Connect(function(dt)
 
 	if shift.Reputation <= 0 then
 		endShift(false, "reputation hit zero - the manager is furious")
-	elseif shift.Elapsed >= shift.Length then
-		endShift(true)
+
+	elseif shift.State == "RUNNING" and shift.Elapsed >= shift.Length then
+		--// The clock is up, but the room is not empty yet
+		beginClosing()
+
+	elseif shift.State == "CLOSING" then
+		if closingDone() then
+			endShift(true)
+		elseif shift.ClosingElapsed >= Config.Shift.ClosingMaxSeconds then
+			--// Something is stuck. Close anyway rather than hang the shift.
+			warn(("[Service] closing ran past %ds - ending anyway")
+				:format(Config.Shift.ClosingMaxSeconds))
+			endShift(true)
+		end
 	end
 
 	if shouldPublish then publishShift() end
@@ -1866,6 +2013,7 @@ task.spawn(function()
 
 	shift.State = "RUNNING"
 	shift.Elapsed = 0
+	shift.Till = Config.Money.ShiftStartingTill --// every shift opens at zero
 	publishShift()
 	print(("[Service] === SHIFT START - %s, %ds, target %d parties ===")
 		:format(diff.Label, shift.Length, diff.Rewards.TargetParties))
