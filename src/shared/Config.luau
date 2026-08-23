@@ -134,9 +134,11 @@ Config.OrderWeights = {
 Config.Kitchen = {
 	MaxCarriedItems = 2,          -- the design's two-item inventory rule
 	PickupHoldSeconds = 0.4,      -- fridge / dry shelf prompt
-	StationLoadHoldSeconds = 0.5, -- starting a cook
+	StationLoadHoldSeconds = 0,   -- starting a cook: TAP, not hold
 	CollectHoldSeconds = 0.4,     -- taking the result off the station
 	BurntCleanupSeconds = 1.0,    -- clearing a ruined pan
+	BinHoldSeconds = 0.5,         -- hold at the TrashBin; deliberately NOT a tap,
+	                              -- so nobody bins a good dish by mistapping
 
 	--// Payout multipliers applied when the dish is served
 	PerfectPayMult = 1.5,
@@ -226,6 +228,12 @@ Config.Customers = {
 	WaterPourFirstBonus = 18,
 	WaterPourRepeatBonus = 10,        -- diminishing, same table
 	WaterStationHoldSeconds = 3,
+
+	--// Table prompt hold times. Taking an order is a TAP - it happens
+	--// constantly and a hold makes the front of house feel sticky. Serving
+	--// keeps a short hold so a mistap does not fire the wrong dish.
+	TakeOrderHoldSeconds = 0,
+	ServeHoldSeconds = 0.5,
 	PerDishServeBonus = 5,            -- multi-dish orders: grace per dish landed
 	PaySeconds = 5,
 	SeatingWalkIsFree = true,         -- door bar dies on INITIATE; walk untimed
@@ -588,6 +596,11 @@ Config.Interaction = {
 -- Difficulty NEVER touches these: hands feel the same everywhere.
 ----------------------------------------------------------------
 Config.Sprint = {
+	--// Double-tap W to sprint, then keep W held. LeftShift is Roblox's own
+	--// shift-lock toggle, so binding sprint to it fought the camera.
+	DoubleTapSeconds = 0.35,      -- max gap between the two W presses
+	StopOnRelease = true,         -- letting go of W ends the sprint
+
 	BaseWalkSpeed = 16,           -- Roblox default; THE source of truth for normal speed
 	SprintSpeed = 24,             -- while sprinting (1.5x)
 	StaminaMax = 100,

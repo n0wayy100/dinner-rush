@@ -65,6 +65,9 @@ local STATE_COLOR = {
 --// script's lifetime IS the shift's.
 local kitchenStats = {
 	DishesBurnt = 0,
+	ItemsBinned = 0,
+	DishesBinned = 0,
+	IngredientsBinned = 0,
 }
 
 do
@@ -347,6 +350,66 @@ kitchenRemote.OnServerEvent:Connect(function(player, action, ingredientName)
 	giveIngredient(player, ingredientName)
 	pushStockUpdate()
 end)
+
+----------------------------------------------------------------
+-- THE BIN
+-- Parts tagged TrashBin take whatever you are holding out of your hands.
+-- Wrong ingredient, dish nobody ordered, something you grabbed by accident -
+-- without this the two-item limit can wedge you with junk you cannot drop
+-- (every Tool here is CanBeDropped = false).
+--
+-- Binned items are counted, ready for a future "take the trash out" chore.
+----------------------------------------------------------------
+local function firstBinnable(player)
+	return eachCarried(player, function(tool)
+		if tool:GetAttribute("Ingredient") or tool:GetAttribute("Dish") then
+			return tool
+		end
+		return nil
+	end)
+end
+
+local function setupBin(instance)
+	local part = resolvePart(instance)
+	if not part then
+		warn(("[Kitchen] %s is tagged TrashBin but has no BasePart - skipped")
+			:format(instance:GetFullName()))
+		return
+	end
+
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.Name = "Bin"
+	prompt.ActionText = "Bin it"
+	prompt.ObjectText = "Trash"
+	prompt.HoldDuration = Config.Kitchen.BinHoldSeconds
+	prompt.MaxActivationDistance = Config.Interaction.PromptRangeStuds
+	prompt.RequiresLineOfSight = Config.Interaction.PromptRequiresLineOfSight
+	prompt.Parent = part
+
+	prompt.Triggered:Connect(function(player)
+		local tool = firstBinnable(player)
+		if not tool then
+			flash(prompt, "Nothing to throw away", "Trash")
+			return
+		end
+
+		local what = tool:GetAttribute("Dish") or tool:GetAttribute("Ingredient")
+		--// A binned DISH is a wasted cook, so it counts the same as a burnt
+		--// one on the shift report. A raw ingredient is only wasted stock.
+		if tool:GetAttribute("Dish") then
+			kitchenStats.DishesBinned += 1
+		else
+			kitchenStats.IngredientsBinned += 1
+		end
+		kitchenStats.ItemsBinned += 1
+
+		tool:Destroy()
+		print(("[Kitchen] %s binned %s (%d item(s) this shift)")
+			:format(player.Name, tostring(what), kitchenStats.ItemsBinned))
+	end)
+
+	print(("[Kitchen] bin ready: %s"):format(part:GetFullName()))
+end
 
 ----------------------------------------------------------------
 -- Cook stations
@@ -803,6 +866,13 @@ task.spawn(function()
 			for _, instance in ipairs(fridges) do setupSource(instance, "Fridge") end
 			for _, instance in ipairs(shelves) do setupSource(instance, "DryShelf") end
 			for _, instance in ipairs(cookers) do setupStation(instance) end
+
+			--// Optional: no bin tagged just means nothing to throw items in
+			local bins = taggedInWorkspace("TrashBin")
+			for _, instance in ipairs(bins) do setupBin(instance) end
+			if #bins == 0 then
+				warn("[Kitchen] no part tagged TrashBin - players cannot discard items")
+			end
 
 			print(("[Kitchen] ready: %d fridge(s), %d shelf/shelves, %d station(s)")
 				:format(#fridges, #shelves, #cookers))
