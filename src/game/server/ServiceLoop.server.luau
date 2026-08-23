@@ -587,11 +587,12 @@ local function pointAbove(part, height)
 	return part.Position + Vector3.new(0, (part.Size.Y / 2) + height, 0)
 end
 
---// Moves the anchored root; on a rig the limbs follow through their Motor6Ds,
---// so animations keep playing. Height is held from the current position - the
---// spawn placed them on the floor and every destination is on the same floor.
-local function walkTo(party, targetPos, onDone)
-	local root = party.Root
+--// Moves one member's anchored root; on a rig the limbs follow through their
+--// Motor6Ds, so animations keep playing. Height is held from the current
+--// position - the spawn placed them on the floor and every destination is on
+--// the same floor.
+local function walkMemberTo(member, targetPos, onDone)
+	local root = member.Root
 	if not root or not root.Parent then
 		if onDone then onDone() end
 		return
@@ -601,7 +602,7 @@ local function walkTo(party, targetPos, onDone)
 	local flat = Vector3.new(targetPos.X, from.Y, targetPos.Z)
 	local distance = (flat - from).Magnitude
 
-	--// Face the direction of travel, unless we are already there
+	--// Face the direction of travel, unless already there
 	local goal
 	if distance > 0.1 then
 		goal = CFrame.lookAt(flat, flat + (flat - from).Unit)
@@ -613,17 +614,63 @@ local function walkTo(party, targetPos, onDone)
 		TweenInfo.new(math.max(distance / WALK_SPEED, 0.05), Enum.EasingStyle.Linear),
 		{ CFrame = goal })
 
-	if party.WalkTrack then
-		party.WalkTrack:Play()
+	if member.WalkTrack then
+		member.WalkTrack:Play()
 	end
 
 	tween.Completed:Once(function()
-		if party.WalkTrack then
-			party.WalkTrack:Stop()
+		if member.WalkTrack then
+			member.WalkTrack:Stop()
 		end
 		if onDone then onDone() end
 	end)
 	tween:Play()
+end
+
+--// A party is several people walking together, so they need to not occupy the
+--// same square foot. Members fan out sideways from the point they are heading
+--// for; member 1 walks the actual line, the rest flank it.
+local function spreadOffset(index)
+	if index <= 1 then
+		return Vector3.new(0, 0, 0)
+	end
+	local step = Config.Customers.SeatOffsetStuds * 0.6
+	local side = (index % 2 == 0) and 1 or -1
+	local rank = math.floor(index / 2)
+	return Vector3.new(side * step * rank, 0, 0)
+end
+
+--// Walks every member to a destination, calling onDone once the LAST arrives.
+--// targetFor(index, member) returns that member's own point, which is how the
+--// final leg seats them on different sides of the table.
+local function walkParty(party, targetFor, onDone)
+	local members = party.Members or {}
+	local pending = #members
+
+	if pending == 0 then
+		if onDone then onDone() end
+		return
+	end
+
+	local finished = false
+	local function arrived()
+		pending -= 1
+		if pending <= 0 and not finished then
+			finished = true
+			if onDone then onDone() end
+		end
+	end
+
+	for index, member in ipairs(members) do
+		walkMemberTo(member, targetFor(index, member), arrived)
+	end
+end
+
+--// Everyone heads for the same spot, fanned out so they do not overlap
+local function walkTo(party, targetPos, onDone)
+	walkParty(party, function(index)
+		return targetPos + spreadOffset(index)
+	end, onDone)
 end
 
 --// Walks a chain of points in order, then calls onDone. Used for waypoint
@@ -646,6 +693,29 @@ end
 --// The floor-level point a customer should stand at for a given part
 local function standingPoint(part)
 	return Vector3.new(part.Position.X, part.Position.Y, part.Position.Z)
+end
+
+--// Where each member of a party stands at their table. Derived from the
+--// table anchor's own facing, so no extra seat parts are needed: member 1
+--// takes the near side, member 2 the far side, then left and right.
+local function seatPositions(tablePart, count)
+	local base = pointAbove(tablePart, 2)
+	local look = tablePart.CFrame.LookVector
+	local right = tablePart.CFrame.RightVector
+	local distance = Config.Customers.SeatOffsetStuds
+
+	local pattern = {
+		-look * distance,   -- near side, where a single customer has always stood
+		look * distance,    -- opposite side
+		-right * distance,
+		right * distance,
+	}
+
+	local seats = {}
+	for index = 1, count do
+		seats[index] = base + pattern[((index - 1) % #pattern) + 1]
+	end
+	return seats
 end
 
 --// Waypoint parts -> the positions to walk through
@@ -671,11 +741,13 @@ local function setPartyState(party, newState)
 	end
 
 	if color then
-		if party.Highlight then
-			party.Highlight.FillColor = color
-			party.Highlight.OutlineColor = color
-		elseif party.Pawn and party.Pawn:IsA("BasePart") then
-			party.Pawn.Color = color
+		for _, member in ipairs(party.Members or {}) do
+			if member.Highlight then
+				member.Highlight.FillColor = color
+				member.Highlight.OutlineColor = color
+			elseif member.Model and member.Model:IsA("BasePart") then
+				member.Model.Color = color
+			end
 		end
 	end
 	publishParty(party)
@@ -925,10 +997,15 @@ local function departTo(party, target)
 	table.insert(points, target)
 
 	walkPath(party, points, function()
-		if party.WalkTrack then
-			party.WalkTrack:Stop()
+		for _, member in ipairs(party.Members or {}) do
+			if member.WalkTrack then
+				member.WalkTrack:Stop()
+			end
+			if member.Model then
+				member.Model:Destroy()
+			end
 		end
-		party.Pawn:Destroy()
+		party.Members = nil
 		parties[party.Id] = nil
 	end)
 end
@@ -963,6 +1040,22 @@ end
 ----------------------------------------------------------------
 -- Pawns
 ----------------------------------------------------------------
+--// Optional: customers wear avatars from players' friend lists when the pool
+--// has any cached. Missing module just means plain rigs.
+local AvatarPool = nil
+do
+	local module = script.Parent:FindFirstChild("AvatarPool")
+	if module then
+		local ok, result = pcall(require, module)
+		if ok then
+			AvatarPool = result
+			AvatarPool.Start()
+		else
+			warn("[Service] AvatarPool failed to load - customers will use the plain rig")
+		end
+	end
+end
+
 local rigTemplate = ServerStorage:FindFirstChild(RIG_NAME)
 if not rigTemplate then
 	warn(("[Service] ServerStorage.%s not found - customers will be placeholder cylinders")
@@ -973,22 +1066,38 @@ end
 --// cannot snag on a wall, shove a player, or push each other. The root is
 --// anchored and the limbs hang off it through their Motor6Ds, which is what
 --// lets animations still play while the root is driven by a tween.
-local function buildRig(party, atPosition)
-	local rig = rigTemplate:Clone()
-	rig.Name = "Customer_" .. party.Id
+--
+--// Each MEMBER of a party is its own rig. A party of two is two people who
+--// walk in together and sit on opposite sides of the table.
+local function buildMember(party, memberIndex, atPosition)
+	--// A pooled rig already wears someone's avatar and is already R15.
+	--// Falling back to the plain template only when the pool is still cold.
+	local rig = AvatarPool and AvatarPool.Get()
+	local wearingAvatar = rig ~= nil
+
+	if not rig then
+		if not rigTemplate then
+			return nil
+		end
+		rig = rigTemplate:Clone()
+	end
+
+	rig.Name = ("Customer_%d_%d"):format(party.Id, memberIndex)
 
 	local root = rig:FindFirstChild("HumanoidRootPart")
 	local humanoid = rig:FindFirstChildOfClass("Humanoid")
 	if not root or not humanoid then
-		warn(("[Service] %s has no HumanoidRootPart or Humanoid - falling back to a cylinder")
-			:format(RIG_NAME))
+		warn(("[Service] customer rig has no HumanoidRootPart or Humanoid (%s) - using a cylinder")
+			:format(wearingAvatar and "from the avatar pool" or RIG_NAME))
 		rig:Destroy()
 		return nil
 	end
 
+	--// Tweened, never simulated: nothing collides, nothing falls over
 	for _, descendant in ipairs(rig:GetDescendants()) do
 		if descendant:IsA("BasePart") then
 			descendant.CanCollide = false
+			descendant.Massless = true
 			descendant.Anchored = false
 		end
 	end
@@ -1000,6 +1109,8 @@ local function buildRig(party, atPosition)
 
 	humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
 
+	local member = { Model = rig, Root = root, Humanoid = humanoid }
+
 	if WALK_ANIMATION_ID ~= "" then
 		local animator = humanoid:FindFirstChildOfClass("Animator")
 		if animator then
@@ -1010,12 +1121,12 @@ local function buildRig(party, atPosition)
 			end)
 			if ok and track then
 				track.Looped = true
-				party.WalkTrack = track
+				member.WalkTrack = track
 			else
 				warn("[Service] could not load WALK_ANIMATION_ID - rigs will glide")
 			end
 		else
-			warn(("[Service] %s's Humanoid has no Animator - rigs will glide"):format(RIG_NAME))
+			warn("[Service] customer Humanoid has no Animator - rigs will glide")
 		end
 	end
 
@@ -1024,42 +1135,56 @@ local function buildRig(party, atPosition)
 	highlight.FillTransparency = 0.65
 	highlight.OutlineTransparency = 0
 	highlight.Parent = rig
-	party.Highlight = highlight
+	member.Highlight = highlight
 
-	party.Root = root
-	return rig
+	return member
+end
+
+--// Fallback when there is no usable rig template
+local function buildCylinderMember(party, memberIndex, atPosition)
+	local pawn = Instance.new("Part")
+	pawn.Name = ("PartyPawn_%d_%d"):format(party.Id, memberIndex)
+	pawn.Shape = Enum.PartType.Cylinder
+	pawn.Size = Vector3.new(5, 2.5, 2.5)
+	--// atPosition is floor level; lift the cylinder onto its own base
+	pawn.CFrame = CFrame.new(atPosition + Vector3.new(0, 1.25, 0))
+		* CFrame.Angles(0, 0, math.rad(90))
+	pawn.Anchored = true
+	pawn.CanCollide = false
+	pawn.Material = Enum.Material.SmoothPlastic
+
+	return { Model = pawn, Root = pawn }
 end
 
 local function spawnPartyPawn(party, atPosition)
-	local pawn = rigTemplate and buildRig(party, atPosition)
+	party.Members = {}
 
-	if not pawn then
-		--// Placeholder cylinder: no rig template, or it was malformed
-		pawn = Instance.new("Part")
-		pawn.Name = "PartyPawn_" .. party.Id
-		pawn.Shape = Enum.PartType.Cylinder
-		pawn.Size = Vector3.new(5, 2.5, 2.5)
-		--// atPosition is floor level; lift the cylinder onto its own base
-		pawn.CFrame = CFrame.new(atPosition + Vector3.new(0, 1.25, 0))
-			* CFrame.Angles(0, 0, math.rad(90))
-		pawn.Anchored = true
-		pawn.CanCollide = false
-		pawn.Material = Enum.Material.SmoothPlastic
-		party.Root = pawn
+	for index = 1, party.Size do
+		local spot = atPosition + spreadOffset(index)
+		local member = buildMember(party, index, spot)
+			or buildCylinderMember(party, index, spot)
+
+		table.insert(party.Members, member)
 	end
 
-	--// How a client finds customers: CollectionService:GetTagged("CustomerParty")
-	CollectionService:AddTag(pawn, "CustomerParty")
+	--// Member 1 is the party's face: prompts, billboards, the tag and every
+	--// published attribute hang off it, so the rest of the code is unchanged.
+	local leader = party.Members[1]
+	party.Pawn = leader.Model
+	party.Root = leader.Root
 
-	party.Pawn = pawn
+	CollectionService:AddTag(party.Pawn, "CustomerParty")
 	publishParty(party)
 
+	for _, member in ipairs(party.Members) do
+		member.Model.Parent = workspace
+	end
+
 	if not SHOW_PLACEHOLDER_BARS then
-		pawn.Parent = workspace
 		return
 	end
 
-	--// PLACEHOLDER VISUAL: name/state label over the pawn
+	--// PLACEHOLDER VISUAL: name/state label over the party's leader
 	local gui = Instance.new("BillboardGui")
 	gui.Size = UDim2.fromOffset(220, 36)
 	gui.StudsOffsetWorldSpace = Vector3.new(0, 3.6, 0)
@@ -1075,7 +1200,6 @@ local function spawnPartyPawn(party, atPosition)
 	gui.Parent = party.Root --// must be a BasePart, not the rig Model
 
 	party.Label = label
-	pawn.Parent = workspace
 end
 
 ----------------------------------------------------------------
@@ -1695,19 +1819,25 @@ local function attachQueuePrompts(party)
 		local tablePart = tableById[tableId]
 		party.ExitFrom = tablePart --// remembered for the ExitVia route later
 
-		local seatPos = pointAbove(tablePart, 2) - tablePart.CFrame.LookVector * 4
+		--// One seat per member, worked out from the table anchor's facing:
+		--// member 1 near side, member 2 opposite. No extra seat parts needed.
+		local seats = seatPositions(tablePart, #party.Members)
 
-		--// Route around this map's walls before arriving at the chair
+		--// Route around this map's walls before arriving at the chairs
 		local points = routePoints(parseVia(tablePart:GetAttribute("EntryVia")))
-		print(("[Service] Party %d walking to Table %d via %d waypoint(s)")
-			:format(party.Id, tableId, #points))
-		table.insert(points, seatPos)
+		print(("[Service] Party %d (%d) walking to Table %d via %d waypoint(s)")
+			:format(party.Id, #party.Members, tableId, #points))
 
+		--// Walk the shared route together, then each peels off to their chair
 		walkPath(party, points, function()
+			walkParty(party, function(index)
+				return seats[index] or seats[1]
+			end, function()
 			-- SEATED BAR STARTS HERE: bodies in chairs
-			setPartyState(party, STATE.SEATED)
-			startSeatedBar(party)
-			refreshTablePrompt(tableId)
+				setPartyState(party, STATE.SEATED)
+				startSeatedBar(party)
+				refreshTablePrompt(tableId)
+			end)
 		end)
 		print(("[Service] %s seated Party %d at Table %d"):format(player.Name, party.Id, tableId))
 	end)

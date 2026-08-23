@@ -200,6 +200,29 @@ Config.Customers = {
 	SeatedPatienceSeconds = 75,       -- seated -> LAST dish served (one bar!)
 	VIPSeatedPatienceSeconds = 45,
 
+	--// Seating: where members of a party stand around their table anchor.
+	--// Computed from the anchor's own facing, so no extra seat parts are
+	--// needed - member 1 takes the near side, member 2 the far side.
+	SeatOffsetStuds = 4,
+
+	--// Customers wear real avatars pulled from players' friend lists. Both
+	--// Roblox calls behind this yield and are rate-limited, so AvatarPool
+	--// fetches in the background and the spawner only reads the cache.
+	Avatars = {
+		Enabled = true,
+		FallbackUserId = 5191267798,      -- OWNER'S USER ID - set this, or a server with
+		                         -- no reachable friend lists gets plain rigs
+		PoolTarget = 12,         -- how many descriptions to keep cached
+		FetchDelaySeconds = 1,   -- gap between web calls, to stay under limits
+		FriendsPerPlayer = 20,   -- how many of each player's friends to consider
+
+		--// Testing: put user IDs here and the pool uses ONLY these, skipping
+		--// friend lists entirely. Deterministic, and works on an alt with no
+		--// friends. Empty = normal behaviour.
+		--//   e.g. { 156, 1, 261 }
+		DebugUserIds = {},
+	},
+
 	WaterPourFirstBonus = 18,
 	WaterPourRepeatBonus = 10,        -- diminishing, same table
 	WaterStationHoldSeconds = 3,
