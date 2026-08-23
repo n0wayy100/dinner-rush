@@ -587,6 +587,43 @@ local VIP_GOLD = Color3.fromRGB(255, 200, 60)
 local parties = {}
 local nextPartyId = 0
 local tableById, tableOccupant, spotOccupant = {}, {}, {}
+
+--// ORDER TICKET BOARD bridge. OrderBoardService polls this a few times a
+--// second and renders the wall board; ServiceLoop stays the only owner of
+--// party state. OrderNumber is assigned the moment an order is TAKEN
+--// (dialogue resolve), so board tickets number in order-taken sequence.
+--// Walkout parties keep appearing (Walkout = true) until their pawn is
+--// gone, which is what lets the board flash a dying ticket before dropping.
+local nextOrderNumber = 0
+
+do
+	local bridge = Instance.new("BindableFunction")
+	bridge.Name = "GetOpenOrders"
+	bridge.OnInvoke = function()
+		local open = {}
+		for _, party in pairs(parties) do
+			if party.OrderNumber then
+				local walkout = party.State == STATE.WALKOUT
+				if party.State == STATE.WAITING_FOOD or walkout then
+					local fraction = 0
+					if party.BarKind == "seated" and party.BarTotal and party.BarTotal > 0 then
+						fraction = math.clamp(party.BarRemaining / party.BarTotal, 0, 1)
+					end
+					table.insert(open, {
+						OrderNo = party.OrderNumber,
+						Table = party.TableId or 0,
+						Dishes = table.clone(party.Ticket or {}),
+						Patience = fraction,
+						VIP = party.IsVIP == true,
+						Walkout = walkout,
+					})
+				end
+			end
+		end
+		return open
+	end
+	bridge.Parent = ServerStorage
+end
 for _, t in ipairs(tableParts) do
 	tableById[t:GetAttribute("TableId")] = t
 end
@@ -1533,10 +1570,14 @@ local function resolveDialogue(dlg, pickedKey, notifyClient)
 		end
 	end
 
+	nextOrderNumber += 1
+	party.OrderNumber = nextOrderNumber --// the board's ticket number
+
 	setPartyState(party, STATE.WAITING_FOOD)
 	showTicket(party)
 	refreshTablePrompt(party.TableId)
-	print(("[Service] Order for Table %d: %s%s"):format(party.TableId, ticketText(party),
+	print(("[Service] Order #%d for Table %d: %s%s"):format(party.OrderNumber,
+		party.TableId, ticketText(party),
 		pickedKey and " (waiter's recommendation)" or ""))
 end
 

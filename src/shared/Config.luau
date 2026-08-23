@@ -760,6 +760,24 @@ Config.ShiftReport = {
 }
 
 ----------------------------------------------------------------
+-- ORDER TICKET BOARD (wall SurfaceGui on the part tagged OrderBoard -
+-- see OrderBoardService). Most desperate party is always leftmost.
+----------------------------------------------------------------
+Config.OrderBoard = {
+	MaxTickets = 8,               -- cards on the board; overflow shows a "+N more"
+	                              -- chip (unreachable with 4 tables - future-proofing)
+	TicketsPerRow = 4,
+	UpdateHz = 4,                 -- refresh rate; plenty for a wall sign
+	CriticalPulseBelow = 0.25,    -- the leftmost ticket pulses under this patience
+	WalkoutFlashSeconds = 1.2,    -- tomato flash before a walkout's card drops
+	SortTweenSeconds = 0.25,      -- cards slide (never teleport) when re-sorting
+	Face = "Auto",                -- "Auto" = find the big face not buried in the
+	                              -- wall (raycast); or pin "Front"/"Back"/"Left"/
+	                              -- "Right"/"Top"/"Bottom" manually
+	PixelsPerStud = 50,           -- SurfaceGui resolution
+}
+
+----------------------------------------------------------------
 -- Accessors
 ----------------------------------------------------------------
 
