@@ -91,6 +91,28 @@ local function applyRep(amount, why)
 end
 
 ----------------------------------------------------------------
+-- SHIFT REPORT COUNTERS. ServiceLoop pulls these at shift end through
+-- GetEventStats; we reset them ourselves when a new shift goes RUNNING
+-- (the heartbeat below watches for the transition).
+----------------------------------------------------------------
+local eventStats = {
+	ToiletsPlunged = 0,
+	FiresExtinguished = 0,
+	OutagesFixed = 0,
+	WaterIncidents = 0,
+}
+local lastShiftState = "WAITING"
+
+do
+	local bridge = Instance.new("BindableFunction")
+	bridge.Name = "GetEventStats"
+	bridge.OnInvoke = function()
+		return table.clone(eventStats)
+	end
+	bridge.Parent = ServerStorage
+end
+
+----------------------------------------------------------------
 -- Helpers
 ----------------------------------------------------------------
 local function resolvePart(instance)
@@ -454,6 +476,7 @@ function stopToilet(fixedBy)
 
 	if fixedBy then
 		applyRep(TOILET.FixRepReward, "toilet fixed")
+		eventStats.ToiletsPlunged += 1
 		--// ActiveEvent goes empty immediately: the event is over. Only the
 		--// closing message lingers, and only for a moment.
 		publish("", "", 0, 0, ("%s fixed the toilet!"):format(fixedBy.Name))
@@ -902,6 +925,7 @@ igniteStation = function(entry)
 		fire.AlertOverride = ("%s threw water on a grease fire!!"):format(player.Name)
 		fire.AlertUntil = os.clock() + FIRE.ToastSeconds
 		showToast(FIRE.WaterTrapMessage)
+		eventStats.WaterIncidents += 1
 		print(("[Events] %s threw water on the %s fire - it spreads!"):format(
 			player.Name, active.Method))
 		spreadFrom(active, "water!!")
@@ -918,6 +942,7 @@ extinguishStation = function(id, player)
 	fire.Count -= 1
 	clearBurnVisuals(burn)
 	kitchenStations("SetDisabled", id, false)
+	eventStats.FiresExtinguished += 1
 	print(("[Events] %s extinguished the %s station (%d still burning)"):format(
 		player.Name, burn.Method, fire.Count))
 
@@ -1163,6 +1188,7 @@ function stopOutage(fixedBy)
 
 	if fixedBy then
 		applyRep(OUTAGE.FixRepReward, "power restored")
+		eventStats.OutagesFixed += 1
 		publish("", "", 0, 0, ("%s got the lights back on!"):format(fixedBy.Name))
 		task.delay(3, function()
 			if not outage.Active then publish() end
@@ -1273,6 +1299,16 @@ end
 
 RunService.Heartbeat:Connect(function(dt)
 	local info = shiftInfo()
+
+	--// Fresh shift, fresh report counters
+	if info.State ~= lastShiftState then
+		if info.State == "RUNNING" then
+			for key in pairs(eventStats) do
+				eventStats[key] = 0
+			end
+		end
+		lastShiftState = info.State
+	end
 
 	--// Nothing runs outside a live shift, and anything mid-flight is cleared
 	if info.State ~= "RUNNING" then

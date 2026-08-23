@@ -358,6 +358,13 @@ local shift = {
 	Till = Config.Money.ShiftStartingTill, -- shared, resets every shift
 	DoorWalkouts = 0,
 	SeatedWalkouts = 0,
+
+	--// Shift-report bookkeeping. The till is a BALANCE; these are cumulative.
+	--// EarnedTotal = customer money only (starting till and completion bonus
+	--// excluded); SpentTotal = supplier spending, refunds subtracted back out.
+	EarnedTotal = 0,
+	SpentTotal = 0,
+	PerfectCooks = 0,
 }
 
 ----------------------------------------------------------------
@@ -454,6 +461,7 @@ local function spendFromTill(amount, why)
 	end
 
 	shift.Till -= amount
+	shift.SpentTotal += amount --// shift-report bookkeeping
 	print(("[Service] Till -%d (%s) -> %d"):format(amount, why or "spend", shift.Till))
 	return true
 end
@@ -1309,6 +1317,7 @@ local function collectPayment(tableId, collector)
 	local value = paymentValue(payment)
 	destroyPayment(tableId)
 	addToTill(value, ("payment from table %d"):format(tableId))
+	shift.EarnedTotal += value --// shift-report bookkeeping
 	print(("[Service] %s banked %d coins (Table %d)"):format(
 		collector.Name, value, tableId))
 end
@@ -1690,6 +1699,7 @@ local function setupTable(tableId, tablePart)
 			local quality = dish:GetAttribute("Quality")
 			if quality == "Perfect" then
 				party.PerfectDishes = (party.PerfectDishes or 0) + 1
+				shift.PerfectCooks += 1 --// shift-report bookkeeping
 				repChange(Config.Reputation.PerfectDish, "perfect dish")
 			elseif quality == "Overcooked" then
 				party.OvercookedDishes = (party.OvercookedDishes or 0) + 1
@@ -1896,6 +1906,49 @@ local function spawnParty()
 end
 
 ----------------------------------------------------------------
+-- Shift report: one FireAllClients at shift end carrying the full
+-- server-computed stats payload. ShiftReportClient renders it; clients
+-- never derive a number themselves. Late joiners are ignored by design.
+----------------------------------------------------------------
+local shiftReportRemote = remotes:FindFirstChild("ShiftReportRemote")
+if not shiftReportRemote then
+	shiftReportRemote = Instance.new("RemoteEvent")
+	shiftReportRemote.Name = "ShiftReportRemote"
+	shiftReportRemote.Parent = remotes
+end
+
+--// First matching threshold wins; a FAILED shift always stamps FailGrade
+local function computeGrade(success)
+	local R = Config.ShiftReport
+	if not success then
+		return R.FailGrade.Grade, R.FailGrade.Tone
+	end
+
+	local target = diff.Rewards.TargetParties
+	for _, row in ipairs(R.GradeThresholds) do
+		local servedOk = not row.ServedFraction
+			or shift.Satisfied >= math.ceil(target * row.ServedFraction)
+		local repOk = not row.MinReputation
+			or shift.Reputation >= row.MinReputation
+		if servedOk and repOk then
+			return row.Grade, row.Tone
+		end
+	end
+
+	local last = R.GradeThresholds[#R.GradeThresholds]
+	return last.Grade, last.Tone
+end
+
+--// Cross-system counters are PULLED, not pushed: EventSystem and
+--// KitchenService each expose a stats bindable and reset their own numbers
+local function pullStats(bridgeName)
+	local bridge = game:GetService("ServerStorage"):FindFirstChild(bridgeName)
+	if not bridge then return {} end
+	local ok, result = pcall(function() return bridge:Invoke() end)
+	return (ok and type(result) == "table") and result or {}
+end
+
+----------------------------------------------------------------
 -- Shift end
 ----------------------------------------------------------------
 local function endShift(success, reason)
@@ -1944,6 +1997,7 @@ local function endShift(success, reason)
 	end
 	if uncollected > 0 then
 		addToTill(uncollected, "uncollected table payments")
+		shift.EarnedTotal += uncollected --// still customer money: it counts
 	end
 
 	--// An order paid for but still on the road when the buzzer goes is money
@@ -1953,6 +2007,9 @@ local function endShift(success, reason)
 		local ok, refunded = pcall(function() return refundBridge:Invoke() end)
 		if ok and tonumber(refunded) and refunded > 0 then
 			addToTill(refunded, "refund for undelivered order")
+			--// Refunded spending was never really spent - the report's
+			--// "supplies" row must not lie
+			shift.SpentTotal = math.max(0, shift.SpentTotal - refunded)
 		end
 	end
 
@@ -1977,6 +2034,46 @@ local function endShift(success, reason)
 		shift.Till = 0
 	elseif shift.Till > 0 then
 		print("[Service] Nobody left to split the till with")
+	end
+
+	--// THE REPORT. Assembled after the refund and the split so every money
+	--// number is final. Emergencies line is built here - the client only
+	--// ever prints what it is handed.
+	do
+		local eventStats = pullStats("GetEventStats")
+		local kitchenStats = pullStats("GetKitchenStats")
+
+		local lines = {}
+		local function addLine(count, singular, plural)
+			count = tonumber(count) or 0
+			if count > 0 then
+				table.insert(lines, ("%d %s"):format(count, count == 1 and singular or plural))
+			end
+		end
+		addLine(eventStats.ToiletsPlunged, "toilet plunged", "toilets plunged")
+		addLine(eventStats.FiresExtinguished, "fire put out", "fires put out")
+		addLine(eventStats.OutagesFixed, "outage fixed", "outages fixed")
+
+		local grade, tone = computeGrade(success)
+		local payload = {
+			Served = shift.Satisfied,
+			Target = diff.Rewards.TargetParties,
+			Walkouts = shift.DoorWalkouts + shift.SeatedWalkouts,
+			PerfectCooks = shift.PerfectCooks,
+			BurntDishes = kitchenStats.DishesBurnt or 0,
+			EmergenciesLine = #lines > 0 and table.concat(lines, "  ·  ") or "No emergencies!",
+			Earned = shift.EarnedTotal,
+			Spent = shift.SpentTotal,
+			Net = shift.EarnedTotal - shift.SpentTotal,
+			Reputation = math.floor(shift.Reputation),
+			Grade = grade,
+			GradeTone = tone,
+			FailReason = (not success) and (reason or "") or nil,
+			WaterIncidents = eventStats.WaterIncidents or 0,
+			AutoDismiss = Config.ShiftReport.AutoDismissSeconds,
+			RowReveal = Config.ShiftReport.RowRevealSeconds,
+		}
+		shiftReportRemote:FireAllClients("Show", payload)
 	end
 
 	publishShift()

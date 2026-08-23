@@ -60,6 +60,22 @@ local STATE_COLOR = {
 	BURNT = Color3.fromRGB(90, 80, 78),
 }
 
+--// SHIFT REPORT COUNTERS. ServiceLoop pulls these at shift end through
+--// GetKitchenStats. No reset needed: one server runs one shift, so the
+--// script's lifetime IS the shift's.
+local kitchenStats = {
+	DishesBurnt = 0,
+}
+
+do
+	local bridge = Instance.new("BindableFunction")
+	bridge.Name = "GetKitchenStats"
+	bridge.OnInvoke = function()
+		return table.clone(kitchenStats)
+	end
+	bridge.Parent = game:GetService("ServerStorage")
+end
+
 ----------------------------------------------------------------
 -- Helpers
 ----------------------------------------------------------------
@@ -499,6 +515,7 @@ local function collect(station, player)
 	if not slot then return end
 
 	if slot.State == "BURNT" then
+		kitchenStats.DishesBurnt += 1 --// shift-report bookkeeping
 		print(("[Kitchen] %s binned a burnt %s"):format(player.Name, tostring(slot.Dish)))
 		clearSlot(station, slot)
 		return
