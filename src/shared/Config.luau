@@ -714,6 +714,29 @@ Config.Payment = {
 }
 
 ----------------------------------------------------------------
+-- SHIFT REPORT (the end-of-shift results panel - see ShiftReportClient)
+-- The server computes every number and the verdict; the client renders.
+----------------------------------------------------------------
+Config.ShiftReport = {
+	AutoDismissSeconds = 12,      -- panel dismisses itself after this long
+	RowRevealSeconds = 0.35,      -- drumroll: pause between row reveals
+
+	--// Checked top to bottom, first match wins. ServedFraction is of the
+	--// difficulty's TargetParties; a missing key means "don't care".
+	--// Tone picks the stamp colour: "good" basil / "mid" mustard / "bad" tomato.
+	GradeThresholds = {
+		{ Grade = "5 STARS!",       Tone = "good", ServedFraction = 1.0, MinReputation = 60 },
+		{ Grade = "GREAT SHIFT!",   Tone = "good", ServedFraction = 1.0 },
+		{ Grade = "NOT BAD!",       Tone = "mid",  ServedFraction = 0.7 },
+		{ Grade = "ROUGH NIGHT...", Tone = "bad" },
+	},
+
+	--// Any FAILED shift (reputation zero, kitchen burned down) stamps this
+	--// regardless of the thresholds; the failure reason prints under it.
+	FailGrade = { Grade = "CLOSED DOWN!", Tone = "bad" },
+}
+
+----------------------------------------------------------------
 -- Accessors
 ----------------------------------------------------------------
 
