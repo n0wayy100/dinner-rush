@@ -4,7 +4,7 @@
 
 	Hold-to-sprint with a stamina bar. Every number lives in Config.Sprint.
 
-	  keyboard   hold LeftShift
+	  keyboard   double-tap W, then keep W held
 	  mobile     ContextActionService touch button (sits above the jump button)
 	  gamepad    press the left thumbstick (L3)
 
@@ -201,18 +201,47 @@ end
 -- The third argument makes the mobile touch button; L3 is the console-
 -- standard sprint press.
 ----------------------------------------------------------------
-local function onSprintAction(_, inputState)
-	if inputState == Enum.UserInputState.Begin then
-		held = true
-	elseif inputState == Enum.UserInputState.End or inputState == Enum.UserInputState.Cancel then
-		held = false
+--// DOUBLE-TAP W. LeftShift is Roblox's own shift-lock toggle, so sprinting
+--// on it meant every sprint fought the camera. Two quick taps of W start the
+--// run; holding W keeps it; releasing W ends it.
+local lastWTapAt = 0
+
+local function onSprintAction(_, inputState, inputObject)
+	local key = inputObject and inputObject.KeyCode
+
+	if key == Enum.KeyCode.W then
+		if inputState == Enum.UserInputState.Begin then
+			local now = os.clock()
+			if now - lastWTapAt <= Sprint.DoubleTapSeconds then
+				held = true      --// second tap inside the window: run
+				lastWTapAt = 0   --// consumed, so a third tap starts a fresh pair
+			else
+				lastWTapAt = now
+			end
+		elseif inputState == Enum.UserInputState.End
+			or inputState == Enum.UserInputState.Cancel then
+			if Sprint.StopOnRelease then
+				held = false
+			end
+		end
+	else
+		--// Touch button and gamepad L3 stay plain hold-to-sprint: there is
+		--// nothing to double-tap on a thumbstick.
+		if inputState == Enum.UserInputState.Begin then
+			held = true
+		elseif inputState == Enum.UserInputState.End
+			or inputState == Enum.UserInputState.Cancel then
+			held = false
+		end
 	end
-	--// Pass, never Sink: LeftShift still belongs to shift lock; sprint only listens
+
+	--// Pass, never Sink: W still has to reach the movement controller, or
+	--// binding sprint to it would stop the player walking forward.
 	return Enum.ContextActionResult.Pass
 end
 
 ContextActionService:BindAction(ACTION, onSprintAction, true,
-	Enum.KeyCode.LeftShift, Enum.KeyCode.ButtonL3)
+	Enum.KeyCode.W, Enum.KeyCode.ButtonL3)
 ContextActionService:SetTitle(ACTION, "SPRINT")
 --// Inside the touch-button frame (bottom-right cluster): roughly above the
 --// jump button. Nudge to taste in the Device emulator.
@@ -289,5 +318,5 @@ RunService.Heartbeat:Connect(function(dt)
 	end
 end)
 
-print(("[SprintClient] ready - Shift / touch / L3, speed %d -> %d")
+print(("[SprintClient] ready - double-tap W / touch / L3, speed %d -> %d")
 	:format(Sprint.BaseWalkSpeed, Sprint.SprintSpeed))

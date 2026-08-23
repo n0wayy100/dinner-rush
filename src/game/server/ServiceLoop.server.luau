@@ -1269,13 +1269,13 @@ refreshTablePrompt = function(tableId)
 		prompt.Enabled = true
 		prompt.ActionText = "Take order"
 		prompt.ObjectText = ("Table %d"):format(tableId)
-		prompt.HoldDuration = 1
+		prompt.HoldDuration = Config.Customers.TakeOrderHoldSeconds
 	elseif party.State == STATE.WAITING_FOOD then
 		prompt.Enabled = true
 		prompt.ActionText = "Serve dish"
 		prompt.ObjectText = ("Table %d - %d dish%s left"):format(
 			tableId, party.DishesRemaining, party.DishesRemaining == 1 and "" or "es")
-		prompt.HoldDuration = 0.5
+		prompt.HoldDuration = Config.Customers.ServeHoldSeconds
 	else
 		prompt.Enabled = false
 	end
