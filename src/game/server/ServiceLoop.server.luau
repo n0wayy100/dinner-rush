@@ -1319,25 +1319,22 @@ refreshTablePrompt = function(tableId)
 end
 
 ----------------------------------------------------------------
--- Payments. Finishing a meal no longer pays instantly: the money waits
--- ON the table as a collect point and melts while nobody grabs it.
--- Full value through GraceSeconds, then a linear decay over DecaySeconds:
--- BASE (what a plain no-perfect, no-VIP order pays) floors at
--- BaseFloorPercent; TIP (perfect-cook surplus + VIP surplus) melts to
--- zero. After the melt finishes it lingers LingerSeconds, then the
--- remainder is lost - no rep penalty, the lost coins ARE the penalty.
+-- Payments. Finishing a meal does not pay instantly: the money waits ON the
+-- table as a collect point until someone walks over. It holds its full value
+-- for as long as it sits there - the melt that used to punish stalling is
+-- gone. Anything still uncollected at the buzzer is swept into the till, so
+-- earned money is never lost. Base and Tip are still tracked separately,
+-- ready for whatever replaces the melt.
 -- The party leaves on its normal schedule; turnover never waits on money.
 ----------------------------------------------------------------
 local payments = {} --// tableId -> { Base, Tip, CreatedAt, Gui, Prompt, Amount }
 
 --// Current value plus where in the melt we are (0 = grace, 1 = floored)
+--// Flat: what the party owed is what you collect, whenever you get to it.
+--// The second return value used to be the melt fraction; it stays as a
+--// constant 0 so callers that read it keep working.
 local function paymentValue(payment)
-	local P = Config.Payment
-	local elapsed = os.clock() - payment.CreatedAt
-	local t = math.clamp((elapsed - P.GraceSeconds) / P.DecaySeconds, 0, 1)
-	local baseVal = payment.Base * (1 - t * (1 - P.BaseFloorPercent))
-	local tipVal = payment.Tip * (1 - t * (1 - P.TipFloorPercent))
-	return math.floor(baseVal + tipVal), t
+	return math.floor(payment.Base + payment.Tip), 0
 end
 
 local function destroyPayment(tableId)
@@ -1462,25 +1459,24 @@ local function createPayment(party, tableId)
 end
 
 --// ~2x/sec from the heartbeat: tick every billboard, expire the stale
+--// Payments hold their value now, so this only keeps the label honest and
+--// clears anything that has outstayed LingerSeconds (0 = never).
 local function updatePayments()
-	local P = Config.Payment
+	local lifetime = Config.Payment.LingerSeconds
 	local expired = nil
-	for tableId, payment in pairs(payments) do
-		local value, t = paymentValue(payment)
-		payment.Amount.Text = tostring(value)
-		payment.Amount.TextColor3 = (t <= 0 and PAY_COLOR.GRACE)
-			or (t < 1 and PAY_COLOR.DECAY) or PAY_COLOR.FLOOR
 
-		--// The party leaves the moment the payment appears, so the linger
-		--// clock runs from the END of the melt, not from "party left"
-		local lifetime = P.GraceSeconds + P.DecaySeconds + P.LingerSeconds
-		if os.clock() - payment.CreatedAt >= lifetime then
+	for tableId, payment in pairs(payments) do
+		payment.Amount.Text = tostring(paymentValue(payment))
+		payment.Amount.TextColor3 = PAY_COLOR.GRACE
+
+		if lifetime > 0 and os.clock() - payment.CreatedAt >= lifetime then
 			expired = expired or {}
 			table.insert(expired, tableId)
 			print(("[Service] Table %d payment vanished - %d coins lost")
-				:format(tableId, value))
+				:format(tableId, paymentValue(payment)))
 		end
 	end
+
 	if expired then
 		for _, tableId in ipairs(expired) do
 			destroyPayment(tableId)

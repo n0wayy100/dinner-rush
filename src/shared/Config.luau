@@ -601,8 +601,11 @@ Config.Sprint = {
 	DoubleTapSeconds = 0.35,      -- max gap between the two W presses
 	StopOnRelease = true,         -- letting go of W ends the sprint
 
-	BaseWalkSpeed = 16,           -- Roblox default; THE source of truth for normal speed
-	SprintSpeed = 24,             -- while sprinting (1.5x)
+	--// 1.5x Roblox's default 16. The restaurant is big enough that stock
+	--// walking made every trip feel like a chore; sprint keeps its 1.5x
+	--// margin on top so it still reads as a burst rather than the norm.
+	BaseWalkSpeed = 24,           -- was 16 (Roblox default)
+	SprintSpeed = 36,             -- was 24; still 1.5x the base
 	StaminaMax = 100,
 	DrainPerSecond = 20,          -- ~5s of continuous full sprint
 	RegenPerSecond = 15,          -- empty -> full in ~6.7s once regen starts
@@ -729,7 +732,7 @@ Config.Dialogue = {
 }
 
 ----------------------------------------------------------------
--- PAYMENT COLLECTION (money waits on the table and melts - see
+-- PAYMENT COLLECTION (money waits on the table at full value - see
 -- ServiceLoop's payment section)
 --
 -- The split, as implemented:
@@ -737,15 +740,16 @@ Config.Dialogue = {
 --          BASE_COINS_PER_PARTY * Size * CoinMult * OvercookedPayMult
 --   TIP  = everything the actual payout adds above that (the perfect-cook
 --          surplus and the VIP surplus)
--- Base decays to BaseFloorPercent and stops; tip decays all the way out.
--- Hustle is rewarded, success is never zeroed.
+-- Both are paid in full whenever the money is collected. The split is kept
+-- because it is what a future pressure mechanic would act on.
 ----------------------------------------------------------------
 Config.Payment = {
-	GraceSeconds = 8,             -- full value this long; walking over isn't a sin
-	DecaySeconds = 20,            -- after grace, the melt takes this long to finish
-	BaseFloorPercent = 0.45,      -- base never drops below this fraction
-	TipFloorPercent = 0,          -- tips melt completely (kept tunable anyway)
-	LingerSeconds = 6,            -- fully-decayed money stays this long, then vanishes
+	--// Payments no longer melt. Money sits on the table at full value until
+	--// someone collects it, or until the shift ends and it is swept into the
+	--// till. Removed for now pending a different answer to "don't let money
+	--// pile up as a free buffer" - see LingerSeconds below for the one piece
+	--// of pressure kept.
+	LingerSeconds = 0,            -- 0 = never vanishes; >0 = seconds on the table
 	CollectHoldSeconds = 1.0,     -- hold time on the collect prompt
 }
 
