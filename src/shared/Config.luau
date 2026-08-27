@@ -961,6 +961,71 @@ function Config.PhaseAt(elapsedSeconds)
 end
 
 ----------------------------------------------------------------
+-- PERSISTENCE (the savefile)
+----------------------------------------------------------------
+Config.Profile = {
+	--// DataStore name. NEVER rename this once players have saves - a new name
+	--// is a new, empty store and every existing profile is orphaned with no
+	--// way back. The _v1 suffix is the escape hatch: if the schema ever breaks
+	--// unrecoverably, bump to _v2 rather than trying to migrate broken data.
+	StoreName = "DinnerRush_Profiles_v1",
+
+	--// Profile key is KeyPrefix .. UserId
+	KeyPrefix = "Player_",
+
+	--// Studio writes to the LIVE store by default - that is what makes the
+	--// "earn -> leave -> rejoin" test actually prove anything. Flip to true to
+	--// run against a throwaway in-memory store where nothing persists.
+	UseMockInStudio = false,
+
+	--// A player with no profile would earn progress into nothing, so we kick
+	--// instead of letting them play. This is how long we let the load run.
+	LoadTimeoutSeconds = 30,
+	KickMessage = "Couldn't load your save. Please rejoin - your progress is safe.",
+
+	--// Mirrors Wallet into leaderstats so it is visible without any UI. Coins
+	--// stays what it already is: this shift's team money, session-only.
+	ShowWalletInLeaderstats = true,
+
+	--// THE SAVEFILE. Every key here is created for new players and back-filled
+	--// into existing ones on load, so adding a key later is always safe.
+	--//
+	--// Never store in here: Instances, Vector3/Color3/CFrame, functions, or
+	--// arrays with gaps. None of those survive a DataStore round-trip.
+	Template = {
+		SchemaVersion = 1,
+
+		Wallet = 0,                   -- persistent personal money (spec 6)
+
+		--// Sets, not arrays: OwnedClasses.Chef = true. Arrays with gaps are the
+		--// documented DataStore hazard, and set lookup is what every call site
+		--// actually wants. Deviates from spec 4 deliberately.
+		OwnedClasses = {},            -- ["Chef"] = true
+		ClassLevels = {},             -- ["Chef"] = 1..5
+		EquippedClass = "None",       -- "None" = classless, which is legal
+
+		--// Cumulative, lifetime. Single-shift challenge counts live in server
+		--// memory (spec 4) - only their completions land here.
+		TaskProgress = {
+			PerfectCooks = 0,
+			DishesServed = 0,
+			EventChannels = 0,
+			PaymentsCollected = 0,
+			Greetings = 0,
+			Recommendations = 0,
+		},
+
+		TutorialDone = false,         -- false = next shift runs guided (spec 7)
+
+		--// Absorbed from the lobby (spec 3) - one profile per player, not one
+		--// per feature. Neither system is built yet; the keys are here so the
+		--// schema does not need a migration when they are.
+		RedeemedCodes = {},           -- ["CODE"] = true
+		DailyGift = { LastClaim = 0, Streak = 0 },
+	},
+}
+
+----------------------------------------------------------------
 -- Config is read-only: a system that writes to it would silently
 -- rebalance the game for everything else sharing this module.
 ----------------------------------------------------------------
