@@ -140,6 +140,18 @@ Config.Kitchen = {
 	BinHoldSeconds = 0.5,         -- hold at the TrashBin; deliberately NOT a tap,
 	                              -- so nobody bins a good dish by mistapping
 
+	--// One cook per station. Several burners = several CookStation anchors
+	--// side by side, each with its own prompt and its own small bar.
+	--// Bars are narrow on purpose: wide ones overlap when the anchors are
+	--// only a few studs apart.
+	StationBarWidth = 80,
+	StationBarHeight = 30,
+
+	--// Tighter than Config.Interaction.PromptRangeStuds (8). Neighbouring
+	--// burners sit within a few studs, so a wide range would put every
+	--// station's prompt in reach at once and E would fire an arbitrary one.
+	StationPromptRangeStuds = 5,
+
 	--// Payout multipliers applied when the dish is served
 	PerfectPayMult = 1.5,
 	OvercookedPayMult = 0.6,

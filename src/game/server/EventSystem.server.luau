@@ -69,6 +69,7 @@ end
 
 publish()
 EventState:SetAttribute("PatienceMultiplier", 1) --// 1 = normal drain
+EventState:SetAttribute("PowerOut", false) --// KitchenService freezes cooking on this
 EventState:SetAttribute("Toast", "") --// independent of publish(): a toast may
                                      --// outlive the event that raised it
 
@@ -827,8 +828,9 @@ local function spreadFrom(sourceBurn, cause)
 			end
 		end
 
+		--// Whatever catches brings its whole appliance with it
 		for _, entry in ipairs(toIgnite) do
-			igniteStation(entry)
+			igniteAppliance(entry, list)
 		end
 		if #toIgnite > 0 then
 			print(("[Events] the fire spread to %d station(s) (%s)"):format(#toIgnite, cause))
@@ -837,6 +839,32 @@ local function spreadFrom(sourceBurn, cause)
 
 	sourceBurn.Remaining = sourceBurn.Total
 	publishFire()
+end
+
+--// Every station on the same physical appliance as this one, itself
+--// included. Anchors with no Appliance name are alone.
+local function applianceGroup(entry, list)
+	local group = { entry }
+	if not entry.Appliance or not list then
+		return group
+	end
+
+	for _, other in ipairs(list) do
+		if other.Id ~= entry.Id and other.Appliance == entry.Appliance then
+			table.insert(group, other)
+		end
+	end
+	return group
+end
+
+--// One stove catches all at once: three burners on one appliance is one
+--// fire, not three that happen to be near each other.
+local function igniteAppliance(entry, list)
+	local group = applianceGroup(entry, list or kitchenStations("List"))
+	for _, member in ipairs(group) do
+		igniteStation(member)
+	end
+	return #group
 end
 
 igniteStation = function(entry)
@@ -1023,9 +1051,10 @@ local function startFire()
 	end
 	local target = #busy > 0 and busy[math.random(#busy)] or list[math.random(#list)]
 
-	igniteStation(target)
+	local caught = igniteAppliance(target, list)
 	publishFire()
-	print(("[Events] grease fire started on the %s station"):format(target.Method))
+	print(("[Events] grease fire started on the %s station (%d burner(s) alight)")
+		:format(target.Method, caught))
 end
 
 stopFire = function(fixedBy)
@@ -1166,6 +1195,10 @@ local function startOutage()
 	--// Seated bars drain faster while it is dark. ServiceLoop reads this.
 	EventState:SetAttribute("PatienceMultiplier", OUTAGE.PatienceDrainMultiplier)
 
+	--// The stoves die with the lights: KitchenService freezes every pan and
+	--// refuses new cooks while this is true.
+	EventState:SetAttribute("PowerOut", true)
+
 	refreshOutageUi()
 	publish("PowerOutage", "DARK", 0, 0,
 		"The power is out! Someone get to the breaker box!")
@@ -1180,6 +1213,7 @@ function stopOutage(fixedBy)
 	outage.DrainAccum = 0
 	restoreLighting()
 	EventState:SetAttribute("PatienceMultiplier", 1)
+	EventState:SetAttribute("PowerOut", false)
 	refreshOutageUi()
 
 	local elapsed = shiftInfo().Elapsed
