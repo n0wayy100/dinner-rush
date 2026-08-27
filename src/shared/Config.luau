@@ -807,6 +807,107 @@ Config.OrderBoard = {
 }
 
 ----------------------------------------------------------------
+-- CLASSES (the lobby class shop - see ClassVendor / ClassShopClient).
+-- SHARED deliberately: passives and ultimates are main-game mechanics, so
+-- the main place will read this same table when they get implemented.
+-- Until then they are DISPLAY ONLY - the shop sells and equips, nothing
+-- more. Purchase/equip validation lives server-side in ProfileAPI.
+----------------------------------------------------------------
+Config.Classes = {
+	Trainee = {
+		Display = "The Trainee",
+		Rarity = "Starter", RarityColor = Color3.fromRGB(150, 150, 150),
+		Price = 0,                -- never buyable: every profile starts owning it
+		IconId = "",
+		FlavorText = "First day on the job. The apron is still stiff.",
+		PassiveText = "Eager to learn (no perks yet!)",
+		UltimateName = "", UltimateText = "",
+	},
+	Chef = {
+		Display = "The Chef",
+		Rarity = "Common", RarityColor = Color3.fromRGB(76, 175, 109),
+		Price = 1500,
+		IconId = "",
+		FlavorText = "Heard you can burn water. Prove me wrong.",
+		PassiveText = "Collects cooked dishes a little faster",
+		UltimateName = "FLASH FRY!",
+		UltimateText = "Instantly cooks the raw ingredient you're holding to PERFECT",
+		--// Levels 1->5: finish the task, then PAY to upgrade. Steps[L] is the
+		--// cumulative counter needed to leave level L; Costs[L] the coins.
+		--// Tuned for ~10-15 perfects per focused shift: Lv2 in a shift or two,
+		--// max level a real career. Counters counted in the MAIN GAME
+		--// (future phase) and persisted via ProfileService.
+		UpgradeTrack = {
+			Counter = "PerfectCooks", Label = "Perfect cooks",
+			Steps = { 15, 40, 80, 150 },
+			Costs = { 300, 600, 1200, 2000 },
+		},
+	},
+	Waiter = {
+		Display = "The Waiter",
+		Rarity = "Common", RarityColor = Color3.fromRGB(76, 175, 109),
+		Price = 1500,
+		IconId = "",
+		FlavorText = "Three plates, one arm, zero fear.",
+		PassiveText = "A little quicker on their feet while carrying",
+		UltimateName = "THIRD HAND!",
+		UltimateText = "Carry a third item for the rest of the shift",
+		--// ~10-15 serves per focused shift
+		UpgradeTrack = {
+			Counter = "DishesServed", Label = "Dishes served",
+			Steps = { 20, 60, 120, 220 },
+			Costs = { 300, 600, 1200, 2000 },
+		},
+	},
+	Fixer = {
+		Display = "The Fixer",
+		Rarity = "Rare", RarityColor = Color3.fromRGB(245, 184, 65),
+		Price = 4000,
+		IconId = "",
+		FlavorText = "Toilets fear them. Fires respect them.",
+		PassiveText = "Fixes emergencies a little faster",
+		UltimateName = "SPEED DIAL!",
+		UltimateText = "Instantly resolves the active emergency",
+		--// ~1-3 event fixes per shift; rarer actions, shorter track
+		UpgradeTrack = {
+			Counter = "EventChannels", Label = "Emergencies fixed",
+			Steps = { 3, 8, 16, 30 },
+			Costs = { 500, 1000, 2000, 3500 },
+		},
+	},
+	Charmer = {
+		Display = "The Charmer",
+		Rarity = "Epic", RarityColor = Color3.fromRGB(229, 72, 120),
+		Price = 8000,
+		IconId = "",
+		FlavorText = "Could talk a burnt burger into a five-star review.",
+		PassiveText = "Greetings buy extra patience",
+		UltimateName = "SWEET TALK!",
+		UltimateText = "Refills one table's patience by half",
+		--// ~4-8 collected payments per shift
+		UpgradeTrack = {
+			Counter = "PaymentsCollected", Label = "Payments collected",
+			Steps = { 12, 35, 70, 130 },
+			Costs = { 800, 1600, 3200, 5500 },
+		},
+	},
+}
+
+Config.ClassShop = {
+	CardOrder = { "Trainee", "Chef", "Waiter", "Fixer", "Charmer" },
+	VendorGreetings = {
+		"Lookin' to move up in the world?",
+		"Aprons, skills, destinies - take your pick!",
+		"The Trainee look suits you. But so would a promotion...",
+		"Every legend started with a name tag!",
+	},
+	CameraFocus = true,           -- brief camera tween toward the vendor on talk
+	CameraTweenSeconds = 0.35,
+	WalkAwayCloseStuds = 14,      -- wandering off closes the screen
+	BubbleSeconds = 3,            -- vendor speech bubble lifetime
+}
+
+----------------------------------------------------------------
 -- Accessors
 ----------------------------------------------------------------
 
