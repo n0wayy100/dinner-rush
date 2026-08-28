@@ -23,6 +23,7 @@
 local CollectionService = game:GetService("CollectionService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local ServerStorage = game:GetService("ServerStorage")
 local Players = game:GetService("Players")
 
 local sharedFolder = ReplicatedStorage:WaitForChild("Shared", 10)
@@ -413,6 +414,19 @@ local function setupBin(instance)
 			kitchenStats.IngredientsBinned += 1
 		end
 		kitchenStats.ItemsBinned += 1
+
+		--// A plated dish scrapes into the bin and the plate goes straight back
+		--// on the pass, empty. It never waits on a payment that will not come.
+		local plateSlot = tool:GetAttribute("PlateSlot")
+		if plateSlot then
+			local ret = ServerStorage:FindFirstChild("PassReturnPlate")
+			if ret then
+				ret:Invoke(plateSlot, "dish binned")
+			else
+				warn("[Kitchen] binned a plated dish but ServerStorage.PassReturnPlate is missing"
+					.. " - that plate is now lost until the shift ends")
+			end
+		end
 
 		tool:Destroy()
 		print(("[Kitchen] %s binned %s (%d item(s) this shift)")

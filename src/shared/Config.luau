@@ -961,6 +961,66 @@ function Config.PhaseAt(elapsedSeconds)
 end
 
 ----------------------------------------------------------------
+-- THE PASS (plate hand-off between kitchen and floor)
+----------------------------------------------------------------
+Config.Pass = {
+	--// Plating is mandatory: a bare dish cannot be served. The pass is the
+	--// only route from kitchen to floor.
+	RequirePlateToServe = true,
+
+	--// Taps, matching the cook/order prompts. Nobody holds E on a plate.
+	PlaceHoldSeconds = 0,
+	TakeHoldSeconds = 0,
+
+	--// Slots sit side by side on the counter, so the prompt range is tight
+	--// for the same reason the cook stations are - otherwise E hits whichever
+	--// neighbour the engine felt like.
+	PromptRangeStuds = 5,
+
+	--// The food sits this far above the top face of the plate.
+	FoodLiftStuds = 0.12,
+	FoodSize = Vector3.new(1.1, 0.34, 1.1),
+
+	--// Extra nudge for the portion if it sinks into or floats over the plate.
+	--// Local to the plate: X/Z slide it across the surface, Y raises it.
+	FoodOffset = Vector3.new(0, 0, 0),
+
+	--// HOW THE PLATE SITS IN A PLAYER'S HAND.
+	--// Roblox welds a Tool's Handle to the hand through Tool.Grip. Left at
+	--// identity a flat object stands on its edge, so a plate needs tipping.
+	--// Degrees, applied X then Y then Z.
+	--//
+	--// The Tool builds its own invisible, axis-aligned Handle, so 0,0,0 now
+	--// means "held exactly as it sits on the counter" - the union's own axes
+	--// no longer leak in. Only change this to tilt the plate on purpose.
+	GripAngles = Vector3.new(0, 0, 0),
+
+	--// Slides the plate within the hand once the rotation is right.
+	GripOffset = Vector3.new(0, 0, 0),
+
+	--// How far BELOW the plate the invisible handle sits, so the hand reads as
+	--// a palm under a plate rather than a fist through one. Raise it if the
+	--// plate still clips the hand; 0 puts the hand at the plate's underside.
+	HandleDropStuds = 0.15,
+
+	--// Where a served plate lands: 0 = table centre, 1 = the customer's seat
+	--// position. Just past halfway puts it in front of them, on the table.
+	TablePlateInset = 0.55,
+	TablePlateLiftStuds = 0.05,
+
+	--// Keeps a served plate off the very edge of the table. Raise it if plates
+	--// look like they are about to slide off.
+	TablePlateEdgeMargin = 0.9,
+
+	--// THE PLATE ECONOMY. However many PassSlot models exist is how many
+	--// dishes can be in flight at once. A plate is only free again once its
+	--// table's payment has been collected (owner's ruling), so an uncollected
+	--// payment holds a plate hostage - see the reclaim paths in PassService.
+	ReclaimOnPlayerLeave = true,   -- carrier disconnects or dies -> plate home
+	ReclaimOnShiftEnd = true,      -- never start a shift short of plates
+}
+
+----------------------------------------------------------------
 -- PERSISTENCE (the savefile)
 ----------------------------------------------------------------
 Config.Profile = {
