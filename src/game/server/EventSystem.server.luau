@@ -36,6 +36,31 @@ local sharedFolder = ReplicatedStorage:WaitForChild("Shared", 10)
 assert(sharedFolder, "[Events] ReplicatedStorage.Shared not found")
 local Config = require(sharedFolder:WaitForChild("Config", 10))
 
+--// Persistence contract - degrade over dying, same as ServiceLoop
+local ProfileAPI
+do
+	local ok, api = pcall(function()
+		return require(ServerStorage:WaitForChild("Shared", 20):WaitForChild("ProfileAPI", 20))
+	end)
+	if ok and api then
+		ProfileAPI = api
+	else
+		warn("[Events] ProfileAPI unavailable - event careers will NOT save")
+		ProfileAPI = { AddStat = function() return false end }
+	end
+end
+
+--// Career + ultimate charge in one call (same shape as ServiceLoop's)
+local function creditStat(player, key, amount)
+	ProfileAPI.AddStat(player, key, amount)
+	local charge = ServerStorage:FindFirstChild("AddCharge")
+	if charge then
+		pcall(function()
+			charge:Invoke(player, key, amount)
+		end)
+	end
+end
+
 print("[Events] script started")
 
 local SCHEDULER = Config.Events.Scheduler
@@ -478,6 +503,7 @@ function stopToilet(fixedBy)
 	if fixedBy then
 		applyRep(TOILET.FixRepReward, "toilet fixed")
 		eventStats.ToiletsPlunged += 1
+		creditStat(fixedBy, "EventChannels", 1) --// the Fixer's career
 		--// ActiveEvent goes empty immediately: the event is over. Only the
 		--// closing message lingers, and only for a moment.
 		publish("", "", 0, 0, ("%s fixed the toilet!"):format(fixedBy.Name))
@@ -969,6 +995,7 @@ igniteStation = function(entry)
 		fire.AlertUntil = os.clock() + FIRE.ToastSeconds
 		showToast(FIRE.WaterTrapMessage)
 		eventStats.WaterIncidents += 1
+		ProfileAPI.AddStat(player, "KitchenCrimes", 1) --// the permanent record
 		print(("[Events] %s threw water on the %s fire - it spreads!"):format(
 			player.Name, active.Method))
 		spreadFrom(active, "water!!")
@@ -986,6 +1013,7 @@ extinguishStation = function(id, player)
 	clearBurnVisuals(burn)
 	kitchenStations("SetDisabled", id, false)
 	eventStats.FiresExtinguished += 1
+	creditStat(player, "EventChannels", 1) --// the Fixer's career
 	print(("[Events] %s extinguished the %s station (%d still burning)"):format(
 		player.Name, burn.Method, fire.Count))
 
@@ -1242,6 +1270,7 @@ function stopOutage(fixedBy)
 	if fixedBy then
 		applyRep(OUTAGE.FixRepReward, "power restored")
 		eventStats.OutagesFixed += 1
+		creditStat(fixedBy, "EventChannels", 1) --// the Fixer's career
 		publish("", "", 0, 0, ("%s got the lights back on!"):format(fixedBy.Name))
 		task.delay(3, function()
 			if not outage.Active then publish() end
@@ -1364,6 +1393,29 @@ local function pickEvent(difficultyName)
 		end
 	end
 	return pool[#pool]
+end
+
+--// SPEED DIAL! bridge (the Fixer's ultimate): instantly resolves whatever
+--// is active by calling the SAME success paths a hands-on fix uses -
+--// cleanup, reward, career credit and announcement all come free.
+--// False = nothing active = the caller must NOT consume the charge.
+do
+	local bridge = Instance.new("BindableFunction")
+	bridge.Name = "ResolveActiveEvent"
+	bridge.OnInvoke = function(player)
+		if toilet.Active then
+			stopToilet(player)
+			return true
+		elseif fire.Active then
+			stopFire(player)
+			return true
+		elseif outage.Active then
+			stopOutage(player)
+			return true
+		end
+		return false, "No emergency right now!"
+	end
+	bridge.Parent = ServerStorage
 end
 
 RunService.Heartbeat:Connect(function(dt)

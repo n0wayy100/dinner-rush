@@ -32,6 +32,10 @@
 	ProfileAPI.AddStat(player, key, amount) -> ok
 	    -- THE gameplay write call. Key must exist in the Registry (Stats or
 	    -- TaskProgress source); routed to the right table automatically.
+	ProfileAPI.Deposit(player, amount) -> ok
+	    -- The main game's shift-end wallet write (the till split made real).
+	    -- Wraps Profiles.AddWallet so Changed fires and every wallet
+	    -- mutation stays inside this contract.
 	ProfileAPI.RecordShift(player, entry) -> ok
 	ProfileAPI.PurchaseClass(player, classKey) -> ok, reasonText?
 	ProfileAPI.EquipClass(player, classKey)    -> ok, reasonText?
@@ -226,6 +230,24 @@ function ProfileAPI.AddStat(player, key, amount)
 
 	local target = entry.Source == "TaskProgress" and data.TaskProgress or data.Stats
 	target[key] = (target[key] or entry.Default or 0) + amount
+	changed:Fire(player)
+	return true
+end
+
+--// The main game's shift-end wallet write. Through the contract rather
+--// than Profiles directly so Changed fires (shop/stats screens refresh)
+--// and wallet mutations stay in one auditable place.
+function ProfileAPI.Deposit(player, amount)
+	amount = math.floor(tonumber(amount) or 0)
+	if amount <= 0 then return false end
+
+	local data = profileFor(player)
+	if not data then
+		warn(("[ProfileAPI] Deposit: no profile for %s (dropped %d)"):format(player.Name, amount))
+		return false
+	end
+
+	Profiles.AddWallet(player, amount)
 	changed:Fire(player)
 	return true
 end

@@ -951,11 +951,44 @@ Config.PlayerStats = {
 		{ Key = "PerfectCooks",      Source = "TaskProgress", Label = "Perfect Cooks",      Format = "int",      Default = 0 },
 		{ Key = "EventChannels",     Source = "TaskProgress", Label = "Emergencies Fixed",  Format = "int",      Default = 0 },
 		{ Key = "PaymentsCollected", Source = "TaskProgress", Label = "Payments Collected", Format = "int",      Default = 0 },
+		{ Key = "Greetings",         Source = "TaskProgress", Label = "Warm Greetings",     Format = "int",      Default = 0 },
+		{ Key = "Recommendations",   Source = "TaskProgress", Label = "Recommendations",    Format = "int",      Default = 0 },
 		{ Key = "MoneyDeposited",    Source = "Stats",        Label = "Lifetime Earnings",  Format = "money",    Default = 0 },
 		{ Key = "TimeOnFloorSeconds", Source = "Stats",       Label = "Time On Floor",      Format = "duration", Default = 0 },
 		{ Key = "KitchenCrimes",     Source = "Stats",        Label = "Kitchen Crimes",     Format = "int",      Default = 0 },
 		{ Key = "ClassesOwned",      Source = "Computed",     Label = "Classes Owned",      Format = "int",      Default = 0 },
 	},
+}
+
+----------------------------------------------------------------
+-- ULTIMATES (charge + the four abilities - see ChargeService/ChargeClient)
+-- Charge is SERVER-owned, 0..MaxCharge per player, earned at the same
+-- moments the career counters fire, spent by activation (Q / touch / pad Y).
+-- Only a SUCCESSFUL ability consumes the charge; a denial keeps it.
+----------------------------------------------------------------
+Config.Ultimates = {
+	MaxCharge = 100,
+
+	--// Charge per counted moment, keyed by PlayerStats registry keys.
+	--// A missing key gives 0 (Kitchen Crimes build character, not charge).
+	--// Multiplied by the count (CustomersServed arrives as party size).
+	ChargePer = {
+		PerfectCooks = 12,
+		DishesServed = 8,
+		CustomersServed = 4,
+		PaymentsCollected = 10,
+		Greetings = 5,
+		Recommendations = 12,
+		EventChannels = 25,
+	},
+
+	--// Ability numbers
+	SweetTalkRefillFraction = 0.5,   -- half the table's patience bar back
+	ThirdHandExtraSlots = 1,         -- carry 2 -> 3 for the rest of the shift
+
+	--// Bar feel (client)
+	BarTweenSeconds = 0.2,
+	ReadyPulseSeconds = 0.8,
 }
 
 ----------------------------------------------------------------

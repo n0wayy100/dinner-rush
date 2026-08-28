@@ -144,8 +144,15 @@ local function countCarried(player)
 	return count
 end
 
+--// GAP 1 CHOKEPOINT: the carry limit is per-player now. THIRD HAND! sets
+--// a CarryLimit attribute on its Waiter; everyone else falls through to
+--// the Config default. Every limit read routes through here.
+local function carryLimitFor(player)
+	return player:GetAttribute("CarryLimit") or Config.Kitchen.MaxCarriedItems
+end
+
 local function isFull(player)
-	return countCarried(player) >= Config.Kitchen.MaxCarriedItems
+	return countCarried(player) >= carryLimitFor(player)
 end
 
 --// First carried raw ingredient this station can actually cook
@@ -347,7 +354,7 @@ kitchenRemote.OnServerEvent:Connect(function(player, action, ingredientName)
 
 	if isFull(player) then
 		kitchenRemote:FireClient(player, "TakeDenied",
-			("Hands full (max %d)"):format(Config.Kitchen.MaxCarriedItems))
+			("Hands full (max %d)"):format(carryLimitFor(player)))
 		return
 	end
 
@@ -570,7 +577,7 @@ local function collect(station, player)
 	end
 
 	if isFull(player) then
-		flash(station.Prompt, ("Hands full (max %d)"):format(Config.Kitchen.MaxCarriedItems),
+		flash(station.Prompt, ("Hands full (max %d)"):format(carryLimitFor(player)),
 			stationPromptText(station))
 		return
 	end

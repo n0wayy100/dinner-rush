@@ -484,8 +484,10 @@ local function onTriggered(slot, player)
 			:format(player.Name, dishName, quality, slot.Id))
 
 	elseif slot.State == "PLATED" then
-		if countCarried(player) >= Config.Kitchen.MaxCarriedItems then
-			flash(slot, ("Hands full (max %d)"):format(Config.Kitchen.MaxCarriedItems))
+		--// Per-player limit: THIRD HAND! raises it via the CarryLimit attribute
+		local carryLimit = player:GetAttribute("CarryLimit") or Config.Kitchen.MaxCarriedItems
+		if countCarried(player) >= carryLimit then
+			flash(slot, ("Hands full (max %d)"):format(carryLimit))
 			return
 		end
 
