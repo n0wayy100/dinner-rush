@@ -818,7 +818,7 @@ Config.Classes = {
 		Display = "The Trainee",
 		Rarity = "Starter", RarityColor = Color3.fromRGB(150, 150, 150),
 		Price = 0,                -- never buyable: every profile starts owning it
-		IconId = "",
+		IconId = "rbxassetid://71049237083171",
 		FlavorText = "First day on the job. The apron is still stiff.",
 		PassiveText = "Eager to learn (no perks yet!)",
 		UltimateName = "", UltimateText = "",
@@ -827,7 +827,7 @@ Config.Classes = {
 		Display = "The Chef",
 		Rarity = "Common", RarityColor = Color3.fromRGB(76, 175, 109),
 		Price = 1500,
-		IconId = "",
+		IconId = "rbxassetid://79387702760394",
 		FlavorText = "Heard you can burn water. Prove me wrong.",
 		PassiveText = "Collects cooked dishes a little faster",
 		UltimateName = "FLASH FRY!",
@@ -847,7 +847,7 @@ Config.Classes = {
 		Display = "The Waiter",
 		Rarity = "Common", RarityColor = Color3.fromRGB(76, 175, 109),
 		Price = 1500,
-		IconId = "",
+		IconId = "rbxassetid://102266349813244",
 		FlavorText = "Three plates, one arm, zero fear.",
 		PassiveText = "A little quicker on their feet while carrying",
 		UltimateName = "THIRD HAND!",
@@ -863,7 +863,7 @@ Config.Classes = {
 		Display = "The Fixer",
 		Rarity = "Rare", RarityColor = Color3.fromRGB(245, 184, 65),
 		Price = 4000,
-		IconId = "",
+		IconId = "rbxassetid://99068683562920",
 		FlavorText = "Toilets fear them. Fires respect them.",
 		PassiveText = "Fixes emergencies a little faster",
 		UltimateName = "SPEED DIAL!",
@@ -879,7 +879,7 @@ Config.Classes = {
 		Display = "The Charmer",
 		Rarity = "Epic", RarityColor = Color3.fromRGB(229, 72, 120),
 		Price = 8000,
-		IconId = "",
+		IconId = "rbxassetid://137270991870999",
 		FlavorText = "Could talk a burnt burger into a five-star review.",
 		PassiveText = "Greetings buy extra patience",
 		UltimateName = "SWEET TALK!",
@@ -902,6 +902,7 @@ Config.ClassShop = {
 		"Every legend started with a name tag!",
 	},
 	CameraFocus = true,           -- brief camera tween toward the vendor on talk
+	TagMaxDistanceStuds = 45,     -- vendor nametag/bubble hidden beyond this range
 	CameraTweenSeconds = 0.35,
 	WalkAwayCloseStuds = 14,      -- wandering off closes the screen
 	BubbleSeconds = 3,            -- vendor speech bubble lifetime
