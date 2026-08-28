@@ -47,6 +47,39 @@ local sharedFolder = ReplicatedStorage:WaitForChild("Shared", 10)
 assert(sharedFolder, "[Service] ReplicatedStorage.Shared not found")
 local Config = require(sharedFolder:WaitForChild("Config", 10))
 
+--// Persistence contract (ServerStorage.Shared): career counters + the
+--// shift-end deposit. Degrade over dying - a missing module must never
+--// take the whole service down, it just stops progress saving (loudly).
+local ProfileAPI
+do
+	local ok, api = pcall(function()
+		return require(game:GetService("ServerStorage"):WaitForChild("Shared", 20):WaitForChild("ProfileAPI", 20))
+	end)
+	if ok and api then
+		ProfileAPI = api
+	else
+		warn("[Service] ProfileAPI unavailable - career progress and deposits will NOT save")
+		ProfileAPI = {
+			AddStat = function() return false end,
+			Deposit = function() return false end,
+			RecordShift = function() return false end,
+		}
+	end
+end
+
+--// Career + ultimate charge in ONE call: every counted moment is also a
+--// charge moment. ChargeService owns the key->charge mapping; a missing
+--// bindable means no charge, never an error.
+local function creditStat(player, key, amount)
+	ProfileAPI.AddStat(player, key, amount)
+	local charge = game:GetService("ServerStorage"):FindFirstChild("AddCharge")
+	if charge then
+		pcall(function()
+			charge:Invoke(player, key, amount)
+		end)
+	end
+end
+
 -- DEBUG knobs (set to nil to use real Config values)
 local DEBUG_PREP_SECONDS = 8        -- real: Config.Shift.PrepTimeSeconds (45)
 local DEBUG_SHIFT_SECONDS = nil     -- e.g. 180 for a 3-minute test shift
@@ -1139,6 +1172,33 @@ local function extendBar(party, seconds, why)
 	print(("[Service] Party %d bar +%ds (%s)"):format(party.Id, seconds, why))
 end
 
+--// SWEET TALK! bridge (the Charmer's ultimate). Finds the most desperate
+--// seated party and hands back a fraction of their bar. Returns false when
+--// nobody is seated - and a false return must NOT consume the charge.
+do
+	local bridge = Instance.new("BindableFunction")
+	bridge.Name = "SweetTalkTable"
+	bridge.OnInvoke = function(player)
+		local worst, worstFraction = nil, math.huge
+		for _, party in pairs(parties) do
+			if party.BarKind == "seated" and party.BarRemaining
+				and party.BarTotal and party.BarTotal > 0 then
+				local fraction = party.BarRemaining / party.BarTotal
+				if fraction < worstFraction then
+					worst, worstFraction = party, fraction
+				end
+			end
+		end
+		if not worst then
+			return false, "Nobody seated to charm!"
+		end
+		extendBar(worst, worst.BarTotal * Config.Ultimates.SweetTalkRefillFraction,
+			("SWEET TALK by %s"):format(player and player.Name or "?"))
+		return true
+	end
+	bridge.Parent = ServerStorage
+end
+
 ----------------------------------------------------------------
 -- Walkouts & departures
 ----------------------------------------------------------------
@@ -1485,6 +1545,7 @@ local function collectPayment(tableId, collector)
 	destroyPayment(tableId)
 	addToTill(value, ("payment from table %d"):format(tableId))
 	shift.EarnedTotal += value --// shift-report bookkeeping
+	creditStat(collector, "PaymentsCollected", 1) --// the Charmer's career
 
 	--// THE PLATE RULE: a plate is only free once its table has paid up.
 	returnPlates(tableId, "payment collected")
@@ -1697,6 +1758,9 @@ local function resolveDialogue(dlg, pickedKey, notifyClient)
 
 	if pickedKey and dlg.Flow == "recommend" then
 		party.Ticket[1] = pickedKey
+		if dlg.Player and dlg.Player.Parent then
+			creditStat(dlg.Player, "Recommendations", 1)
+		end
 		if Config.Dialogue.RecommendPatienceBonus > 0 then
 			--// CHARMER PASSIVE: their recommendations soothe harder
 			local mult = (dlg.Player and dlg.Player:GetAttribute("RecommendBonusMult")) or 1
@@ -1884,6 +1948,7 @@ local function setupTable(tableId, tablePart)
 			if quality == "Perfect" then
 				party.PerfectDishes = (party.PerfectDishes or 0) + 1
 				shift.PerfectCooks += 1 --// shift-report bookkeeping
+				creditStat(player, "PerfectCooks", 1) --// the Chef's career
 				repChange(Config.Reputation.PerfectDish, "perfect dish")
 			elseif quality == "Overcooked" then
 				party.OvercookedDishes = (party.OvercookedDishes or 0) + 1
@@ -1924,11 +1989,14 @@ local function setupTable(tableId, tablePart)
 			showTicket(party)
 
 			party.DishesRemaining -= 1
+			creditStat(player, "DishesServed", 1) --// the Waiter's career
 			if party.DishesRemaining > 0 then
 				extendBar(party, Config.Customers.PerDishServeBonus, "dish landed")
 				refreshTablePrompt(tableId)
 			else
 				-- LAST dish: the seated bar dies here, per spec
+				--// The closer credits the whole table's headcount
+				creditStat(player, "CustomersServed", party.Size)
 				removeBar(party)
 				setPartyState(party, STATE.SERVED)
 				refreshTablePrompt(tableId)
@@ -1996,11 +2064,14 @@ local function attachQueuePrompts(party)
 	greet.RequiresLineOfSight = Config.Interaction.PromptRequiresLineOfSight
 	greet.Parent = party.Pawn
 
-	greet.Triggered:Connect(function()
+	greet.Triggered:Connect(function(player)
+		--// Gap 2 closed: the greeter is no longer anonymous - their career
+		--// (and later their charge) credits the warm welcome
 		if party.State ~= STATE.QUEUED or party.Greeted then return end
 		party.Greeted = true
 		greet:Destroy()
 		extendBar(party, diff.GreetingBonus, "greeting")
+		creditStat(player, "Greetings", 1)
 	end)
 
 	seat.Triggered:Connect(function(player)
@@ -2245,6 +2316,12 @@ local function endShift(success, reason)
 				paid += remainder
 			end
 			awardCoins(member, paid)
+
+			--// THE DEPOSIT: the split lands in the persistent wallet too.
+			--// This is the line that makes shift money real.
+			if ProfileAPI.Deposit(member, paid) then
+				ProfileAPI.AddStat(member, "MoneyDeposited", paid)
+			end
 		end
 
 		print(("[Service] Till %d split %d ways - %d each%s"):format(
@@ -2292,6 +2369,25 @@ local function endShift(success, reason)
 			AutoDismiss = Config.ShiftReport.AutoDismissSeconds,
 			RowReveal = Config.ShiftReport.RowRevealSeconds,
 		}
+		--// Career writes: everyone present gets the shift on their permanent
+		--// record - completion (or failure), time on the floor, and a Best
+		--// Shifts candidate stamped with the report's own grade
+		for _, member in ipairs(Players:GetPlayers()) do
+			ProfileAPI.AddStat(member, success and "ShiftsCompleted" or "ShiftsFailed", 1)
+			ProfileAPI.AddStat(member, "TimeOnFloorSeconds", math.floor(shift.Elapsed))
+			ProfileAPI.RecordShift(member, {
+				Grade = grade,
+				Tone = tone,
+				Label = diff.Label,
+				DiffName = DIFFICULTY,
+				Served = shift.Satisfied,
+				Target = diff.Rewards.TargetParties,
+				Net = payload.Net,
+				Seconds = math.floor(shift.Elapsed),
+				When = os.time(),
+			})
+		end
+
 		shiftReportRemote:FireAllClients("Show", payload)
 	end
 
