@@ -909,6 +909,40 @@ Config.ClassShop = {
 }
 
 ----------------------------------------------------------------
+-- PLAYER STATS (the lobby STATS screen - see StatsServer/StatsClient).
+-- THE REGISTRY is the single source of truth for every lifetime stat:
+-- its key, where it lives, its label, format, and default. The save
+-- layer merges defaults from here; the UI builds its rows from here.
+-- Adding a stat = adding ONE entry below (plus the gameplay hook that
+-- increments it). Never touch UI code for a new stat.
+--
+-- Source:  "Stats"        -> profile.Stats[Key] (lifetime counters)
+--          "TaskProgress" -> profile.TaskProgress[Key] (already stored
+--                            for class tasks - NOT duplicated here)
+--          "Computed"     -> derived server-side at payload time
+-- Format:  "int" (1,234 / 12K) · "money" ($1,234) · "duration" (2h 14m)
+----------------------------------------------------------------
+Config.PlayerStats = {
+	LevelShiftsPerLevel = 5,      -- passport LVL = 1 + ShiftsCompleted/this
+	                              -- (derived, never stored - cannot desync)
+	BestShiftsCap = 5,            -- hard ceiling, sorted+trimmed at insert
+
+	Registry = {
+		{ Key = "ShiftsCompleted",   Source = "Stats",        Label = "Shifts Completed",   Format = "int",      Default = 0 },
+		{ Key = "ShiftsFailed",      Source = "Stats",        Label = "Shifts Failed",      Format = "int",      Default = 0 },
+		{ Key = "CustomersServed",   Source = "Stats",        Label = "Customers Served",   Format = "int",      Default = 0 },
+		{ Key = "DishesServed",      Source = "TaskProgress", Label = "Dishes Served",      Format = "int",      Default = 0 },
+		{ Key = "PerfectCooks",      Source = "TaskProgress", Label = "Perfect Cooks",      Format = "int",      Default = 0 },
+		{ Key = "EventChannels",     Source = "TaskProgress", Label = "Emergencies Fixed",  Format = "int",      Default = 0 },
+		{ Key = "PaymentsCollected", Source = "TaskProgress", Label = "Payments Collected", Format = "int",      Default = 0 },
+		{ Key = "MoneyDeposited",    Source = "Stats",        Label = "Lifetime Earnings",  Format = "money",    Default = 0 },
+		{ Key = "TimeOnFloorSeconds", Source = "Stats",       Label = "Time On Floor",      Format = "duration", Default = 0 },
+		{ Key = "KitchenCrimes",     Source = "Stats",        Label = "Kitchen Crimes",     Format = "int",      Default = 0 },
+		{ Key = "ClassesOwned",      Source = "Computed",     Label = "Classes Owned",      Format = "int",      Default = 0 },
+	},
+}
+
+----------------------------------------------------------------
 -- Accessors
 ----------------------------------------------------------------
 

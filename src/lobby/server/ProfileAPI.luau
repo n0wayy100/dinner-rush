@@ -29,6 +29,25 @@
 	    -- (Config.Classes[key].UpgradeTrack.Steps[level]) AND wallet >=
 	    -- Costs[level]. Task gates, money pays - both, always.
 	ProfileAPI.Changed  -> RBXScriptSignal, fires (player) after any change
+
+	--- Stats (the lobby STATS screen; Config.PlayerStats.Registry is the
+	--- single source of truth for keys/defaults) ---
+	GetSnapshot also returns:
+	    Stats      = { [registryKey] = number }  -- merged over registry
+	                                             -- defaults on load, so new
+	                                             -- stats are never nil
+	    BestShifts = { { Grade, Tone, Label, DiffName, Served, Target,
+	                     Net, Seconds, When }, ... }  -- max BestShiftsCap,
+	                                                  -- sorted best-first
+	ProfileAPI.AddStat(player, key, amount) -> ok
+	    -- THE gameplay write call (e.g. shift end: AddStat(p,
+	    -- "ShiftsCompleted", 1), AddStat(p, "TimeOnFloorSeconds", 480)).
+	    -- Key must exist in the Registry (Stats or TaskProgress source);
+	    -- routed to the right table automatically.
+	ProfileAPI.RecordShift(player, entry) -> ok
+	    -- Insert a Best Shifts candidate; server sorts (Served desc, Net
+	    -- desc) and trims to BestShiftsCap AT INSERT so the saved array
+	    -- has a hard ceiling.
 	=============================================================
 
 	Rules the real implementation must keep:
@@ -86,7 +105,37 @@ local function profileFor(player)
 				PerfectCooks = 22, DishesServed = 9, EventChannels = 4,
 				PaymentsCollected = 3, Greetings = 6, Recommendations = 2,
 			},
+
+			--// Lifetime stats, merged over the registry defaults - the merge
+			--// is the pattern the real ProfileService must keep: a stat added
+			--// to the registry later must come back as its default, not nil
+			Stats = {},
+
+			--// STUB ONLY: two fake history entries so the panel renders
+			BestShifts = {
+				{ Grade = "GREAT SHIFT!", Tone = "good", Label = "Dinner Rush",
+					DiffName = "NORMAL", Served = 15, Target = 15, Net = 420,
+					Seconds = 510, When = os.time() - 3 * 86400 },
+				{ Grade = "NOT BAD!", Tone = "mid", Label = "Cozy Shift",
+					DiffName = "EASY", Served = 9, Target = 11, Net = 260,
+					Seconds = 495, When = os.time() - 8 * 86400 },
+			},
 		}
+
+		--// Merge registry defaults into Stats (STUB seeds a few for show)
+		for _, entry in ipairs(Config.PlayerStats.Registry) do
+			if entry.Source == "Stats" and profile.Stats[entry.Key] == nil then
+				profile.Stats[entry.Key] = entry.Default
+			end
+		end
+		if STUB_MODE then
+			profile.Stats.ShiftsCompleted = 7
+			profile.Stats.ShiftsFailed = 2
+			profile.Stats.CustomersServed = 84
+			profile.Stats.MoneyDeposited = 2350
+			profile.Stats.TimeOnFloorSeconds = 3540
+			profile.Stats.KitchenCrimes = 1
+		end
 		profiles[player.UserId] = profile
 	end
 	return profile
@@ -104,7 +153,68 @@ function ProfileAPI.GetSnapshot(player)
 		EquippedClass = profile.EquippedClass,
 		ClassLevels = table.clone(profile.ClassLevels),
 		TaskProgress = table.clone(profile.TaskProgress),
+		Stats = table.clone(profile.Stats),
+		BestShifts = table.clone(profile.BestShifts),
 	}
+end
+
+--// Registry-validated gameplay write: routes the key to the right table.
+--// This is THE call gameplay code makes ("player served a dish", "shift
+--// over"). Unknown keys are refused loudly - a typo must not invent a stat.
+function ProfileAPI.AddStat(player, key, amount)
+	amount = tonumber(amount)
+	if not amount or amount == 0 then return false end
+
+	local entry = nil
+	for _, row in ipairs(Config.PlayerStats.Registry) do
+		if row.Key == key then
+			entry = row
+			break
+		end
+	end
+	if not entry or entry.Source == "Computed" then
+		warn(("[ProfileAPI] AddStat with unknown/computed key '%s'"):format(tostring(key)))
+		return false
+	end
+
+	local profile = profileFor(player)
+	local target = entry.Source == "TaskProgress" and profile.TaskProgress or profile.Stats
+	target[key] = (target[key] or entry.Default or 0) + amount
+	changed:Fire(player)
+	return true
+end
+
+--// Best Shifts insert: sorted (Served desc, Net desc) and trimmed to the
+--// cap AT INSERT, so the saved array has a hard ceiling forever.
+function ProfileAPI.RecordShift(player, entry)
+	if type(entry) ~= "table" then return false end
+
+	local profile = profileFor(player)
+	table.insert(profile.BestShifts, {
+		Grade = tostring(entry.Grade or "?"),
+		Tone = tostring(entry.Tone or "mid"),
+		Label = tostring(entry.Label or ""),
+		DiffName = tostring(entry.DiffName or "NORMAL"),
+		Served = tonumber(entry.Served) or 0,
+		Target = tonumber(entry.Target) or 0,
+		Net = tonumber(entry.Net) or 0,
+		Seconds = tonumber(entry.Seconds) or 0,
+		When = tonumber(entry.When) or os.time(),
+	})
+
+	table.sort(profile.BestShifts, function(a, b)
+		if a.Served ~= b.Served then
+			return a.Served > b.Served
+		end
+		return a.Net > b.Net
+	end)
+
+	while #profile.BestShifts > Config.PlayerStats.BestShiftsCap do
+		table.remove(profile.BestShifts)
+	end
+
+	changed:Fire(player)
+	return true
 end
 
 function ProfileAPI.PurchaseClass(player, classKey)
