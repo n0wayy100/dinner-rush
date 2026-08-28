@@ -23,6 +23,7 @@
 local CollectionService = game:GetService("CollectionService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local ServerStorage = game:GetService("ServerStorage")
 local Players = game:GetService("Players")
 
 local sharedFolder = ReplicatedStorage:WaitForChild("Shared", 10)
@@ -53,12 +54,42 @@ if not kitchenRemote then
 	kitchenRemote.Parent = remotes
 end
 
+--// POWER. EventSystem raises EventState.PowerOut during an outage; every
+--// pan freezes where it is and no new cook can be started until the breaker
+--// is thrown. Read, never written, here - the event owns it.
+local eventStateFolder = nil
+local function powerOut()
+	if not eventStateFolder or not eventStateFolder.Parent then
+		eventStateFolder = ReplicatedStorage:FindFirstChild("EventState")
+	end
+	return eventStateFolder ~= nil and eventStateFolder:GetAttribute("PowerOut") == true
+end
+
 local STATE_COLOR = {
 	COOKING = Color3.fromRGB(245, 184, 65),
 	PERFECT = Color3.fromRGB(76, 175, 109),
 	OVERCOOKED = Color3.fromRGB(219, 128, 60),
 	BURNT = Color3.fromRGB(90, 80, 78),
 }
+
+--// SHIFT REPORT COUNTERS. ServiceLoop pulls these at shift end through
+--// GetKitchenStats. No reset needed: one server runs one shift, so the
+--// script's lifetime IS the shift's.
+local kitchenStats = {
+	DishesBurnt = 0,
+	ItemsBinned = 0,
+	DishesBinned = 0,
+	IngredientsBinned = 0,
+}
+
+do
+	local bridge = Instance.new("BindableFunction")
+	bridge.Name = "GetKitchenStats"
+	bridge.OnInvoke = function()
+		return table.clone(kitchenStats)
+	end
+	bridge.Parent = game:GetService("ServerStorage")
+end
 
 ----------------------------------------------------------------
 -- Helpers
@@ -333,16 +364,114 @@ kitchenRemote.OnServerEvent:Connect(function(player, action, ingredientName)
 end)
 
 ----------------------------------------------------------------
+-- THE BIN
+-- Parts tagged TrashBin take whatever you are holding out of your hands.
+-- Wrong ingredient, dish nobody ordered, something you grabbed by accident -
+-- without this the two-item limit can wedge you with junk you cannot drop
+-- (every Tool here is CanBeDropped = false).
+--
+-- Binned items are counted, ready for a future "take the trash out" chore.
+----------------------------------------------------------------
+local function firstBinnable(player)
+	return eachCarried(player, function(tool)
+		if tool:GetAttribute("Ingredient") or tool:GetAttribute("Dish") then
+			return tool
+		end
+		return nil
+	end)
+end
+
+local function setupBin(instance)
+	local part = resolvePart(instance)
+	if not part then
+		warn(("[Kitchen] %s is tagged TrashBin but has no BasePart - skipped")
+			:format(instance:GetFullName()))
+		return
+	end
+
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.Name = "Bin"
+	prompt.ActionText = "Bin it"
+	prompt.ObjectText = "Trash"
+	prompt.HoldDuration = Config.Kitchen.BinHoldSeconds
+	prompt.MaxActivationDistance = Config.Interaction.PromptRangeStuds
+	prompt.RequiresLineOfSight = Config.Interaction.PromptRequiresLineOfSight
+	prompt.Parent = part
+
+	prompt.Triggered:Connect(function(player)
+		local tool = firstBinnable(player)
+		if not tool then
+			flash(prompt, "Nothing to throw away", "Trash")
+			return
+		end
+
+		local what = tool:GetAttribute("Dish") or tool:GetAttribute("Ingredient")
+		--// A binned DISH is a wasted cook, so it counts the same as a burnt
+		--// one on the shift report. A raw ingredient is only wasted stock.
+		if tool:GetAttribute("Dish") then
+			kitchenStats.DishesBinned += 1
+		else
+			kitchenStats.IngredientsBinned += 1
+		end
+		kitchenStats.ItemsBinned += 1
+
+		--// A plated dish scrapes into the bin and the plate goes straight back
+		--// on the pass, empty. It never waits on a payment that will not come.
+		local plateSlot = tool:GetAttribute("PlateSlot")
+		if plateSlot then
+			local ret = ServerStorage:FindFirstChild("PassReturnPlate")
+			if ret then
+				ret:Invoke(plateSlot, "dish binned")
+			else
+				warn("[Kitchen] binned a plated dish but ServerStorage.PassReturnPlate is missing"
+					.. " - that plate is now lost until the shift ends")
+			end
+		end
+
+		tool:Destroy()
+		print(("[Kitchen] %s binned %s (%d item(s) this shift)")
+			:format(player.Name, tostring(what), kitchenStats.ItemsBinned))
+	end)
+
+	print(("[Kitchen] bin ready: %s"):format(part:GetFullName()))
+end
+
+----------------------------------------------------------------
 -- Cook stations
 ----------------------------------------------------------------
 local stations = {} --// list of station records, ticked by one Heartbeat
 
+--// ONE cook per station. A stove with three burners is three CookStation
+--// anchors side by side, each with its own prompt and its own bar - stacking
+--// several bars over a single anchor read as clutter.
+--//
+--// Anchors that close together do put several prompts near each other, which
+--// is why StationPromptRangeStuds is tighter than the global prompt range:
+--// stand at a burner and only that burner answers.
+
+--// Kept SHORT on purpose. Burners sit a few studs apart, and TextScaled
+--// stretches whatever it is given - "Grilled Steak - cooking" over three
+--// adjacent anchors was a wall of overlapping text. The bar's fill and
+--// colour already say cooking / ready / overcooked, so the label only needs
+--// to name the dish, and shout when the pan is actually ruined.
 local function stationLabel(station)
 	if station.State == "IDLE" then
 		return ""
 	end
+
+	if station.State == "BURNT" then
+		return "BURNT!"
+	end
+
 	local recipe = Config.Recipes[station.Dish]
-	local display = recipe and recipe.Display or station.Dish
+	return recipe and recipe.Display or tostring(station.Dish)
+end
+
+--// The prompt has room for the longer version
+local function stationPromptText(station)
+	local recipe = Config.Recipes[station.Dish]
+	local display = recipe and recipe.Display or tostring(station.Dish)
+
 	if station.State == "COOKING" then
 		return ("%s - cooking"):format(display)
 	elseif station.State == "PERFECT" then
@@ -353,18 +482,21 @@ local function stationLabel(station)
 	return ("%s - BURNT"):format(display)
 end
 
+local function stationBusy(station)
+	return station.State ~= "IDLE"
+end
+
 local function refreshStationUi(station)
-	local gui = station.Gui
-	gui.Enabled = station.State ~= "IDLE"
-	if station.State == "IDLE" then
+	station.Gui.Enabled = stationBusy(station)
+	if not stationBusy(station) then
 		return
 	end
 
 	station.Label.Text = stationLabel(station)
 	station.Fill.BackgroundColor3 = STATE_COLOR[station.State] or STATE_COLOR.COOKING
 
-	--// Bar fills while cooking, then holds full through the eating states so
-	--// colour alone communicates the window
+	--// Fills while cooking, then holds full through the later windows so
+	--// colour alone communicates the state
 	local fraction = 1
 	if station.State == "COOKING" and station.CookTime > 0 then
 		fraction = math.clamp(station.Elapsed / station.CookTime, 0, 1)
@@ -374,21 +506,23 @@ end
 
 local function refreshStationPrompt(station)
 	local prompt = station.Prompt
+	prompt.Enabled = not station.Disabled
+
 	if station.State == "IDLE" then
 		prompt.ActionText = "Cook"
 		prompt.ObjectText = ("%s station"):format(station.Method)
 		prompt.HoldDuration = Config.Kitchen.StationLoadHoldSeconds
 	elseif station.State == "COOKING" then
 		prompt.ActionText = "Cooking..."
-		prompt.ObjectText = stationLabel(station)
+		prompt.ObjectText = stationPromptText(station)
 		prompt.HoldDuration = Config.Kitchen.CollectHoldSeconds
 	elseif station.State == "BURNT" then
 		prompt.ActionText = "Bin it"
-		prompt.ObjectText = stationLabel(station)
+		prompt.ObjectText = stationPromptText(station)
 		prompt.HoldDuration = Config.Kitchen.BurntCleanupSeconds
 	else
 		prompt.ActionText = "Collect"
-		prompt.ObjectText = stationLabel(station)
+		prompt.ObjectText = stationPromptText(station)
 		prompt.HoldDuration = Config.Kitchen.CollectHoldSeconds
 	end
 end
@@ -429,8 +563,7 @@ local function collect(station, player)
 	if not character then return end
 
 	if station.State == "BURNT" then
-		--// Ruined. Binning it costs a little reputation via the served-dish
-		--// path being denied entirely; the number lives in Config.
+		kitchenStats.DishesBurnt += 1 --// shift-report bookkeeping
 		print(("[Kitchen] %s binned a burnt %s"):format(player.Name, tostring(station.Dish)))
 		clearStation(station)
 		return
@@ -438,7 +571,7 @@ local function collect(station, player)
 
 	if isFull(player) then
 		flash(station.Prompt, ("Hands full (max %d)"):format(Config.Kitchen.MaxCarriedItems),
-			stationLabel(station))
+			stationPromptText(station))
 		return
 	end
 
@@ -454,6 +587,15 @@ local function collect(station, player)
 
 	print(("[Kitchen] %s collected a %s %s"):format(player.Name, quality, dishName))
 	clearStation(station)
+end
+
+--// Wipes whatever is on the pan. Used by the grease fire.
+local function cancelCook(station)
+	if station.State == "IDLE" then
+		return false
+	end
+	clearStation(station)
+	return true
 end
 
 local function setupStation(instance)
@@ -473,14 +615,14 @@ local function setupStation(instance)
 
 	local gui = Instance.new("BillboardGui")
 	gui.Name = "CookProgress"
-	gui.Size = UDim2.fromOffset(180, 40)
-	gui.StudsOffsetWorldSpace = Vector3.new(0, 4, 0)
+	gui.Size = UDim2.fromOffset(Config.Kitchen.StationBarWidth, Config.Kitchen.StationBarHeight)
+	gui.StudsOffsetWorldSpace = Vector3.new(0, 3, 0)
 	gui.AlwaysOnTop = true
 	gui.Enabled = false
 	gui.Parent = part
 
 	local label = Instance.new("TextLabel")
-	label.Size = UDim2.fromScale(1, 0.5)
+	label.Size = UDim2.fromScale(1, 0.55)
 	label.BackgroundTransparency = 1
 	label.TextScaled = true
 	label.Font = Enum.Font.FredokaOne
@@ -489,8 +631,9 @@ local function setupStation(instance)
 	label.Parent = gui
 
 	local back = Instance.new("Frame")
-	back.Position = UDim2.fromScale(0, 0.55)
-	back.Size = UDim2.fromScale(1, 0.35)
+	back.AnchorPoint = Vector2.new(0.5, 1)
+	back.Position = UDim2.fromScale(0.5, 1)
+	back.Size = UDim2.fromScale(0.92, 0.34)
 	back.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 	back.BorderSizePixel = 0
 	back.Parent = gui
@@ -502,25 +645,41 @@ local function setupStation(instance)
 	fill.Parent = back
 
 	local prompt = Instance.new("ProximityPrompt")
-	prompt.MaxActivationDistance = Config.Interaction.PromptRangeStuds
+	prompt.Name = "Cook"
+	--// Deliberately tighter than the global range: neighbouring burners
+	--// would otherwise all be in reach and E would fire an arbitrary one
+	prompt.MaxActivationDistance = Config.Kitchen.StationPromptRangeStuds
 	prompt.RequiresLineOfSight = Config.Interaction.PromptRequiresLineOfSight
 	prompt.Parent = part
+
+	--// Optional grouping. Several anchors on one physical appliance (three
+	--// burners on one stove) share an Appliance name so a grease fire takes
+	--// the whole thing at once instead of one burner at a time.
+	--// Absent = the anchor stands alone, exactly as before.
+	local appliance = instance:GetAttribute("Appliance") or part:GetAttribute("Appliance")
 
 	local station = {
 		Part = part,
 		Method = method,
+		Appliance = typeof(appliance) == "string" and appliance ~= "" and appliance or nil,
 		State = "IDLE",
 		Elapsed = 0,
 		Gui = gui,
 		Label = label,
 		Fill = fill,
 		Prompt = prompt,
-		Disabled = false, --// set by the event bridge (grease fire); prompt is
-		                  --// also turned off, this is belt-and-braces
+		Disabled = false, --// set by the event bridge (grease fire); the prompt
+		                  --// is also turned off, this is belt-and-braces
 	}
 
 	prompt.Triggered:Connect(function(player)
 		if station.Disabled then return end
+
+		if powerOut() then
+			flash(prompt, "No power!", stationPromptText(station))
+			return
+		end
+
 		if station.State == "IDLE" then
 			local tool = findCookableIngredient(player, station.Method)
 			if not tool then
@@ -532,7 +691,7 @@ local function setupStation(instance)
 			startCook(station, player, tool, dishName, recipe)
 
 		elseif station.State == "COOKING" then
-			flash(prompt, "Not ready yet", stationLabel(station))
+			flash(prompt, "Not ready yet", stationPromptText(station))
 
 		else
 			collect(station, player)
@@ -541,13 +700,21 @@ local function setupStation(instance)
 
 	refreshStationPrompt(station)
 	table.insert(stations, station)
-	print(("[Kitchen] station ready: %s (%s)"):format(part:GetFullName(), method))
+	print(("[Kitchen] station ready: %s (%s%s)"):format(
+		part:GetFullName(), method,
+		station.Appliance and (", appliance " .. station.Appliance) or ""))
 end
 
 ----------------------------------------------------------------
 -- One clock for every station
 ----------------------------------------------------------------
 RunService.Heartbeat:Connect(function(dt)
+	--// Lights out, stoves out: every pan holds exactly where it was, so a
+	--// dish mid-cook is waiting rather than quietly burning in the dark.
+	if powerOut() then
+		return
+	end
+
 	for _, station in ipairs(stations) do
 		if station.State ~= "IDLE" and station.State ~= "BURNT" then
 			station.Elapsed += dt
@@ -571,6 +738,31 @@ RunService.Heartbeat:Connect(function(dt)
 	end
 end)
 
+--// Station state does not change while frozen, so nothing would otherwise
+--// repaint the prompts. Watch the flag and refresh them the moment the power
+--// goes out or comes back, so a dead stove reads as dead before anyone
+--// walks up and presses E at it.
+task.spawn(function()
+	local folder = ReplicatedStorage:WaitForChild("EventState", 30)
+	if not folder then return end
+
+	folder:GetAttributeChangedSignal("PowerOut"):Connect(function()
+		local out = folder:GetAttribute("PowerOut") == true
+		for _, station in ipairs(stations) do
+			if out then
+				station.Prompt.ActionText = "No power"
+				station.Prompt.ObjectText = station.State == "IDLE"
+					and ("%s station"):format(station.Method)
+					or stationPromptText(station)
+			else
+				refreshStationPrompt(station)
+			end
+		end
+		print(("[Kitchen] power %s - %d station(s) %s"):format(
+			out and "out" or "back", #stations, out and "frozen" or "running"))
+	end)
+end)
+
 ----------------------------------------------------------------
 -- EVENT BRIDGE (server-only). EventSystem drives grease fires through
 -- this, mirroring the RestockIngredient pattern above:
@@ -592,7 +784,8 @@ do
 					Id = index,
 					Part = station.Part,
 					Method = station.Method,
-					Busy = station.State ~= "IDLE",
+					Busy = stationBusy(station),
+					Appliance = station.Appliance,
 					Disabled = station.Disabled == true,
 				})
 			end
@@ -603,16 +796,16 @@ do
 		if not station then return false end
 
 		if action == "CancelCook" then
-			local wasBusy = station.State ~= "IDLE"
-			if wasBusy then
-				print(("[Kitchen] cook on the %s cancelled by event (station %d)")
+			--// A fire ruins every pan on the appliance, not just one burner
+			local cancelled = cancelCook(station)
+			if cancelled then
+				print(("[Kitchen] cooks on the %s cancelled by event (station %d)")
 					:format(station.Method, id))
 			end
-			clearStation(station)
-			return wasBusy
+			return cancelled
 		elseif action == "SetDisabled" then
 			station.Disabled = value == true
-			station.Prompt.Enabled = not station.Disabled
+			refreshStationPrompt(station)
 			return true
 		end
 
@@ -636,6 +829,13 @@ task.spawn(function()
 			for _, instance in ipairs(fridges) do setupSource(instance, "Fridge") end
 			for _, instance in ipairs(shelves) do setupSource(instance, "DryShelf") end
 			for _, instance in ipairs(cookers) do setupStation(instance) end
+
+			--// Optional: no bin tagged just means nothing to throw items in
+			local bins = taggedInWorkspace("TrashBin")
+			for _, instance in ipairs(bins) do setupBin(instance) end
+			if #bins == 0 then
+				warn("[Kitchen] no part tagged TrashBin - players cannot discard items")
+			end
 
 			print(("[Kitchen] ready: %d fridge(s), %d shelf/shelves, %d station(s)")
 				:format(#fridges, #shelves, #cookers))

@@ -26,6 +26,12 @@ local Config = {}
 Config.Shift = {
 	LengthSeconds = 480,              -- 8 min MVP shift
 	PrepTimeSeconds = 45,             -- vote-skippable
+
+	--// When the clock runs out the doors close but the room is not empty.
+	--// CLOSING lets everyone already inside finish eating and paying; no new
+	--// customers arrive. This is a safety cap so a stuck party cannot hold the
+	--// shift open forever.
+	ClosingMaxSeconds = 150,
 	Phases = {                        -- shift-time boundaries (seconds)
 		CalmEndsAt = 120,             -- 0:00-2:00 tutorial-in-motion
 		BuildingEndsAt = 300,         -- 2:00-5:00 pressure ramps
@@ -128,9 +134,23 @@ Config.OrderWeights = {
 Config.Kitchen = {
 	MaxCarriedItems = 2,          -- the design's two-item inventory rule
 	PickupHoldSeconds = 0.4,      -- fridge / dry shelf prompt
-	StationLoadHoldSeconds = 0.5, -- starting a cook
+	StationLoadHoldSeconds = 0,   -- starting a cook: TAP, not hold
 	CollectHoldSeconds = 0.4,     -- taking the result off the station
 	BurntCleanupSeconds = 1.0,    -- clearing a ruined pan
+	BinHoldSeconds = 0.5,         -- hold at the TrashBin; deliberately NOT a tap,
+	                              -- so nobody bins a good dish by mistapping
+
+	--// One cook per station. Several burners = several CookStation anchors
+	--// side by side, each with its own prompt and its own small bar.
+	--// Bars are narrow on purpose: wide ones overlap when the anchors are
+	--// only a few studs apart.
+	StationBarWidth = 80,
+	StationBarHeight = 30,
+
+	--// Tighter than Config.Interaction.PromptRangeStuds (8). Neighbouring
+	--// burners sit within a few studs, so a wide range would put every
+	--// station's prompt in reach at once and E would fire an arbitrary one.
+	StationPromptRangeStuds = 5,
 
 	--// Payout multipliers applied when the dish is served
 	PerfectPayMult = 1.5,
@@ -194,9 +214,38 @@ Config.Customers = {
 	SeatedPatienceSeconds = 75,       -- seated -> LAST dish served (one bar!)
 	VIPSeatedPatienceSeconds = 45,
 
+	--// Seating: where members of a party stand around their table anchor.
+	--// Computed from the anchor's own facing, so no extra seat parts are
+	--// needed - member 1 takes the near side, member 2 the far side.
+	SeatOffsetStuds = 4,
+
+	--// Customers wear real avatars pulled from players' friend lists. Both
+	--// Roblox calls behind this yield and are rate-limited, so AvatarPool
+	--// fetches in the background and the spawner only reads the cache.
+	Avatars = {
+		Enabled = true,
+		FallbackUserId = 5191267798,      -- OWNER'S USER ID - set this, or a server with
+		                         -- no reachable friend lists gets plain rigs
+		PoolTarget = 12,         -- how many descriptions to keep cached
+		FetchDelaySeconds = 1,   -- gap between web calls, to stay under limits
+		FriendsPerPlayer = 20,   -- how many of each player's friends to consider
+
+		--// Testing: put user IDs here and the pool uses ONLY these, skipping
+		--// friend lists entirely. Deterministic, and works on an alt with no
+		--// friends. Empty = normal behaviour.
+		--//   e.g. { 156, 1, 261 }
+		DebugUserIds = {},
+	},
+
 	WaterPourFirstBonus = 18,
 	WaterPourRepeatBonus = 10,        -- diminishing, same table
 	WaterStationHoldSeconds = 3,
+
+	--// Table prompt hold times. Taking an order is a TAP - it happens
+	--// constantly and a hold makes the front of house feel sticky. Serving
+	--// keeps a short hold so a mistap does not fire the wrong dish.
+	TakeOrderHoldSeconds = 0,
+	ServeHoldSeconds = 0.5,
 	PerDishServeBonus = 5,            -- multi-dish orders: grace per dish landed
 	PaySeconds = 5,
 	SeatingWalkIsFree = true,         -- door bar dies on INITIATE; walk untimed
@@ -225,6 +274,31 @@ Config.Bussing = {
 Config.Supplier = {
 	PriceEventDecisionSeconds = 10,
 	FreeItemThreshold = 5,            -- failure odds scale per item over this
+
+	--// Delivery time is NOT here: Difficulty[*].SupplierDeliverySeconds
+	--// already holds 22 / 25 / 30, so difficulty changes it for free.
+
+	UnitsPerCrate = 5,                -- one crate restocks this many
+	MaxCratesPerIngredient = 3,       -- per order, so a single order caps at 15
+	CollectHoldSeconds = 0.6,         -- holding E on a crate
+	TruckLingerSeconds = 45,          -- truck leaves; uncollected crates go with it
+
+	--// Money is OFF for the MVP. Coins are per-player leaderstats, so charging
+	--// one player for the whole restaurant's supplies is odd in co-op, and a
+	--// broke team could soft-lock. Flip this on once there is a shared till.
+	ChargeForOrders = true,
+	CratePrice = {                    -- coins per crate when charging is on
+		RawPatty = 20,
+		RawSteak = 30,
+		RawPotato = 12,
+	},
+
+	--// Placeholder delivery props, replaced by your own truck model later
+	TruckSize = Vector3.new(10, 8, 18),
+	TruckColor = Color3.fromRGB(210, 90, 80),
+	CrateSize = Vector3.new(3, 3, 3),
+	CrateColor = Color3.fromRGB(178, 138, 88),
+	CrateSpacingStuds = 4,
 }
 
 ----------------------------------------------------------------
@@ -477,6 +551,35 @@ Config.Events = {
 		FireSize = 8,                 -- Roblox Fire instance size on a burning station
 		LightRange = 14,              -- orange glow radius
 	},
+
+	PowerOutage = {
+		--// Hold at the breaker. Per-difficulty, like the toilet's channel.
+		FixChannelSeconds = { EASY = 6, NORMAL = 8, HARD = 10 },
+
+		RepDrainPer10s = 1,           -- bleed while the lights are out
+		FixRepReward = 1,             -- for restoring power
+
+		--// Seated patience melts faster in the dark. Applied ONLY while the
+		--// outage is active, via EventState.PatienceMultiplier.
+		PatienceDrainMultiplier = 1.25,
+
+		--// Dim, never black. Young players on bright phone screens still have
+		--// to navigate the restaurant, so this stays readable on purpose.
+		DarkAmbient = Color3.fromRGB(74, 64, 54),
+		DarkOutdoorAmbient = Color3.fromRGB(64, 56, 48),
+		DarkBrightness = 0.6,
+	},
+}
+
+----------------------------------------------------------------
+-- MONEY
+-- Every shift opens a shared till at zero. Customer payments go into it,
+-- the Supplier spends out of it, and whatever survives to the buzzer is
+-- split evenly into each player's own balance.
+----------------------------------------------------------------
+Config.Money = {
+	ShiftStartingTill = 0,
+	RemainderToFirstPlayer = true,  -- odd coins go somewhere rather than vanishing
 }
 
 ----------------------------------------------------------------
@@ -505,8 +608,16 @@ Config.Interaction = {
 -- Difficulty NEVER touches these: hands feel the same everywhere.
 ----------------------------------------------------------------
 Config.Sprint = {
-	BaseWalkSpeed = 16,           -- Roblox default; THE source of truth for normal speed
-	SprintSpeed = 24,             -- while sprinting (1.5x)
+	--// Double-tap W to sprint, then keep W held. LeftShift is Roblox's own
+	--// shift-lock toggle, so binding sprint to it fought the camera.
+	DoubleTapSeconds = 0.35,      -- max gap between the two W presses
+	StopOnRelease = true,         -- letting go of W ends the sprint
+
+	--// 1.5x Roblox's default 16. The restaurant is big enough that stock
+	--// walking made every trip feel like a chore; sprint keeps its 1.5x
+	--// margin on top so it still reads as a burst rather than the norm.
+	BaseWalkSpeed = 24,           -- was 16 (Roblox default)
+	SprintSpeed = 36,             -- was 24; still 1.5x the base
 	StaminaMax = 100,
 	DrainPerSecond = 20,          -- ~5s of continuous full sprint
 	RegenPerSecond = 15,          -- empty -> full in ~6.7s once regen starts
@@ -633,7 +744,7 @@ Config.Dialogue = {
 }
 
 ----------------------------------------------------------------
--- PAYMENT COLLECTION (money waits on the table and melts - see
+-- PAYMENT COLLECTION (money waits on the table at full value - see
 -- ServiceLoop's payment section)
 --
 -- The split, as implemented:
@@ -641,16 +752,194 @@ Config.Dialogue = {
 --          BASE_COINS_PER_PARTY * Size * CoinMult * OvercookedPayMult
 --   TIP  = everything the actual payout adds above that (the perfect-cook
 --          surplus and the VIP surplus)
--- Base decays to BaseFloorPercent and stops; tip decays all the way out.
--- Hustle is rewarded, success is never zeroed.
+-- Both are paid in full whenever the money is collected. The split is kept
+-- because it is what a future pressure mechanic would act on.
 ----------------------------------------------------------------
 Config.Payment = {
-	GraceSeconds = 8,             -- full value this long; walking over isn't a sin
-	DecaySeconds = 20,            -- after grace, the melt takes this long to finish
-	BaseFloorPercent = 0.45,      -- base never drops below this fraction
-	TipFloorPercent = 0,          -- tips melt completely (kept tunable anyway)
-	LingerSeconds = 6,            -- fully-decayed money stays this long, then vanishes
+	--// Payments no longer melt. Money sits on the table at full value until
+	--// someone collects it, or until the shift ends and it is swept into the
+	--// till. Removed for now pending a different answer to "don't let money
+	--// pile up as a free buffer" - see LingerSeconds below for the one piece
+	--// of pressure kept.
+	LingerSeconds = 0,            -- 0 = never vanishes; >0 = seconds on the table
 	CollectHoldSeconds = 1.0,     -- hold time on the collect prompt
+}
+
+----------------------------------------------------------------
+-- SHIFT REPORT (the end-of-shift results panel - see ShiftReportClient)
+-- The server computes every number and the verdict; the client renders.
+----------------------------------------------------------------
+Config.ShiftReport = {
+	AutoDismissSeconds = 12,      -- panel dismisses itself after this long
+	RowRevealSeconds = 0.35,      -- drumroll: pause between row reveals
+
+	--// Checked top to bottom, first match wins. ServedFraction is of the
+	--// difficulty's TargetParties; a missing key means "don't care".
+	--// Tone picks the stamp colour: "good" basil / "mid" mustard / "bad" tomato.
+	GradeThresholds = {
+		{ Grade = "5 STARS!",       Tone = "good", ServedFraction = 1.0, MinReputation = 60 },
+		{ Grade = "GREAT SHIFT!",   Tone = "good", ServedFraction = 1.0 },
+		{ Grade = "NOT BAD!",       Tone = "mid",  ServedFraction = 0.7 },
+		{ Grade = "ROUGH NIGHT...", Tone = "bad" },
+	},
+
+	--// Any FAILED shift (reputation zero, kitchen burned down) stamps this
+	--// regardless of the thresholds; the failure reason prints under it.
+	FailGrade = { Grade = "CLOSED DOWN!", Tone = "bad" },
+}
+
+----------------------------------------------------------------
+-- ORDER TICKET BOARD (wall SurfaceGui on the part tagged OrderBoard -
+-- see OrderBoardService). Most desperate party is always leftmost.
+----------------------------------------------------------------
+Config.OrderBoard = {
+	MaxTickets = 8,               -- cards on the board; overflow shows a "+N more"
+	                              -- chip (unreachable with 4 tables - future-proofing)
+	TicketsPerRow = 4,
+	UpdateHz = 4,                 -- refresh rate; plenty for a wall sign
+	CriticalPulseBelow = 0.25,    -- the leftmost ticket pulses under this patience
+	WalkoutFlashSeconds = 1.2,    -- tomato flash before a walkout's card drops
+	SortTweenSeconds = 0.25,      -- cards slide (never teleport) when re-sorting
+	Face = "Auto",                -- "Auto" = find the big face not buried in the
+	                              -- wall (raycast); or pin "Front"/"Back"/"Left"/
+	                              -- "Right"/"Top"/"Bottom" manually
+	PixelsPerStud = 50,           -- SurfaceGui resolution
+}
+
+----------------------------------------------------------------
+-- CLASSES (the lobby class shop - see ClassVendor / ClassShopClient).
+-- SHARED deliberately: passives and ultimates are main-game mechanics, so
+-- the main place will read this same table when they get implemented.
+-- Until then they are DISPLAY ONLY - the shop sells and equips, nothing
+-- more. Purchase/equip validation lives server-side in ProfileAPI.
+----------------------------------------------------------------
+Config.Classes = {
+	Trainee = {
+		Display = "The Trainee",
+		Rarity = "Starter", RarityColor = Color3.fromRGB(150, 150, 150),
+		Price = 0,                -- never buyable: every profile starts owning it
+		IconId = "rbxassetid://71049237083171",
+		FlavorText = "First day on the job. The apron is still stiff.",
+		PassiveText = "Eager to learn (no perks yet!)",
+		UltimateName = "", UltimateText = "",
+	},
+	Chef = {
+		Display = "The Chef",
+		Rarity = "Common", RarityColor = Color3.fromRGB(76, 175, 109),
+		Price = 1500,
+		IconId = "rbxassetid://79387702760394",
+		FlavorText = "Heard you can burn water. Prove me wrong.",
+		PassiveText = "Collects cooked dishes a little faster",
+		UltimateName = "FLASH FRY!",
+		UltimateText = "Instantly cooks the raw ingredient you're holding to PERFECT",
+		--// Levels 1->5: finish the task, then PAY to upgrade. Steps[L] is the
+		--// cumulative counter needed to leave level L; Costs[L] the coins.
+		--// Tuned for ~10-15 perfects per focused shift: Lv2 in a shift or two,
+		--// max level a real career. Counters counted in the MAIN GAME
+		--// (future phase) and persisted via ProfileService.
+		UpgradeTrack = {
+			Counter = "PerfectCooks", Label = "Perfect cooks",
+			Steps = { 15, 40, 80, 150 },
+			Costs = { 300, 600, 1200, 2000 },
+		},
+	},
+	Waiter = {
+		Display = "The Waiter",
+		Rarity = "Common", RarityColor = Color3.fromRGB(76, 175, 109),
+		Price = 1500,
+		IconId = "rbxassetid://102266349813244",
+		FlavorText = "Three plates, one arm, zero fear.",
+		PassiveText = "A little quicker on their feet while carrying",
+		UltimateName = "THIRD HAND!",
+		UltimateText = "Carry a third item for the rest of the shift",
+		--// ~10-15 serves per focused shift
+		UpgradeTrack = {
+			Counter = "DishesServed", Label = "Dishes served",
+			Steps = { 20, 60, 120, 220 },
+			Costs = { 300, 600, 1200, 2000 },
+		},
+	},
+	Fixer = {
+		Display = "The Fixer",
+		Rarity = "Rare", RarityColor = Color3.fromRGB(245, 184, 65),
+		Price = 4000,
+		IconId = "rbxassetid://99068683562920",
+		FlavorText = "Toilets fear them. Fires respect them.",
+		PassiveText = "Fixes emergencies a little faster",
+		UltimateName = "SPEED DIAL!",
+		UltimateText = "Instantly resolves the active emergency",
+		--// ~1-3 event fixes per shift; rarer actions, shorter track
+		UpgradeTrack = {
+			Counter = "EventChannels", Label = "Emergencies fixed",
+			Steps = { 3, 8, 16, 30 },
+			Costs = { 500, 1000, 2000, 3500 },
+		},
+	},
+	Charmer = {
+		Display = "The Charmer",
+		Rarity = "Epic", RarityColor = Color3.fromRGB(229, 72, 120),
+		Price = 8000,
+		IconId = "rbxassetid://137270991870999",
+		FlavorText = "Could talk a burnt burger into a five-star review.",
+		PassiveText = "Greetings buy extra patience",
+		UltimateName = "SWEET TALK!",
+		UltimateText = "Refills one table's patience by half",
+		--// ~4-8 collected payments per shift
+		UpgradeTrack = {
+			Counter = "PaymentsCollected", Label = "Payments collected",
+			Steps = { 12, 35, 70, 130 },
+			Costs = { 800, 1600, 3200, 5500 },
+		},
+	},
+}
+
+Config.ClassShop = {
+	CardOrder = { "Trainee", "Chef", "Waiter", "Fixer", "Charmer" },
+	VendorGreetings = {
+		"Lookin' to move up in the world?",
+		"Aprons, skills, destinies - take your pick!",
+		"The Trainee look suits you. But so would a promotion...",
+		"Every legend started with a name tag!",
+	},
+	CameraFocus = true,           -- brief camera tween toward the vendor on talk
+	TagMaxDistanceStuds = 45,     -- vendor nametag/bubble hidden beyond this range
+	CameraTweenSeconds = 0.35,
+	WalkAwayCloseStuds = 14,      -- wandering off closes the screen
+	BubbleSeconds = 3,            -- vendor speech bubble lifetime
+}
+
+----------------------------------------------------------------
+-- PLAYER STATS (the lobby STATS screen - see StatsServer/StatsClient).
+-- THE REGISTRY is the single source of truth for every lifetime stat:
+-- its key, where it lives, its label, format, and default. The save
+-- layer merges defaults from here; the UI builds its rows from here.
+-- Adding a stat = adding ONE entry below (plus the gameplay hook that
+-- increments it). Never touch UI code for a new stat.
+--
+-- Source:  "Stats"        -> profile.Stats[Key] (lifetime counters)
+--          "TaskProgress" -> profile.TaskProgress[Key] (already stored
+--                            for class tasks - NOT duplicated here)
+--          "Computed"     -> derived server-side at payload time
+-- Format:  "int" (1,234 / 12K) · "money" ($1,234) · "duration" (2h 14m)
+----------------------------------------------------------------
+Config.PlayerStats = {
+	LevelShiftsPerLevel = 5,      -- passport LVL = 1 + ShiftsCompleted/this
+	                              -- (derived, never stored - cannot desync)
+	BestShiftsCap = 5,            -- hard ceiling, sorted+trimmed at insert
+
+	Registry = {
+		{ Key = "ShiftsCompleted",   Source = "Stats",        Label = "Shifts Completed",   Format = "int",      Default = 0 },
+		{ Key = "ShiftsFailed",      Source = "Stats",        Label = "Shifts Failed",      Format = "int",      Default = 0 },
+		{ Key = "CustomersServed",   Source = "Stats",        Label = "Customers Served",   Format = "int",      Default = 0 },
+		{ Key = "DishesServed",      Source = "TaskProgress", Label = "Dishes Served",      Format = "int",      Default = 0 },
+		{ Key = "PerfectCooks",      Source = "TaskProgress", Label = "Perfect Cooks",      Format = "int",      Default = 0 },
+		{ Key = "EventChannels",     Source = "TaskProgress", Label = "Emergencies Fixed",  Format = "int",      Default = 0 },
+		{ Key = "PaymentsCollected", Source = "TaskProgress", Label = "Payments Collected", Format = "int",      Default = 0 },
+		{ Key = "MoneyDeposited",    Source = "Stats",        Label = "Lifetime Earnings",  Format = "money",    Default = 0 },
+		{ Key = "TimeOnFloorSeconds", Source = "Stats",       Label = "Time On Floor",      Format = "duration", Default = 0 },
+		{ Key = "KitchenCrimes",     Source = "Stats",        Label = "Kitchen Crimes",     Format = "int",      Default = 0 },
+		{ Key = "ClassesOwned",      Source = "Computed",     Label = "Classes Owned",      Format = "int",      Default = 0 },
+	},
 }
 
 ----------------------------------------------------------------
@@ -705,6 +994,131 @@ function Config.PhaseAt(elapsedSeconds)
 	end
 	return "Crescendo"
 end
+
+----------------------------------------------------------------
+-- THE PASS (plate hand-off between kitchen and floor)
+----------------------------------------------------------------
+Config.Pass = {
+	--// Plating is mandatory: a bare dish cannot be served. The pass is the
+	--// only route from kitchen to floor.
+	RequirePlateToServe = true,
+
+	--// Taps, matching the cook/order prompts. Nobody holds E on a plate.
+	PlaceHoldSeconds = 0,
+	TakeHoldSeconds = 0,
+
+	--// Slots sit side by side on the counter, so the prompt range is tight
+	--// for the same reason the cook stations are - otherwise E hits whichever
+	--// neighbour the engine felt like.
+	PromptRangeStuds = 5,
+
+	--// The food sits this far above the top face of the plate.
+	FoodLiftStuds = 0.12,
+	FoodSize = Vector3.new(1.1, 0.34, 1.1),
+
+	--// Extra nudge for the portion if it sinks into or floats over the plate.
+	--// Local to the plate: X/Z slide it across the surface, Y raises it.
+	FoodOffset = Vector3.new(0, 0, 0),
+
+	--// HOW THE PLATE SITS IN A PLAYER'S HAND.
+	--// Roblox welds a Tool's Handle to the hand through Tool.Grip. Left at
+	--// identity a flat object stands on its edge, so a plate needs tipping.
+	--// Degrees, applied X then Y then Z.
+	--//
+	--// The Tool builds its own invisible, axis-aligned Handle, so 0,0,0 now
+	--// means "held exactly as it sits on the counter" - the union's own axes
+	--// no longer leak in. Only change this to tilt the plate on purpose.
+	GripAngles = Vector3.new(0, 0, 0),
+
+	--// Slides the plate within the hand once the rotation is right.
+	GripOffset = Vector3.new(0, 0, 0),
+
+	--// How far BELOW the plate the invisible handle sits, so the hand reads as
+	--// a palm under a plate rather than a fist through one. Raise it if the
+	--// plate still clips the hand; 0 puts the hand at the plate's underside.
+	HandleDropStuds = 0.15,
+
+	--// Where a served plate lands: 0 = table centre, 1 = the customer's seat
+	--// position. Just past halfway puts it in front of them, on the table.
+	TablePlateInset = 0.55,
+	TablePlateLiftStuds = 0.05,
+
+	--// Keeps a served plate off the very edge of the table. Raise it if plates
+	--// look like they are about to slide off.
+	TablePlateEdgeMargin = 0.9,
+
+	--// THE PLATE ECONOMY. However many PassSlot models exist is how many
+	--// dishes can be in flight at once. A plate is only free again once its
+	--// table's payment has been collected (owner's ruling), so an uncollected
+	--// payment holds a plate hostage - see the reclaim paths in PassService.
+	ReclaimOnPlayerLeave = true,   -- carrier disconnects or dies -> plate home
+	ReclaimOnShiftEnd = true,      -- never start a shift short of plates
+}
+
+----------------------------------------------------------------
+-- PERSISTENCE (the savefile)
+----------------------------------------------------------------
+Config.Profile = {
+	--// DataStore name. NEVER rename this once players have saves - a new name
+	--// is a new, empty store and every existing profile is orphaned with no
+	--// way back. The _v1 suffix is the escape hatch: if the schema ever breaks
+	--// unrecoverably, bump to _v2 rather than trying to migrate broken data.
+	StoreName = "DinnerRush_Profiles_v1",
+
+	--// Profile key is KeyPrefix .. UserId
+	KeyPrefix = "Player_",
+
+	--// Studio writes to the LIVE store by default - that is what makes the
+	--// "earn -> leave -> rejoin" test actually prove anything. Flip to true to
+	--// run against a throwaway in-memory store where nothing persists.
+	UseMockInStudio = false,
+
+	--// A player with no profile would earn progress into nothing, so we kick
+	--// instead of letting them play. This is how long we let the load run.
+	LoadTimeoutSeconds = 30,
+	KickMessage = "Couldn't load your save. Please rejoin - your progress is safe.",
+
+	--// Mirrors Wallet into leaderstats so it is visible without any UI. Coins
+	--// stays what it already is: this shift's team money, session-only.
+	ShowWalletInLeaderstats = true,
+
+	--// THE SAVEFILE. Every key here is created for new players and back-filled
+	--// into existing ones on load, so adding a key later is always safe.
+	--//
+	--// Never store in here: Instances, Vector3/Color3/CFrame, functions, or
+	--// arrays with gaps. None of those survive a DataStore round-trip.
+	Template = {
+		SchemaVersion = 1,
+
+		Wallet = 0,                   -- persistent personal money (spec 6)
+
+		--// Sets, not arrays: OwnedClasses.Chef = true. Arrays with gaps are the
+		--// documented DataStore hazard, and set lookup is what every call site
+		--// actually wants. Deviates from spec 4 deliberately.
+		OwnedClasses = {},            -- ["Chef"] = true
+		ClassLevels = {},             -- ["Chef"] = 1..5
+		EquippedClass = "None",       -- "None" = classless, which is legal
+
+		--// Cumulative, lifetime. Single-shift challenge counts live in server
+		--// memory (spec 4) - only their completions land here.
+		TaskProgress = {
+			PerfectCooks = 0,
+			DishesServed = 0,
+			EventChannels = 0,
+			PaymentsCollected = 0,
+			Greetings = 0,
+			Recommendations = 0,
+		},
+
+		TutorialDone = false,         -- false = next shift runs guided (spec 7)
+
+		--// Absorbed from the lobby (spec 3) - one profile per player, not one
+		--// per feature. Neither system is built yet; the keys are here so the
+		--// schema does not need a migration when they are.
+		RedeemedCodes = {},           -- ["CODE"] = true
+		DailyGift = { LastClaim = 0, Streak = 0 },
+	},
+}
 
 ----------------------------------------------------------------
 -- Config is read-only: a system that writes to it would silently

@@ -36,6 +36,7 @@ local PHASE_LABELS = {
 	Calm = "OPENING",
 	Building = "BUSY",
 	Crescendo = "RUSH",
+	Closing = "LAST TABLES",   -- doors shut, finishing the room
 }
 
 --// Text templates, so the HUD wording lives in one place
@@ -64,6 +65,7 @@ local SLOTS = {
 	{ key = "difficulty", names = { "DiffLabel", "DifficultyLabel" } },
 	{ key = "status",     names = { "StatusLabel" } },
 	{ key = "walkouts",   names = { "WalkoutsLabel" } },
+	{ key = "till",       names = { "TillLabel", "MoneyLabel", "CashLabel" } },
 }
 
 local ui = {}
@@ -181,10 +183,15 @@ end
 --// Enabling the ScreenGui is not enough: a frame between it and the labels
 --// with Visible unticked hides everything while every property still reads
 --// as fine. Walk the chain and force it open.
+local moneyReadout = nil --// only set when we had to build our own
+
 local function setHudVisible(visible)
 	if not hudGui then return end
 
 	hudGui.Enabled = visible
+	if moneyReadout then
+		moneyReadout.Enabled = visible --// follows the HUD, hidden during prep
+	end
 	if not visible then return end
 
 	local node = ui.clock
@@ -197,6 +204,38 @@ local function setHudVisible(visible)
 end
 
 setHudVisible(false)
+
+--// MONEY READOUT. If the HUD has no TillLabel of its own, build a plain one:
+--// green text, top-left, under the shift panel. Placeholder by design - name
+--// a label TillLabel / MoneyLabel / CashLabel in ShiftHud_UI and this stands
+--// down and drives yours instead.
+if not ui.till then
+	local moneyGui = Instance.new("ScreenGui")
+	moneyGui.Name = "MoneyReadout_UI"
+	moneyGui.ResetOnSpawn = false
+	moneyGui.IgnoreGuiInset = true
+	moneyGui.DisplayOrder = 15
+	moneyGui.Parent = playerGui
+
+	local label = Instance.new("TextLabel")
+	label.Name = "TillLabel"
+	label.AnchorPoint = Vector2.new(0, 0)
+	label.Position = UDim2.fromScale(0.02, 0.16)
+	label.Size = UDim2.fromScale(0.2, 0.05)
+	label.BackgroundTransparency = 1
+	label.Font = Enum.Font.FredokaOne
+	label.TextScaled = true
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.TextColor3 = Color3.fromRGB(76, 175, 109) --// basil green
+	label.TextStrokeColor3 = Color3.fromRGB(59, 43, 32)
+	label.TextStrokeTransparency = 0
+	label.Text = "Money: $0"
+	label.Parent = moneyGui
+
+	ui.till = label
+	moneyReadout = moneyGui
+	print("[HudClient] no TillLabel in the HUD - built a placeholder money readout")
+end
 
 local function fmtClock(seconds)
 	seconds = math.max(0, math.floor(seconds))
@@ -313,6 +352,11 @@ local function refresh()
 	end
 
 	setText(ui.served, servedText(attr("Satisfied", 0), attr("TargetParties", 0)))
+
+	--// The shared shift till, not anyone's personal balance
+	--// The built-in readout says "Money: $120"; a HUD-authored TillLabel gets
+	--// the same string, so either way it reads the same
+	setText(ui.till, ("Money: $%d"):format(attr("Till", 0)))
 
 	setText(ui.walkouts, tostring(
 		(ShiftState:GetAttribute("DoorWalkouts") or 0)

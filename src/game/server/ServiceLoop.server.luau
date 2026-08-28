@@ -333,6 +333,9 @@ end
 Players.PlayerAdded:Connect(ensureStats)
 for _, p in ipairs(Players:GetPlayers()) do ensureStats(p) end
 
+--// A player's own balance. Only ever touched by the end-of-shift split -
+--// during service, money belongs to the restaurant, not to whoever happened
+--// to walk to the table.
 local function awardCoins(player, amount)
 	local coins = player:FindFirstChild("leaderstats")
 		and player.leaderstats:FindFirstChild("Coins")
@@ -352,8 +355,16 @@ local shift = {
 	Phase = "Calm",
 	Reputation = Config.Reputation.Start,
 	Satisfied = 0,
+	Till = Config.Money.ShiftStartingTill, -- shared, resets every shift
 	DoorWalkouts = 0,
 	SeatedWalkouts = 0,
+
+	--// Shift-report bookkeeping. The till is a BALANCE; these are cumulative.
+	--// EarnedTotal = customer money only (starting till and completion bonus
+	--// excluded); SpentTotal = supplier spending, refunds subtracted back out.
+	EarnedTotal = 0,
+	SpentTotal = 0,
+	PerfectCooks = 0,
 }
 
 ----------------------------------------------------------------
@@ -385,6 +396,7 @@ local function publishShift()
 	ShiftState:SetAttribute("Reputation", shift.Reputation)
 	ShiftState:SetAttribute("ReputationMax", Config.Reputation.Max)
 	ShiftState:SetAttribute("Satisfied", shift.Satisfied)
+	ShiftState:SetAttribute("Till", shift.Till)
 	ShiftState:SetAttribute("TargetParties", diff.Rewards.TargetParties)
 	ShiftState:SetAttribute("Difficulty", DIFFICULTY)
 	ShiftState:SetAttribute("DifficultyLabel", diff.Label)
@@ -411,10 +423,63 @@ local function publishParty(party)
 	pawn:SetAttribute("PatienceFraction", fraction)
 end
 
+--// Service is "open" for the whole time customers are still being dealt
+--// with: RUNNING while the clock ticks, then CLOSING until the room empties.
+--// Anything a player does to a customer must work in both.
+local function serviceOpen()
+	return shift.State == "RUNNING" or shift.State == "CLOSING"
+end
+
 local function repChange(amount, why)
-	if shift.State ~= "RUNNING" then return end
+	if not serviceOpen() then return end
 	shift.Reputation = math.clamp(shift.Reputation + amount, 0, Config.Reputation.Max)
 	print(("[Service] Rep %+d (%s) -> %d"):format(amount, why, shift.Reputation))
+end
+
+----------------------------------------------------------------
+-- THE TILL: one shared pot per shift.
+--
+-- Customer payments go in, the Supplier spends out, and the balance is split
+-- evenly between everyone at the buzzer. Nobody has a private balance during
+-- service, so nobody is incentivised to hog the tables.
+----------------------------------------------------------------
+local function addToTill(amount, why)
+	amount = math.floor(tonumber(amount) or 0)
+	if amount <= 0 then return end
+
+	shift.Till += amount
+	print(("[Service] Till +%d (%s) -> %d"):format(amount, why or "income", shift.Till))
+end
+
+--// Returns false and spends nothing when the till cannot cover it
+local function spendFromTill(amount, why)
+	amount = math.floor(tonumber(amount) or 0)
+	if amount <= 0 then return true end
+
+	if shift.Till < amount then
+		return false
+	end
+
+	shift.Till -= amount
+	shift.SpentTotal += amount --// shift-report bookkeeping
+	print(("[Service] Till -%d (%s) -> %d"):format(amount, why or "spend", shift.Till))
+	return true
+end
+
+do
+	local spend = Instance.new("BindableFunction")
+	spend.Name = "SpendFromTill"
+	spend.OnInvoke = function(amount, why)
+		return spendFromTill(amount, why)
+	end
+	spend.Parent = game:GetService("ServerStorage")
+
+	local balance = Instance.new("BindableFunction")
+	balance.Name = "GetTill"
+	balance.OnInvoke = function()
+		return shift.Till
+	end
+	balance.Parent = game:GetService("ServerStorage")
 end
 
 --// REPUTATION BRIDGE for other server systems (EventSystem, and anything
@@ -489,6 +554,9 @@ local function refreshScoreboard()
 		scoreboard.Text = "Waiting for players..."
 	elseif shift.State == "PREP" then
 		scoreboard.Text = ("Shift starts in %d...  (%s)"):format(math.ceil(shift.PrepRemaining or 0), diff.Label)
+	elseif shift.State == "CLOSING" then
+		scoreboard.Text = ("REP %d   |   LAST TABLES   |   Served %d/%d")
+			:format(shift.Reputation, shift.Satisfied, diff.Rewards.TargetParties)
 	elseif shift.State == "RUNNING" then
 		scoreboard.Text = ("REP %d   |   %s   |   %s   |   Served %d/%d")
 			:format(shift.Reputation, fmtClock(shift.Length - shift.Elapsed), shift.Phase,
@@ -519,6 +587,43 @@ local VIP_GOLD = Color3.fromRGB(255, 200, 60)
 local parties = {}
 local nextPartyId = 0
 local tableById, tableOccupant, spotOccupant = {}, {}, {}
+
+--// ORDER TICKET BOARD bridge. OrderBoardService polls this a few times a
+--// second and renders the wall board; ServiceLoop stays the only owner of
+--// party state. OrderNumber is assigned the moment an order is TAKEN
+--// (dialogue resolve), so board tickets number in order-taken sequence.
+--// Walkout parties keep appearing (Walkout = true) until their pawn is
+--// gone, which is what lets the board flash a dying ticket before dropping.
+local nextOrderNumber = 0
+
+do
+	local bridge = Instance.new("BindableFunction")
+	bridge.Name = "GetOpenOrders"
+	bridge.OnInvoke = function()
+		local open = {}
+		for _, party in pairs(parties) do
+			if party.OrderNumber then
+				local walkout = party.State == STATE.WALKOUT
+				if party.State == STATE.WAITING_FOOD or walkout then
+					local fraction = 0
+					if party.BarKind == "seated" and party.BarTotal and party.BarTotal > 0 then
+						fraction = math.clamp(party.BarRemaining / party.BarTotal, 0, 1)
+					end
+					table.insert(open, {
+						OrderNo = party.OrderNumber,
+						Table = party.TableId or 0,
+						Dishes = table.clone(party.Ticket or {}),
+						Patience = fraction,
+						VIP = party.IsVIP == true,
+						Walkout = walkout,
+					})
+				end
+			end
+		end
+		return open
+	end
+	bridge.Parent = ServerStorage
+end
 for _, t in ipairs(tableParts) do
 	tableById[t:GetAttribute("TableId")] = t
 end
@@ -527,11 +632,12 @@ local function pointAbove(part, height)
 	return part.Position + Vector3.new(0, (part.Size.Y / 2) + height, 0)
 end
 
---// Moves the anchored root; on a rig the limbs follow through their Motor6Ds,
---// so animations keep playing. Height is held from the current position - the
---// spawn placed them on the floor and every destination is on the same floor.
-local function walkTo(party, targetPos, onDone)
-	local root = party.Root
+--// Moves one member's anchored root; on a rig the limbs follow through their
+--// Motor6Ds, so animations keep playing. Height is held from the current
+--// position - the spawn placed them on the floor and every destination is on
+--// the same floor.
+local function walkMemberTo(member, targetPos, onDone)
+	local root = member.Root
 	if not root or not root.Parent then
 		if onDone then onDone() end
 		return
@@ -541,7 +647,7 @@ local function walkTo(party, targetPos, onDone)
 	local flat = Vector3.new(targetPos.X, from.Y, targetPos.Z)
 	local distance = (flat - from).Magnitude
 
-	--// Face the direction of travel, unless we are already there
+	--// Face the direction of travel, unless already there
 	local goal
 	if distance > 0.1 then
 		goal = CFrame.lookAt(flat, flat + (flat - from).Unit)
@@ -553,17 +659,63 @@ local function walkTo(party, targetPos, onDone)
 		TweenInfo.new(math.max(distance / WALK_SPEED, 0.05), Enum.EasingStyle.Linear),
 		{ CFrame = goal })
 
-	if party.WalkTrack then
-		party.WalkTrack:Play()
+	if member.WalkTrack then
+		member.WalkTrack:Play()
 	end
 
 	tween.Completed:Once(function()
-		if party.WalkTrack then
-			party.WalkTrack:Stop()
+		if member.WalkTrack then
+			member.WalkTrack:Stop()
 		end
 		if onDone then onDone() end
 	end)
 	tween:Play()
+end
+
+--// A party is several people walking together, so they need to not occupy the
+--// same square foot. Members fan out sideways from the point they are heading
+--// for; member 1 walks the actual line, the rest flank it.
+local function spreadOffset(index)
+	if index <= 1 then
+		return Vector3.new(0, 0, 0)
+	end
+	local step = Config.Customers.SeatOffsetStuds * 0.6
+	local side = (index % 2 == 0) and 1 or -1
+	local rank = math.floor(index / 2)
+	return Vector3.new(side * step * rank, 0, 0)
+end
+
+--// Walks every member to a destination, calling onDone once the LAST arrives.
+--// targetFor(index, member) returns that member's own point, which is how the
+--// final leg seats them on different sides of the table.
+local function walkParty(party, targetFor, onDone)
+	local members = party.Members or {}
+	local pending = #members
+
+	if pending == 0 then
+		if onDone then onDone() end
+		return
+	end
+
+	local finished = false
+	local function arrived()
+		pending -= 1
+		if pending <= 0 and not finished then
+			finished = true
+			if onDone then onDone() end
+		end
+	end
+
+	for index, member in ipairs(members) do
+		walkMemberTo(member, targetFor(index, member), arrived)
+	end
+end
+
+--// Everyone heads for the same spot, fanned out so they do not overlap
+local function walkTo(party, targetPos, onDone)
+	walkParty(party, function(index)
+		return targetPos + spreadOffset(index)
+	end, onDone)
 end
 
 --// Walks a chain of points in order, then calls onDone. Used for waypoint
@@ -586,6 +738,29 @@ end
 --// The floor-level point a customer should stand at for a given part
 local function standingPoint(part)
 	return Vector3.new(part.Position.X, part.Position.Y, part.Position.Z)
+end
+
+--// Where each member of a party stands at their table. Derived from the
+--// table anchor's own facing, so no extra seat parts are needed: member 1
+--// takes the near side, member 2 the far side, then left and right.
+local function seatPositions(tablePart, count)
+	local base = pointAbove(tablePart, 2)
+	local look = tablePart.CFrame.LookVector
+	local right = tablePart.CFrame.RightVector
+	local distance = Config.Customers.SeatOffsetStuds
+
+	local pattern = {
+		-look * distance,   -- near side, where a single customer has always stood
+		look * distance,    -- opposite side
+		-right * distance,
+		right * distance,
+	}
+
+	local seats = {}
+	for index = 1, count do
+		seats[index] = base + pattern[((index - 1) % #pattern) + 1]
+	end
+	return seats
 end
 
 --// Waypoint parts -> the positions to walk through
@@ -611,11 +786,13 @@ local function setPartyState(party, newState)
 	end
 
 	if color then
-		if party.Highlight then
-			party.Highlight.FillColor = color
-			party.Highlight.OutlineColor = color
-		elseif party.Pawn and party.Pawn:IsA("BasePart") then
-			party.Pawn.Color = color
+		for _, member in ipairs(party.Members or {}) do
+			if member.Highlight then
+				member.Highlight.FillColor = color
+				member.Highlight.OutlineColor = color
+			elseif member.Model and member.Model:IsA("BasePart") then
+				member.Model.Color = color
+			end
 		end
 	end
 	publishParty(party)
@@ -665,6 +842,127 @@ end
 --// than a TableId - a grilled steak is a grilled steak, not "table 3's". The
 --// match is therefore ticket-based: does this party still want what you are
 --// holding? Returns the tool and the dish name.
+--// THE PASS. Plates are owned by PassService; ServiceLoop only says where a
+--// served one goes and when it is free again. tableId -> { slotId, ... }
+local platesByTable = {}
+
+local function passBridge(name)
+	local fn = ServerStorage:FindFirstChild(name)
+	if not fn then
+		warn(("[Service] ServerStorage.%s missing - is PassService running?"):format(name))
+	end
+	return fn
+end
+
+local function returnPlates(tableId, why)
+	local held = platesByTable[tableId]
+	if not held then return end
+	platesByTable[tableId] = nil
+
+	local fn = passBridge("PassReturnPlate")
+	if not fn then return end
+	for _, slotId in ipairs(held) do
+		fn:Invoke(slotId, why)
+	end
+end
+
+--// Half a part's height along WORLD Y whatever its own rotation is. Size is
+--// the LOCAL box, so a table top rotated even slightly reports the wrong
+--// height and the plate ends up sunk into it or floating under it.
+local function worldHalfHeight(part)
+	local cf, size = part.CFrame, part.Size
+	return math.abs(cf.RightVector.Y) * (size.X / 2)
+		+ math.abs(cf.UpVector.Y) * (size.Y / 2)
+		+ math.abs(cf.LookVector.Y) * (size.Z / 2)
+end
+
+--// THE REAL TOP SURFACE at a given spot, found by casting down onto it.
+--//
+--// The part tagged Table is not necessarily the surface people eat off - a
+--// table is usually a top sitting on a frame, and the tag may be on either.
+--// Measuring the tagged part put plates underneath the visible top. A ray
+--// finds whatever is actually there, whichever piece is tagged.
+--//
+--// Everything that could be standing on or over the table is filtered out:
+--// customers, players, and plates already served.
+local function surfaceYAt(x, z, startY)
+	local ignore = {}
+
+	for _, player in ipairs(Players:GetPlayers()) do
+		if player.Character then
+			table.insert(ignore, player.Character)
+		end
+	end
+	for _, plate in ipairs(CollectionService:GetTagged("PassSlot")) do
+		table.insert(ignore, plate)
+	end
+	for _, party in pairs(parties) do
+		if party.Members then
+			for _, member in ipairs(party.Members) do
+				table.insert(ignore, member)
+			end
+		end
+		if party.Pawn then
+			table.insert(ignore, party.Pawn)
+		end
+	end
+
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = ignore
+	params.IgnoreWater = true
+
+	--// Start above head height for a table and cast well past the floor
+	local hit = workspace:Raycast(
+		Vector3.new(x, startY + 12, z),
+		Vector3.new(0, -24, 0),
+		params)
+
+	return hit and hit.Position.Y or nil
+end
+
+--// Where a served plate lands: on the table, in front of the customer whose
+--// dish it is. Seat order matches serve order - the game has no per-customer
+--// ticket, so dish 1 goes to seat 1.
+local function platePlacement(tableId, seatIndex)
+	local tablePart = tableById[tableId]
+	if not tablePart then return nil end
+
+	local seats = seatPositions(tablePart, math.max(seatIndex, 1))
+	local seat = seats[seatIndex] or seats[#seats]
+	if not seat then return nil end
+
+	local centre = tablePart.Position
+	local boxTop = centre.Y + worldHalfHeight(tablePart)
+
+	--// Horizontal direction from the middle of the table out toward the seat
+	local flat = Vector3.new(seat.X - centre.X, 0, seat.Z - centre.Z)
+	local distance = flat.Magnitude
+	local lift = Config.Pass.TablePlateLiftStuds
+
+	if distance < 0.01 then
+		local y = surfaceYAt(centre.X, centre.Z, boxTop) or boxTop
+		return CFrame.new(Vector3.new(centre.X, y + lift, centre.Z))
+	end
+	local direction = flat / distance
+
+	--// HOW FAR OUT WE MAY GO. Seats sit SeatOffsetStuds from the middle, which
+	--// is further than the table is wide - walking that fraction blindly puts
+	--// the plate off the edge, and with no collision it just hangs in the air
+	--// looking like it is under the table. So clamp to the table's own extent
+	--// along this direction, minus a margin so the plate is not half off.
+	local reach = math.abs(direction:Dot(tablePart.CFrame.RightVector)) * (tablePart.Size.X / 2)
+		+ math.abs(direction:Dot(tablePart.CFrame.LookVector)) * (tablePart.Size.Z / 2)
+	local limit = math.max(reach - Config.Pass.TablePlateEdgeMargin, 0)
+
+	local out = math.min(distance * Config.Pass.TablePlateInset, limit)
+	local spot = centre + direction * out
+
+	--// Ray first, measured box as the fallback if nothing was hit
+	local y = surfaceYAt(spot.X, spot.Z, boxTop) or boxTop
+	return CFrame.new(Vector3.new(spot.X, y + lift, spot.Z))
+end
+
 local function findTicketDish(player, party)
 	if not party.Ticket then return nil end
 
@@ -865,10 +1163,15 @@ local function departTo(party, target)
 	table.insert(points, target)
 
 	walkPath(party, points, function()
-		if party.WalkTrack then
-			party.WalkTrack:Stop()
+		for _, member in ipairs(party.Members or {}) do
+			if member.WalkTrack then
+				member.WalkTrack:Stop()
+			end
+			if member.Model then
+				member.Model:Destroy()
+			end
 		end
-		party.Pawn:Destroy()
+		party.Members = nil
 		parties[party.Id] = nil
 	end)
 end
@@ -892,6 +1195,10 @@ local function seatedWalkout(party)
 	removeBar(party)
 	local tid = party.TableId
 	if tid then
+		--// A party can storm out after eating one dish of two, so plates may
+		--// be on this table. No payment is coming, so free them here or they
+		--// would never come back.
+		returnPlates(tid, "party stormed out")
 		tableOccupant[tid] = nil
 		party.TableId = nil
 		refreshTablePrompt(tid)
@@ -903,6 +1210,22 @@ end
 ----------------------------------------------------------------
 -- Pawns
 ----------------------------------------------------------------
+--// Optional: customers wear avatars from players' friend lists when the pool
+--// has any cached. Missing module just means plain rigs.
+local AvatarPool = nil
+do
+	local module = script.Parent:FindFirstChild("AvatarPool")
+	if module then
+		local ok, result = pcall(require, module)
+		if ok then
+			AvatarPool = result
+			AvatarPool.Start()
+		else
+			warn("[Service] AvatarPool failed to load - customers will use the plain rig")
+		end
+	end
+end
+
 local rigTemplate = ServerStorage:FindFirstChild(RIG_NAME)
 if not rigTemplate then
 	warn(("[Service] ServerStorage.%s not found - customers will be placeholder cylinders")
@@ -913,22 +1236,38 @@ end
 --// cannot snag on a wall, shove a player, or push each other. The root is
 --// anchored and the limbs hang off it through their Motor6Ds, which is what
 --// lets animations still play while the root is driven by a tween.
-local function buildRig(party, atPosition)
-	local rig = rigTemplate:Clone()
-	rig.Name = "Customer_" .. party.Id
+--
+--// Each MEMBER of a party is its own rig. A party of two is two people who
+--// walk in together and sit on opposite sides of the table.
+local function buildMember(party, memberIndex, atPosition)
+	--// A pooled rig already wears someone's avatar and is already R15.
+	--// Falling back to the plain template only when the pool is still cold.
+	local rig = AvatarPool and AvatarPool.Get()
+	local wearingAvatar = rig ~= nil
+
+	if not rig then
+		if not rigTemplate then
+			return nil
+		end
+		rig = rigTemplate:Clone()
+	end
+
+	rig.Name = ("Customer_%d_%d"):format(party.Id, memberIndex)
 
 	local root = rig:FindFirstChild("HumanoidRootPart")
 	local humanoid = rig:FindFirstChildOfClass("Humanoid")
 	if not root or not humanoid then
-		warn(("[Service] %s has no HumanoidRootPart or Humanoid - falling back to a cylinder")
-			:format(RIG_NAME))
+		warn(("[Service] customer rig has no HumanoidRootPart or Humanoid (%s) - using a cylinder")
+			:format(wearingAvatar and "from the avatar pool" or RIG_NAME))
 		rig:Destroy()
 		return nil
 	end
 
+	--// Tweened, never simulated: nothing collides, nothing falls over
 	for _, descendant in ipairs(rig:GetDescendants()) do
 		if descendant:IsA("BasePart") then
 			descendant.CanCollide = false
+			descendant.Massless = true
 			descendant.Anchored = false
 		end
 	end
@@ -940,6 +1279,8 @@ local function buildRig(party, atPosition)
 
 	humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
 
+	local member = { Model = rig, Root = root, Humanoid = humanoid }
+
 	if WALK_ANIMATION_ID ~= "" then
 		local animator = humanoid:FindFirstChildOfClass("Animator")
 		if animator then
@@ -950,12 +1291,12 @@ local function buildRig(party, atPosition)
 			end)
 			if ok and track then
 				track.Looped = true
-				party.WalkTrack = track
+				member.WalkTrack = track
 			else
 				warn("[Service] could not load WALK_ANIMATION_ID - rigs will glide")
 			end
 		else
-			warn(("[Service] %s's Humanoid has no Animator - rigs will glide"):format(RIG_NAME))
+			warn("[Service] customer Humanoid has no Animator - rigs will glide")
 		end
 	end
 
@@ -964,42 +1305,56 @@ local function buildRig(party, atPosition)
 	highlight.FillTransparency = 0.65
 	highlight.OutlineTransparency = 0
 	highlight.Parent = rig
-	party.Highlight = highlight
+	member.Highlight = highlight
 
-	party.Root = root
-	return rig
+	return member
+end
+
+--// Fallback when there is no usable rig template
+local function buildCylinderMember(party, memberIndex, atPosition)
+	local pawn = Instance.new("Part")
+	pawn.Name = ("PartyPawn_%d_%d"):format(party.Id, memberIndex)
+	pawn.Shape = Enum.PartType.Cylinder
+	pawn.Size = Vector3.new(5, 2.5, 2.5)
+	--// atPosition is floor level; lift the cylinder onto its own base
+	pawn.CFrame = CFrame.new(atPosition + Vector3.new(0, 1.25, 0))
+		* CFrame.Angles(0, 0, math.rad(90))
+	pawn.Anchored = true
+	pawn.CanCollide = false
+	pawn.Material = Enum.Material.SmoothPlastic
+
+	return { Model = pawn, Root = pawn }
 end
 
 local function spawnPartyPawn(party, atPosition)
-	local pawn = rigTemplate and buildRig(party, atPosition)
+	party.Members = {}
 
-	if not pawn then
-		--// Placeholder cylinder: no rig template, or it was malformed
-		pawn = Instance.new("Part")
-		pawn.Name = "PartyPawn_" .. party.Id
-		pawn.Shape = Enum.PartType.Cylinder
-		pawn.Size = Vector3.new(5, 2.5, 2.5)
-		--// atPosition is floor level; lift the cylinder onto its own base
-		pawn.CFrame = CFrame.new(atPosition + Vector3.new(0, 1.25, 0))
-			* CFrame.Angles(0, 0, math.rad(90))
-		pawn.Anchored = true
-		pawn.CanCollide = false
-		pawn.Material = Enum.Material.SmoothPlastic
-		party.Root = pawn
+	for index = 1, party.Size do
+		local spot = atPosition + spreadOffset(index)
+		local member = buildMember(party, index, spot)
+			or buildCylinderMember(party, index, spot)
+
+		table.insert(party.Members, member)
 	end
 
-	--// How a client finds customers: CollectionService:GetTagged("CustomerParty")
-	CollectionService:AddTag(pawn, "CustomerParty")
+	--// Member 1 is the party's face: prompts, billboards, the tag and every
+	--// published attribute hang off it, so the rest of the code is unchanged.
+	local leader = party.Members[1]
+	party.Pawn = leader.Model
+	party.Root = leader.Root
 
-	party.Pawn = pawn
+	CollectionService:AddTag(party.Pawn, "CustomerParty")
 	publishParty(party)
 
+	for _, member in ipairs(party.Members) do
+		member.Model.Parent = workspace
+	end
+
 	if not SHOW_PLACEHOLDER_BARS then
-		pawn.Parent = workspace
 		return
 	end
 
-	--// PLACEHOLDER VISUAL: name/state label over the pawn
+	--// PLACEHOLDER VISUAL: name/state label over the party's leader
 	local gui = Instance.new("BillboardGui")
 	gui.Size = UDim2.fromOffset(220, 36)
 	gui.StudsOffsetWorldSpace = Vector3.new(0, 3.6, 0)
@@ -1015,7 +1370,6 @@ local function spawnPartyPawn(party, atPosition)
 	gui.Parent = party.Root --// must be a BasePart, not the rig Model
 
 	party.Label = label
-	pawn.Parent = workspace
 end
 
 ----------------------------------------------------------------
@@ -1077,38 +1431,35 @@ refreshTablePrompt = function(tableId)
 		prompt.Enabled = true
 		prompt.ActionText = "Take order"
 		prompt.ObjectText = ("Table %d"):format(tableId)
-		prompt.HoldDuration = 1
+		prompt.HoldDuration = Config.Customers.TakeOrderHoldSeconds
 	elseif party.State == STATE.WAITING_FOOD then
 		prompt.Enabled = true
 		prompt.ActionText = "Serve dish"
 		prompt.ObjectText = ("Table %d - %d dish%s left"):format(
 			tableId, party.DishesRemaining, party.DishesRemaining == 1 and "" or "es")
-		prompt.HoldDuration = 0.5
+		prompt.HoldDuration = Config.Customers.ServeHoldSeconds
 	else
 		prompt.Enabled = false
 	end
 end
 
 ----------------------------------------------------------------
--- Payments. Finishing a meal no longer pays instantly: the money waits
--- ON the table as a collect point and melts while nobody grabs it.
--- Full value through GraceSeconds, then a linear decay over DecaySeconds:
--- BASE (what a plain no-perfect, no-VIP order pays) floors at
--- BaseFloorPercent; TIP (perfect-cook surplus + VIP surplus) melts to
--- zero. After the melt finishes it lingers LingerSeconds, then the
--- remainder is lost - no rep penalty, the lost coins ARE the penalty.
+-- Payments. Finishing a meal does not pay instantly: the money waits ON the
+-- table as a collect point until someone walks over. It holds its full value
+-- for as long as it sits there - the melt that used to punish stalling is
+-- gone. Anything still uncollected at the buzzer is swept into the till, so
+-- earned money is never lost. Base and Tip are still tracked separately,
+-- ready for whatever replaces the melt.
 -- The party leaves on its normal schedule; turnover never waits on money.
 ----------------------------------------------------------------
 local payments = {} --// tableId -> { Base, Tip, CreatedAt, Gui, Prompt, Amount }
 
 --// Current value plus where in the melt we are (0 = grace, 1 = floored)
+--// Flat: what the party owed is what you collect, whenever you get to it.
+--// The second return value used to be the melt fraction; it stays as a
+--// constant 0 so callers that read it keep working.
 local function paymentValue(payment)
-	local P = Config.Payment
-	local elapsed = os.clock() - payment.CreatedAt
-	local t = math.clamp((elapsed - P.GraceSeconds) / P.DecaySeconds, 0, 1)
-	local baseVal = payment.Base * (1 - t * (1 - P.BaseFloorPercent))
-	local tipVal = payment.Tip * (1 - t * (1 - P.TipFloorPercent))
-	return math.floor(baseVal + tipVal), t
+	return math.floor(payment.Base + payment.Tip), 0
 end
 
 local function destroyPayment(tableId)
@@ -1124,8 +1475,12 @@ local function collectPayment(tableId, collector)
 	if not payment then return end
 	local value = paymentValue(payment)
 	destroyPayment(tableId)
-	awardCoins(collector, value)
-	print(("[Service] %s collected %d coins (Table %d)"):format(
+	addToTill(value, ("payment from table %d"):format(tableId))
+	shift.EarnedTotal += value --// shift-report bookkeeping
+
+	--// THE PLATE RULE: a plate is only free once its table has paid up.
+	returnPlates(tableId, "payment collected")
+	print(("[Service] %s banked %d coins (Table %d)"):format(
 		collector.Name, value, tableId))
 end
 
@@ -1232,25 +1587,24 @@ local function createPayment(party, tableId)
 end
 
 --// ~2x/sec from the heartbeat: tick every billboard, expire the stale
+--// Payments hold their value now, so this only keeps the label honest and
+--// clears anything that has outstayed LingerSeconds (0 = never).
 local function updatePayments()
-	local P = Config.Payment
+	local lifetime = Config.Payment.LingerSeconds
 	local expired = nil
-	for tableId, payment in pairs(payments) do
-		local value, t = paymentValue(payment)
-		payment.Amount.Text = tostring(value)
-		payment.Amount.TextColor3 = (t <= 0 and PAY_COLOR.GRACE)
-			or (t < 1 and PAY_COLOR.DECAY) or PAY_COLOR.FLOOR
 
-		--// The party leaves the moment the payment appears, so the linger
-		--// clock runs from the END of the melt, not from "party left"
-		local lifetime = P.GraceSeconds + P.DecaySeconds + P.LingerSeconds
-		if os.clock() - payment.CreatedAt >= lifetime then
+	for tableId, payment in pairs(payments) do
+		payment.Amount.Text = tostring(paymentValue(payment))
+		payment.Amount.TextColor3 = PAY_COLOR.GRACE
+
+		if lifetime > 0 and os.clock() - payment.CreatedAt >= lifetime then
 			expired = expired or {}
 			table.insert(expired, tableId)
 			print(("[Service] Table %d payment vanished - %d coins lost")
-				:format(tableId, value))
+				:format(tableId, paymentValue(payment)))
 		end
 	end
+
 	if expired then
 		for _, tableId in ipairs(expired) do
 			destroyPayment(tableId)
@@ -1331,7 +1685,7 @@ local function resolveDialogue(dlg, pickedKey, notifyClient)
 	end
 
 	--// Shift over / party gone: nothing left to order
-	if party.State ~= STATE.SEATED or shift.State ~= "RUNNING" then return end
+	if party.State ~= STATE.SEATED or not serviceOpen() then return end
 
 	if pickedKey and dlg.Flow == "recommend" then
 		party.Ticket[1] = pickedKey
@@ -1340,10 +1694,14 @@ local function resolveDialogue(dlg, pickedKey, notifyClient)
 		end
 	end
 
+	nextOrderNumber += 1
+	party.OrderNumber = nextOrderNumber --// the board's ticket number
+
 	setPartyState(party, STATE.WAITING_FOOD)
 	showTicket(party)
 	refreshTablePrompt(party.TableId)
-	print(("[Service] Order for Table %d: %s%s"):format(party.TableId, ticketText(party),
+	print(("[Service] Order #%d for Table %d: %s%s"):format(party.OrderNumber,
+		party.TableId, ticketText(party),
 		pickedKey and " (waiter's recommendation)" or ""))
 end
 
@@ -1480,7 +1838,7 @@ local function setupTable(tableId, tablePart)
 
 	prompt.Triggered:Connect(function(player)
 		local party = tableOccupant[tableId]
-		if not party or shift.State ~= "RUNNING" then return end
+		if not party or not serviceOpen() then return end
 
 		if party.State == STATE.SEATED then
 			--// The ticket was rolled when the party spawned. Taking the order
@@ -1501,11 +1859,21 @@ local function setupTable(tableId, tablePart)
 				return
 			end
 
+			--// THE PASS. A bare dish carried straight from the grill cannot be
+			--// served - it has to go through a plate first.
+			local plateSlot = dish:GetAttribute("PlateSlot")
+			if Config.Pass.RequirePlateToServe and not plateSlot then
+				prompt.ObjectText = "Plate it at the pass first"
+				task.delay(1.5, function() refreshTablePrompt(tableId) end)
+				return
+			end
+
 			--// Quality rides on the Tool from KitchenService and decides both
 			--// the tip multiplier and the reputation on this dish
 			local quality = dish:GetAttribute("Quality")
 			if quality == "Perfect" then
 				party.PerfectDishes = (party.PerfectDishes or 0) + 1
+				shift.PerfectCooks += 1 --// shift-report bookkeeping
 				repChange(Config.Reputation.PerfectDish, "perfect dish")
 			elseif quality == "Overcooked" then
 				party.OvercookedDishes = (party.OvercookedDishes or 0) + 1
@@ -1515,6 +1883,28 @@ local function setupTable(tableId, tablePart)
 			end
 
 			dish:Destroy()
+
+			--// The plate stays with the table until the payment is collected.
+			--// Seat order follows serve order: there is no per-customer ticket,
+			--// so dish 1 lands in front of seat 1.
+			if plateSlot then
+				local held = platesByTable[tableId]
+				if not held then
+					held = {}
+					platesByTable[tableId] = held
+				end
+				table.insert(held, plateSlot)
+
+				local place = passBridge("PassPlaceOnTable")
+				local where = platePlacement(tableId, #held)
+				if place and where then
+					place:Invoke(plateSlot, where)
+				elseif place then
+					--// No table part to aim at: send it straight home rather
+					--// than leaving a plate stranded in hiding.
+					returnPlates(tableId, "no placement")
+				end
+			end
 
 			--// Remove that one dish from the ticket
 			local index = table.find(party.Ticket, dishName)
@@ -1534,7 +1924,7 @@ local function setupTable(tableId, tablePart)
 				refreshTablePrompt(tableId)
 				task.delay(diff.EatingSeconds, function()
 					if party.State ~= STATE.SERVED then return end
-					if shift.State ~= "RUNNING" then
+					if not serviceOpen() then
 						setPartyState(party, STATE.LEAVING)
 						tableOccupant[tableId] = nil
 						refreshTablePrompt(tableId)
@@ -1635,19 +2025,25 @@ local function attachQueuePrompts(party)
 		local tablePart = tableById[tableId]
 		party.ExitFrom = tablePart --// remembered for the ExitVia route later
 
-		local seatPos = pointAbove(tablePart, 2) - tablePart.CFrame.LookVector * 4
+		--// One seat per member, worked out from the table anchor's facing:
+		--// member 1 near side, member 2 opposite. No extra seat parts needed.
+		local seats = seatPositions(tablePart, #party.Members)
 
-		--// Route around this map's walls before arriving at the chair
+		--// Route around this map's walls before arriving at the chairs
 		local points = routePoints(parseVia(tablePart:GetAttribute("EntryVia")))
-		print(("[Service] Party %d walking to Table %d via %d waypoint(s)")
-			:format(party.Id, tableId, #points))
-		table.insert(points, seatPos)
+		print(("[Service] Party %d (%d) walking to Table %d via %d waypoint(s)")
+			:format(party.Id, #party.Members, tableId, #points))
 
+		--// Walk the shared route together, then each peels off to their chair
 		walkPath(party, points, function()
+			walkParty(party, function(index)
+				return seats[index] or seats[1]
+			end, function()
 			-- SEATED BAR STARTS HERE: bodies in chairs
-			setPartyState(party, STATE.SEATED)
-			startSeatedBar(party)
-			refreshTablePrompt(tableId)
+				setPartyState(party, STATE.SEATED)
+				startSeatedBar(party)
+				refreshTablePrompt(tableId)
+			end)
 		end)
 		print(("[Service] %s seated Party %d at Table %d"):format(player.Name, party.Id, tableId))
 	end)
@@ -1706,6 +2102,49 @@ local function spawnParty()
 end
 
 ----------------------------------------------------------------
+-- Shift report: one FireAllClients at shift end carrying the full
+-- server-computed stats payload. ShiftReportClient renders it; clients
+-- never derive a number themselves. Late joiners are ignored by design.
+----------------------------------------------------------------
+local shiftReportRemote = remotes:FindFirstChild("ShiftReportRemote")
+if not shiftReportRemote then
+	shiftReportRemote = Instance.new("RemoteEvent")
+	shiftReportRemote.Name = "ShiftReportRemote"
+	shiftReportRemote.Parent = remotes
+end
+
+--// First matching threshold wins; a FAILED shift always stamps FailGrade
+local function computeGrade(success)
+	local R = Config.ShiftReport
+	if not success then
+		return R.FailGrade.Grade, R.FailGrade.Tone
+	end
+
+	local target = diff.Rewards.TargetParties
+	for _, row in ipairs(R.GradeThresholds) do
+		local servedOk = not row.ServedFraction
+			or shift.Satisfied >= math.ceil(target * row.ServedFraction)
+		local repOk = not row.MinReputation
+			or shift.Reputation >= row.MinReputation
+		if servedOk and repOk then
+			return row.Grade, row.Tone
+		end
+	end
+
+	local last = R.GradeThresholds[#R.GradeThresholds]
+	return last.Grade, last.Tone
+end
+
+--// Cross-system counters are PULLED, not pushed: EventSystem and
+--// KitchenService each expose a stats bindable and reset their own numbers
+local function pullStats(bridgeName)
+	local bridge = game:GetService("ServerStorage"):FindFirstChild(bridgeName)
+	if not bridge then return {} end
+	local ok, result = pcall(function() return bridge:Invoke() end)
+	return (ok and type(result) == "table") and result or {}
+end
+
+----------------------------------------------------------------
 -- Shift end
 ----------------------------------------------------------------
 local function endShift(success, reason)
@@ -1721,9 +2160,9 @@ local function endShift(success, reason)
 	print(("[Service] Rep %d | Door walkouts %d | Seated walkouts %d")
 		:format(shift.Reputation, shift.DoorWalkouts, shift.SeatedWalkouts))
 	if success then
-		for _, player in ipairs(Players:GetPlayers()) do
-			awardCoins(player, diff.Rewards.CompletionBonus)
-		end
+		--// Paid once into the till, not once per player - the split below
+		--// shares it out
+		addToTill(diff.Rewards.CompletionBonus, "completion bonus")
 		print(("[Service] Completion bonus: %d coins to everyone"):format(diff.Rewards.CompletionBonus))
 	end
 	-- bars freeze (heartbeat stops draining); everyone still inside ambles out
@@ -1752,15 +2191,98 @@ local function endShift(success, reason)
 	for _, tableId in ipairs(paymentTables) do
 		destroyPayment(tableId)
 	end
-	if uncollected > 0 then
-		local everyone = Players:GetPlayers()
-		if #everyone > 0 then
-			local share = math.floor(uncollected / #everyone)
-			for i, player in ipairs(everyone) do
-				awardCoins(player, share + (i == 1 and (uncollected - share * #everyone) or 0))
-			end
-			print(("[Service] Auto-collected %d coins left on tables at shift end"):format(uncollected))
+
+	--// Never start the next shift short of plates. Anything still out - on a
+	--// table, or in the hands of someone who logged off at the buzzer - comes
+	--// home now.
+	if Config.Pass.ReclaimOnShiftEnd then
+		for tableId in pairs(platesByTable) do
+			returnPlates(tableId, "shift ended")
 		end
+		local reset = passBridge("PassReturnAll")
+		if reset then
+			reset:Invoke("shift ended")
+		end
+	end
+	if uncollected > 0 then
+		addToTill(uncollected, "uncollected table payments")
+		shift.EarnedTotal += uncollected --// still customer money: it counts
+	end
+
+	--// An order paid for but still on the road when the buzzer goes is money
+	--// the team never got food for. Hand it back before splitting.
+	local refundBridge = game:GetService("ServerStorage"):FindFirstChild("RefundInFlightOrder")
+	if refundBridge then
+		local ok, refunded = pcall(function() return refundBridge:Invoke() end)
+		if ok and tonumber(refunded) and refunded > 0 then
+			addToTill(refunded, "refund for undelivered order")
+			--// Refunded spending was never really spent - the report's
+			--// "supplies" row must not lie
+			shift.SpentTotal = math.max(0, shift.SpentTotal - refunded)
+		end
+	end
+
+	--// THE SPLIT. Everything the shift earned, minus everything the Supplier
+	--// spent, divided evenly. This is the only moment private balances move.
+	local everyone = Players:GetPlayers()
+	if #everyone > 0 and shift.Till > 0 then
+		local share = math.floor(shift.Till / #everyone)
+		local remainder = shift.Till - (share * #everyone)
+
+		for index, member in ipairs(everyone) do
+			local paid = share
+			if index == 1 and Config.Money.RemainderToFirstPlayer then
+				paid += remainder
+			end
+			awardCoins(member, paid)
+		end
+
+		print(("[Service] Till %d split %d ways - %d each%s"):format(
+			shift.Till, #everyone, share,
+			remainder > 0 and (" (+%d remainder)"):format(remainder) or ""))
+		shift.Till = 0
+	elseif shift.Till > 0 then
+		print("[Service] Nobody left to split the till with")
+	end
+
+	--// THE REPORT. Assembled after the refund and the split so every money
+	--// number is final. Emergencies line is built here - the client only
+	--// ever prints what it is handed.
+	do
+		local eventStats = pullStats("GetEventStats")
+		local kitchenStats = pullStats("GetKitchenStats")
+
+		local lines = {}
+		local function addLine(count, singular, plural)
+			count = tonumber(count) or 0
+			if count > 0 then
+				table.insert(lines, ("%d %s"):format(count, count == 1 and singular or plural))
+			end
+		end
+		addLine(eventStats.ToiletsPlunged, "toilet plunged", "toilets plunged")
+		addLine(eventStats.FiresExtinguished, "fire put out", "fires put out")
+		addLine(eventStats.OutagesFixed, "outage fixed", "outages fixed")
+
+		local grade, tone = computeGrade(success)
+		local payload = {
+			Served = shift.Satisfied,
+			Target = diff.Rewards.TargetParties,
+			Walkouts = shift.DoorWalkouts + shift.SeatedWalkouts,
+			PerfectCooks = shift.PerfectCooks,
+			BurntDishes = kitchenStats.DishesBurnt or 0,
+			EmergenciesLine = #lines > 0 and table.concat(lines, "  ·  ") or "No emergencies!",
+			Earned = shift.EarnedTotal,
+			Spent = shift.SpentTotal,
+			Net = shift.EarnedTotal - shift.SpentTotal,
+			Reputation = math.floor(shift.Reputation),
+			Grade = grade,
+			GradeTone = tone,
+			FailReason = (not success) and (reason or "") or nil,
+			WaterIncidents = eventStats.WaterIncidents or 0,
+			AutoDismiss = Config.ShiftReport.AutoDismissSeconds,
+			RowReveal = Config.ShiftReport.RowRevealSeconds,
+		}
+		shiftReportRemote:FireAllClients("Show", payload)
 	end
 
 	publishShift()
@@ -1780,6 +2302,78 @@ do
 		return true
 	end
 	bridge.Parent = game:GetService("ServerStorage")
+end
+
+----------------------------------------------------------------
+-- CLOSING: the doors shut, the room does not empty instantly.
+--
+-- Not overtime - nobody new arrives. Everyone already inside finishes their
+-- meal and pays, then the shift really ends. Queued customers outside are
+-- turned away with no penalty; they were never served.
+----------------------------------------------------------------
+local function beginClosing()
+	if shift.State ~= "RUNNING" then return end
+
+	shift.State = "CLOSING"
+	shift.Phase = "Closing"
+	shift.ClosingElapsed = 0
+
+	--// Turn away the queue. No reputation hit - the restaurant closed, they
+	--// did not storm out.
+	local turnedAway = 0
+	for _, party in pairs(parties) do
+		if party.State == STATE.QUEUED then
+			removeBar(party)
+			if party.Spot then
+				spotOccupant[party.Spot] = nil
+				party.Spot = nil
+			end
+			if party.SeatPrompt then
+				party.SeatPrompt:Destroy()
+				party.SeatPrompt = nil
+			end
+			setPartyState(party, STATE.LEAVING)
+			departTo(party, exitPos)
+			turnedAway += 1
+		end
+	end
+
+	publishShift()
+	print(("[Service] === CLOSING - doors shut, %d turned away, finishing the room ==="):format(turnedAway))
+end
+
+--// Everyone inside has gone, and no money is still sitting on a table
+local function closingDone()
+	for _, party in pairs(parties) do
+		if party.State ~= STATE.LEAVING and party.State ~= STATE.WALKOUT then
+			return false
+		end
+	end
+
+	for _ in pairs(payments) do
+		return false
+	end
+
+	return true
+end
+
+--// Events can make patience melt faster - the power outage does, because
+--// customers get impatient in the dark. EventSystem publishes the factor;
+--// this only reads it, and falls back to normal speed if it is absent.
+local eventStateFolder = nil
+local function patienceMultiplier()
+	if not eventStateFolder or not eventStateFolder.Parent then
+		eventStateFolder = ReplicatedStorage:FindFirstChild("EventState")
+	end
+	if not eventStateFolder then
+		return 1
+	end
+
+	local value = tonumber(eventStateFolder:GetAttribute("PatienceMultiplier"))
+	if not value or value <= 0 then
+		return 1
+	end
+	return value
 end
 
 ----------------------------------------------------------------
@@ -1804,18 +2398,24 @@ RunService.Heartbeat:Connect(function(dt)
 		refreshScoreboard()
 		return
 	end
-	if shift.State ~= "RUNNING" then return end
+	if not serviceOpen() then return end
 
-	shift.Elapsed += dt
-	local phase = Config.PhaseAt(shift.Elapsed)
-	if phase ~= shift.Phase then
-		shift.Phase = phase
-		print(("[Service] === Phase: %s ==="):format(phase))
+	--// Elapsed freezes at closing time: the clock is done, only the room is
+	--// still working. Phases stop advancing with it.
+	if shift.State == "RUNNING" then
+		shift.Elapsed += dt
+		local phase = Config.PhaseAt(shift.Elapsed)
+		if phase ~= shift.Phase then
+			shift.Phase = phase
+			print(("[Service] === Phase: %s ==="):format(phase))
+		end
+	else
+		shift.ClosingElapsed = (shift.ClosingElapsed or 0) + dt
 	end
 
 	for _, party in pairs(parties) do
 		if party.BarRemaining then
-			party.BarRemaining -= dt
+			party.BarRemaining -= dt * patienceMultiplier()
 			updateBarVisual(party, party.BarRemaining / party.BarTotal)
 			if shouldPublish then publishParty(party) end
 			if party.BarRemaining <= 0 then
@@ -1836,8 +2436,20 @@ RunService.Heartbeat:Connect(function(dt)
 
 	if shift.Reputation <= 0 then
 		endShift(false, "reputation hit zero - the manager is furious")
-	elseif shift.Elapsed >= shift.Length then
-		endShift(true)
+
+	elseif shift.State == "RUNNING" and shift.Elapsed >= shift.Length then
+		--// The clock is up, but the room is not empty yet
+		beginClosing()
+
+	elseif shift.State == "CLOSING" then
+		if closingDone() then
+			endShift(true)
+		elseif shift.ClosingElapsed >= Config.Shift.ClosingMaxSeconds then
+			--// Something is stuck. Close anyway rather than hang the shift.
+			warn(("[Service] closing ran past %ds - ending anyway")
+				:format(Config.Shift.ClosingMaxSeconds))
+			endShift(true)
+		end
 	end
 
 	if shouldPublish then publishShift() end
@@ -1866,6 +2478,7 @@ task.spawn(function()
 
 	shift.State = "RUNNING"
 	shift.Elapsed = 0
+	shift.Till = Config.Money.ShiftStartingTill --// every shift opens at zero
 	publishShift()
 	print(("[Service] === SHIFT START - %s, %ds, target %d parties ===")
 		:format(diff.Label, shift.Length, diff.Rewards.TargetParties))

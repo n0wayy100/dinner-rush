@@ -40,6 +40,7 @@ print("[Events] script started")
 
 local SCHEDULER = Config.Events.Scheduler
 local TOILET = Config.Events.ToiletEmergency
+local OUTAGE = Config.Events.PowerOutage
 
 --// Declared up here because stopToilet writes to it. A local declared further
 --// down would not be in scope for a function defined above it.
@@ -67,6 +68,8 @@ local function publish(activeEvent, phase, fuseRemaining, fuseTotal, alertText)
 end
 
 publish()
+EventState:SetAttribute("PatienceMultiplier", 1) --// 1 = normal drain
+EventState:SetAttribute("PowerOut", false) --// KitchenService freezes cooking on this
 EventState:SetAttribute("Toast", "") --// independent of publish(): a toast may
                                      --// outlive the event that raised it
 
@@ -86,6 +89,28 @@ local function applyRep(amount, why)
 	if bridge then
 		bridge:Invoke(amount, why)
 	end
+end
+
+----------------------------------------------------------------
+-- SHIFT REPORT COUNTERS. ServiceLoop pulls these at shift end through
+-- GetEventStats; we reset them ourselves when a new shift goes RUNNING
+-- (the heartbeat below watches for the transition).
+----------------------------------------------------------------
+local eventStats = {
+	ToiletsPlunged = 0,
+	FiresExtinguished = 0,
+	OutagesFixed = 0,
+	WaterIncidents = 0,
+}
+local lastShiftState = "WAITING"
+
+do
+	local bridge = Instance.new("BindableFunction")
+	bridge.Name = "GetEventStats"
+	bridge.OnInvoke = function()
+		return table.clone(eventStats)
+	end
+	bridge.Parent = ServerStorage
 end
 
 ----------------------------------------------------------------
@@ -452,6 +477,7 @@ function stopToilet(fixedBy)
 
 	if fixedBy then
 		applyRep(TOILET.FixRepReward, "toilet fixed")
+		eventStats.ToiletsPlunged += 1
 		--// ActiveEvent goes empty immediately: the event is over. Only the
 		--// closing message lingers, and only for a moment.
 		publish("", "", 0, 0, ("%s fixed the toilet!"):format(fixedBy.Name))
@@ -802,8 +828,9 @@ local function spreadFrom(sourceBurn, cause)
 			end
 		end
 
+		--// Whatever catches brings its whole appliance with it
 		for _, entry in ipairs(toIgnite) do
-			igniteStation(entry)
+			igniteAppliance(entry, list)
 		end
 		if #toIgnite > 0 then
 			print(("[Events] the fire spread to %d station(s) (%s)"):format(#toIgnite, cause))
@@ -812,6 +839,32 @@ local function spreadFrom(sourceBurn, cause)
 
 	sourceBurn.Remaining = sourceBurn.Total
 	publishFire()
+end
+
+--// Every station on the same physical appliance as this one, itself
+--// included. Anchors with no Appliance name are alone.
+local function applianceGroup(entry, list)
+	local group = { entry }
+	if not entry.Appliance or not list then
+		return group
+	end
+
+	for _, other in ipairs(list) do
+		if other.Id ~= entry.Id and other.Appliance == entry.Appliance then
+			table.insert(group, other)
+		end
+	end
+	return group
+end
+
+--// One stove catches all at once: three burners on one appliance is one
+--// fire, not three that happen to be near each other.
+local function igniteAppliance(entry, list)
+	local group = applianceGroup(entry, list or kitchenStations("List"))
+	for _, member in ipairs(group) do
+		igniteStation(member)
+	end
+	return #group
 end
 
 igniteStation = function(entry)
@@ -900,6 +953,7 @@ igniteStation = function(entry)
 		fire.AlertOverride = ("%s threw water on a grease fire!!"):format(player.Name)
 		fire.AlertUntil = os.clock() + FIRE.ToastSeconds
 		showToast(FIRE.WaterTrapMessage)
+		eventStats.WaterIncidents += 1
 		print(("[Events] %s threw water on the %s fire - it spreads!"):format(
 			player.Name, active.Method))
 		spreadFrom(active, "water!!")
@@ -916,6 +970,7 @@ extinguishStation = function(id, player)
 	fire.Count -= 1
 	clearBurnVisuals(burn)
 	kitchenStations("SetDisabled", id, false)
+	eventStats.FiresExtinguished += 1
 	print(("[Events] %s extinguished the %s station (%d still burning)"):format(
 		player.Name, burn.Method, fire.Count))
 
@@ -996,9 +1051,10 @@ local function startFire()
 	end
 	local target = #busy > 0 and busy[math.random(#busy)] or list[math.random(#list)]
 
-	igniteStation(target)
+	local caught = igniteAppliance(target, list)
 	publishFire()
-	print(("[Events] grease fire started on the %s station"):format(target.Method))
+	print(("[Events] grease fire started on the %s station (%d burner(s) alight)")
+		:format(target.Method, caught))
 end
 
 stopFire = function(fixedBy)
@@ -1043,6 +1099,188 @@ stopFire = function(fixedBy)
 
 	print(("[Events] grease fire ended%s"):format(
 		fixedBy and (" (last flame doused by " .. fixedBy.Name .. ")") or ""))
+end
+
+----------------------------------------------------------------
+-- POWER OUTAGE
+--
+-- No fuse and no escalation: the darkness, the reputation bleed and the
+-- faster-melting patience are the whole pressure. Cook stations deliberately
+-- keep working - they are gas, and a second kitchen-disabling event on top of
+-- the grease fire would be too cruel.
+--
+-- Lighting is snapshotted rather than assumed, so restore puts back exactly
+-- what was there, including any light that was already switched off.
+----------------------------------------------------------------
+local Lighting = game:GetService("Lighting")
+
+local outage = {
+	Part = nil,
+	Active = false,
+	DrainAccum = 0,
+	Lights = nil,     -- { {Light=, Enabled=}, ... }
+	Sky = nil,        -- Lighting properties as they were
+	Gui = nil,
+	Prompt = nil,
+}
+
+local function snapshotAndDarken()
+	local saved = {}
+	for _, descendant in ipairs(workspace:GetDescendants()) do
+		if descendant:IsA("PointLight")
+			or descendant:IsA("SpotLight")
+			or descendant:IsA("SurfaceLight") then
+			table.insert(saved, { Light = descendant, Enabled = descendant.Enabled })
+			descendant.Enabled = false
+		end
+	end
+	outage.Lights = saved
+
+	outage.Sky = {
+		Ambient = Lighting.Ambient,
+		OutdoorAmbient = Lighting.OutdoorAmbient,
+		Brightness = Lighting.Brightness,
+	}
+
+	Lighting.Ambient = OUTAGE.DarkAmbient
+	Lighting.OutdoorAmbient = OUTAGE.DarkOutdoorAmbient
+	Lighting.Brightness = OUTAGE.DarkBrightness
+
+	print(("[Events] power out - %d light(s) killed"):format(#saved))
+end
+
+local function restoreLighting()
+	if outage.Lights then
+		for _, entry in ipairs(outage.Lights) do
+			--// The light may have been destroyed mid-outage
+			if entry.Light.Parent then
+				entry.Light.Enabled = entry.Enabled
+			end
+		end
+		outage.Lights = nil
+	end
+
+	if outage.Sky then
+		Lighting.Ambient = outage.Sky.Ambient
+		Lighting.OutdoorAmbient = outage.Sky.OutdoorAmbient
+		Lighting.Brightness = outage.Sky.Brightness
+		outage.Sky = nil
+	end
+end
+
+local function refreshOutageUi()
+	if outage.Gui then
+		outage.Gui.Enabled = outage.Active
+	end
+	if outage.Prompt then
+		outage.Prompt.Enabled = outage.Active
+		if outage.Active then
+			local diff = difficultyBlock()
+			local seconds = OUTAGE.FixChannelSeconds[
+				Config.IsValidDifficulty(shiftInfo().Difficulty) and shiftInfo().Difficulty or "NORMAL"]
+			outage.Prompt.HoldDuration = seconds or OUTAGE.FixChannelSeconds.NORMAL
+		end
+	end
+end
+
+local stopOutage --// forward declared
+
+local function startOutage()
+	if outage.Active or not outage.Part then return end
+
+	outage.Active = true
+	outage.DrainAccum = 0
+	snapshotAndDarken()
+
+	--// Seated bars drain faster while it is dark. ServiceLoop reads this.
+	EventState:SetAttribute("PatienceMultiplier", OUTAGE.PatienceDrainMultiplier)
+
+	--// The stoves die with the lights: KitchenService freezes every pan and
+	--// refuses new cooks while this is true.
+	EventState:SetAttribute("PowerOut", true)
+
+	refreshOutageUi()
+	publish("PowerOutage", "DARK", 0, 0,
+		"The power is out! Someone get to the breaker box!")
+
+	print("[Events] power outage started")
+end
+
+function stopOutage(fixedBy)
+	if not outage.Active then return end
+
+	outage.Active = false
+	outage.DrainAccum = 0
+	restoreLighting()
+	EventState:SetAttribute("PatienceMultiplier", 1)
+	EventState:SetAttribute("PowerOut", false)
+	refreshOutageUi()
+
+	local elapsed = shiftInfo().Elapsed
+	scheduler.LastEndedAt = elapsed
+	scheduler.NextRollAt = elapsed + SCHEDULER.RollIntervalSeconds
+
+	if fixedBy then
+		applyRep(OUTAGE.FixRepReward, "power restored")
+		eventStats.OutagesFixed += 1
+		publish("", "", 0, 0, ("%s got the lights back on!"):format(fixedBy.Name))
+		task.delay(3, function()
+			if not outage.Active then publish() end
+		end)
+	else
+		publish()
+	end
+
+	print(("[Events] power outage ended%s"):format(
+		fixedBy and (" (fixed by " .. fixedBy.Name .. ")") or ""))
+end
+
+local function setupBreaker()
+	outage.Part = firstTaggedPart("BreakerBox")
+	if not outage.Part then
+		warn("[Events] no part tagged BreakerBox - the power outage is disabled")
+		return false
+	end
+
+	local gui = Instance.new("BillboardGui")
+	gui.Name = "BreakerAlert"
+	gui.Size = UDim2.fromOffset(120, 48)
+	gui.StudsOffsetWorldSpace = Vector3.new(0, 3.5, 0)
+	gui.AlwaysOnTop = true
+	gui.Enabled = false
+	gui.Parent = outage.Part
+
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.fromScale(1, 1)
+	label.BackgroundTransparency = 1
+	label.TextScaled = true
+	label.Font = Enum.Font.FredokaOne
+	label.TextColor3 = Color3.fromRGB(255, 235, 120)
+	label.TextStrokeColor3 = Color3.fromRGB(59, 43, 32)
+	label.TextStrokeTransparency = 0
+	label.Text = "!"
+	label.Parent = gui
+
+	outage.Gui = gui
+
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.Name = "RestorePower"
+	prompt.ActionText = "Restore power"
+	prompt.ObjectText = "Breaker box"
+	prompt.MaxActivationDistance = Config.Interaction.PromptRangeStuds
+	prompt.RequiresLineOfSight = Config.Interaction.PromptRequiresLineOfSight
+	prompt.Enabled = false
+	prompt.Parent = outage.Part
+	outage.Prompt = prompt
+
+	--// No tool needed - the whole point is that anyone can run for it
+	prompt.Triggered:Connect(function(player)
+		if not outage.Active then return end
+		stopOutage(player)
+	end)
+
+	print(("[Events] breaker box ready at %s"):format(outage.Part:GetFullName()))
+	return true
 end
 
 ----------------------------------------------------------------
@@ -1096,6 +1334,16 @@ end
 RunService.Heartbeat:Connect(function(dt)
 	local info = shiftInfo()
 
+	--// Fresh shift, fresh report counters
+	if info.State ~= lastShiftState then
+		if info.State == "RUNNING" then
+			for key in pairs(eventStats) do
+				eventStats[key] = 0
+			end
+		end
+		lastShiftState = info.State
+	end
+
 	--// Nothing runs outside a live shift, and anything mid-flight is cleared
 	if info.State ~= "RUNNING" then
 		if toilet.Active then
@@ -1103,6 +1351,9 @@ RunService.Heartbeat:Connect(function(dt)
 		end
 		if fire.Active then
 			stopFire(nil)
+		end
+		if outage.Active then
+			stopOutage(nil)
 		end
 		return
 	end
@@ -1123,6 +1374,15 @@ RunService.Heartbeat:Connect(function(dt)
 				toilet.DrainAccum -= 10
 				applyRep(-TOILET.FloodRepDrainPer10s, "flooded bathroom")
 			end
+		end
+	end
+
+	--// Tick the outage: no fuse, just a steady bleed until someone fixes it
+	if outage.Active then
+		outage.DrainAccum += dt
+		if outage.DrainAccum >= 10 then
+			outage.DrainAccum -= 10
+			applyRep(-OUTAGE.RepDrainPer10s, "power outage")
 		end
 	end
 
@@ -1263,6 +1523,14 @@ task.spawn(function()
 		})
 	elseif hasMount then
 		warn("[Events] GreaseFire not registered - KitchenStationControl bridge never appeared")
+	end
+
+	if setupBreaker() then
+		registerEvent("PowerOutage", {
+			Start = startOutage,
+			Stop = function() stopOutage(nil) end,
+			IsActive = function() return outage.Active end,
+		})
 	end
 
 	local names = {}
