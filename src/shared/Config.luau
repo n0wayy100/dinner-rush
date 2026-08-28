@@ -1072,6 +1072,51 @@ Config.Pass = {
 }
 
 ----------------------------------------------------------------
+-- MUSIC
+--
+-- Client-side by design: every player owns their own music so they can mute
+-- it, and the server spends nothing on it. Nothing here affects gameplay.
+----------------------------------------------------------------
+Config.Music = {
+	Enabled = true,
+
+	--// 0..1. Background music should sit UNDER the prompts and event stings -
+	--// if players turn it off to hear the game, it is too loud.
+	Volume = 0.95,
+
+	--// Seconds to fade between tracks. Long enough not to jolt, short enough
+	--// that a phase change still reads as a change.
+	CrossfadeSeconds = 2.5,
+
+	--// Tapping this mutes/unmutes for that player only.
+	ToggleKey = Enum.KeyCode.M,
+
+	--// Start each playlist on a random track, so the same shift twice does
+	--// not open on the same bar.
+	Shuffle = true,
+
+	--// A track that never loads would end the playlist silently, so give up
+	--// on one and move to the next after this long.
+	LoadTimeoutSeconds = 8,
+
+	--// PLAYLISTS. Each entry is a full asset string:
+	--//     "rbxassetid://1234567890"
+	--//
+	--// More than one id in a list plays them in rotation.
+	--//
+	--// LOBBY ONLY for now. The restaurant gets its own soundtrack later - when
+	--// it does, add its playlists here and a MusicClient in src/game/client
+	--// that calls Music.Play with the right name. The player itself needs no
+	--// changes; it takes any playlist name in this table.
+	Playlists = {
+		Lobby = {
+			-- "rbxassetid://0",
+			"rbxassetid://88152996529508",
+		},
+	},
+}
+
+----------------------------------------------------------------
 -- PERSISTENCE (the savefile)
 ----------------------------------------------------------------
 Config.Profile = {
