@@ -514,6 +514,21 @@ local function setupToilet()
 	prompt.Parent = toilet.Part
 	toilet.Prompt = prompt
 
+	--// FIXER PASSIVE: channels scale per player. Same shared-prompt trick
+	--// as the kitchen's collect holds: scale when THIS player's hold
+	--// begins, restore on release.
+	prompt.PromptButtonHoldBegan:Connect(function(player)
+		local mult = player:GetAttribute("ChannelMult") or 1
+		if mult ~= 1 and toilet.Active then
+			prompt.HoldDuration = channelSecondsFor(difficultyBlock()) * mult
+		end
+	end)
+	prompt.PromptButtonHoldEnded:Connect(function()
+		if toilet.Active then
+			refreshToiletPrompt()
+		end
+	end)
+
 	prompt.Triggered:Connect(function(player)
 		if not toilet.Active then return end
 
@@ -1003,10 +1018,14 @@ onExtinguisherActivated = function(player)
 	if not best then return end
 
 	local diff = difficultyBlock()
+	--// FIXER PASSIVE: the spray channel is per-douse and knows its player,
+	--// so this one scales directly - no prompt trickery needed
+	local channelSeconds = diff.ExtinguishChannelSeconds
+		* (player:GetAttribute("ChannelMult") or 1)
 	best.Dousing = {
 		Player = player,
-		Remaining = diff.ExtinguishChannelSeconds,
-		Total = diff.ExtinguishChannelSeconds,
+		Remaining = channelSeconds,
+		Total = channelSeconds,
 	}
 
 	--// Code-built spray: white steam billowing off the station while the
@@ -1272,6 +1291,22 @@ local function setupBreaker()
 	prompt.Enabled = false
 	prompt.Parent = outage.Part
 	outage.Prompt = prompt
+
+	--// FIXER PASSIVE: same per-player channel scaling as the plunge
+	prompt.PromptButtonHoldBegan:Connect(function(player)
+		local mult = player:GetAttribute("ChannelMult") or 1
+		if mult ~= 1 and outage.Active then
+			local diffName = Config.IsValidDifficulty(shiftInfo().Difficulty)
+				and shiftInfo().Difficulty or "NORMAL"
+			local seconds = OUTAGE.FixChannelSeconds[diffName] or OUTAGE.FixChannelSeconds.NORMAL
+			prompt.HoldDuration = seconds * mult
+		end
+	end)
+	prompt.PromptButtonHoldEnded:Connect(function()
+		if outage.Active then
+			refreshOutageUi()
+		end
+	end)
 
 	--// No tool needed - the whole point is that anyone can run for it
 	prompt.Triggered:Connect(function(player)

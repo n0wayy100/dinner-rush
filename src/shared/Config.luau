@@ -830,6 +830,10 @@ Config.Classes = {
 		IconId = "rbxassetid://79387702760394",
 		FlavorText = "Heard you can burn water. Prove me wrong.",
 		PassiveText = "Collects cooked dishes a little faster",
+		--// FLAT passive values (owner call: levels are a badge for now, no
+		--// per-level scaling until the numbers have been playtested).
+		--// Multiplies the collect-prompt hold on cook stations + the pass.
+		CollectHoldMult = 0.6,
 		UltimateName = "FLASH FRY!",
 		UltimateText = "Instantly cooks the raw ingredient you're holding to PERFECT",
 		--// Levels 1->5: finish the task, then PAY to upgrade. Steps[L] is the
@@ -849,7 +853,12 @@ Config.Classes = {
 		Price = 1500,
 		IconId = "rbxassetid://102266349813244",
 		FlavorText = "Three plates, one arm, zero fear.",
-		PassiveText = "A little quicker on their feet while carrying",
+		PassiveText = "Sprint drains slower and refills faster",
+		--// Owner ruled: the Waiter's passive is STAMINA EFFICIENCY (the old
+		--// "quicker while carrying" text described a perk that never existed).
+		--// SprintClient reads these off replicated Player attributes.
+		StaminaDrainMult = 0.65,
+		StaminaRegenMult = 1.35,
 		UltimateName = "THIRD HAND!",
 		UltimateText = "Carry a third item for the rest of the shift",
 		--// ~10-15 serves per focused shift
@@ -866,6 +875,9 @@ Config.Classes = {
 		IconId = "rbxassetid://99068683562920",
 		FlavorText = "Toilets fear them. Fires respect them.",
 		PassiveText = "Fixes emergencies a little faster",
+		--// Multiplies every event channel: plunge + douse + breaker. Channels
+		--// are chores, not skill windows - legal under THE LAW.
+		ChannelMult = 0.7,
 		UltimateName = "SPEED DIAL!",
 		UltimateText = "Instantly resolves the active emergency",
 		--// ~1-3 event fixes per shift; rarer actions, shorter track
@@ -881,7 +893,11 @@ Config.Classes = {
 		Price = 8000,
 		IconId = "rbxassetid://137270991870999",
 		FlavorText = "Could talk a burnt burger into a five-star review.",
-		PassiveText = "Greetings buy extra patience",
+		PassiveText = "Earns extra on payments they collect",
+		--// Money minted on top of the payment they pick up, plus a bigger
+		--// patience bonus when their recommendation lands.
+		MoneyMult = 1.25,
+		RecommendBonusMult = 2,
 		UltimateName = "SWEET TALK!",
 		UltimateText = "Refills one table's patience by half",
 		--// ~4-8 collected payments per shift

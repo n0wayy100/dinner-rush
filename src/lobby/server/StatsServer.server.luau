@@ -18,7 +18,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local sharedFolder = ReplicatedStorage:WaitForChild("Shared", 10)
 assert(sharedFolder, "[Stats] ReplicatedStorage.Shared not found")
 local Config = require(sharedFolder:WaitForChild("Config", 10))
-local ProfileAPI = require(script.Parent:WaitForChild("ProfileAPI"))
+local ProfileAPI = require(game:GetService("ServerStorage"):WaitForChild("Shared"):WaitForChild("ProfileAPI"))
 
 print("[Stats] script started")
 

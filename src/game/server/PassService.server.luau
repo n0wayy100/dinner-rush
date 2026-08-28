@@ -568,6 +568,18 @@ local function setupSlot(root)
 	prompt.Parent = part
 	slot.Prompt = prompt
 
+	--// CHEF PASSIVE: taking a plated dish off the pass counts as a collect
+	--// hold too (same shared-prompt scaling trick as the cook stations)
+	prompt.PromptButtonHoldBegan:Connect(function(player)
+		local mult = player:GetAttribute("CollectHoldMult") or 1
+		if mult ~= 1 and slot.State == "PLATED" then
+			prompt.HoldDuration = Config.Pass.TakeHoldSeconds * mult
+		end
+	end)
+	prompt.PromptButtonHoldEnded:Connect(function()
+		refreshPrompt(slot)
+	end)
+
 	snapshotTransparency(slot)
 	slots[slot.Id] = slot
 	refreshPrompt(slot)

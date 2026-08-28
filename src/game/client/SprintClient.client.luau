@@ -282,7 +282,10 @@ RunService.Heartbeat:Connect(function(dt)
 			if not held or stamina <= 0 then
 				endSprint()
 			elseif moving then
-				stamina = math.max(0, stamina - Sprint.DrainPerSecond * dt)
+				--// WAITER PASSIVE: drain/regen multipliers arrive as Player
+				--// attributes from the server's ClassService (default 1)
+				stamina = math.max(0, stamina - Sprint.DrainPerSecond
+					* (player:GetAttribute("StaminaDrainMult") or 1) * dt)
 				lastActiveAt = now
 				if stamina <= 0 then
 					endSprint()
@@ -298,7 +301,8 @@ RunService.Heartbeat:Connect(function(dt)
 
 		if not active and stamina < Sprint.StaminaMax
 			and now - lastActiveAt >= Sprint.RegenDelaySeconds then
-			stamina = math.min(Sprint.StaminaMax, stamina + Sprint.RegenPerSecond * dt)
+			stamina = math.min(Sprint.StaminaMax, stamina + Sprint.RegenPerSecond
+				* (player:GetAttribute("StaminaRegenMult") or 1) * dt)
 		end
 	end
 

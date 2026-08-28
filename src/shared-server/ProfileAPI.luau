@@ -1,6 +1,7 @@
 --[[
 	Dinner Rush - ProfileAPI
-	ServerScriptService.Server.ProfileAPI  (ModuleScript)
+	ServerStorage.Shared.ProfileAPI  (ModuleScript - shared by BOTH places;
+	the lobby shops through it, the main game counts and deposits through it)
 
 	THE CONTRACT between the lobby UI and player persistence.
 

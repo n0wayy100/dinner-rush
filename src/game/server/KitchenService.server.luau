@@ -672,6 +672,22 @@ local function setupStation(instance)
 		                  --// is also turned off, this is belt-and-braces
 	}
 
+	--// CHEF PASSIVE. HoldDuration lives on the SHARED prompt, so it cannot
+	--// be per-player by itself: scale it the instant THIS player starts
+	--// holding, restore on release. Two players starting a hold in the same
+	--// frame is a last-writer race we accept - collect holds are 0.4s.
+	--// Only collect-shaped holds scale; tap-to-load and burnt-bin stay flat.
+	prompt.PromptButtonHoldBegan:Connect(function(player)
+		local mult = player:GetAttribute("CollectHoldMult") or 1
+		if mult ~= 1 and (station.State == "COOKING" or station.State == "PERFECT"
+			or station.State == "OVERCOOKED") then
+			prompt.HoldDuration = Config.Kitchen.CollectHoldSeconds * mult
+		end
+	end)
+	prompt.PromptButtonHoldEnded:Connect(function()
+		refreshStationPrompt(station)
+	end)
+
 	prompt.Triggered:Connect(function(player)
 		if station.Disabled then return end
 

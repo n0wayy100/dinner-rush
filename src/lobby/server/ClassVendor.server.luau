@@ -27,7 +27,9 @@ local Players = game:GetService("Players")
 local sharedFolder = ReplicatedStorage:WaitForChild("Shared", 10)
 assert(sharedFolder, "[ClassVendor] ReplicatedStorage.Shared not found")
 local Config = require(sharedFolder:WaitForChild("Config", 10))
-local ProfileAPI = require(script.Parent:WaitForChild("ProfileAPI"))
+--// ProfileAPI moved to ServerStorage.Shared (src/shared-server) so the
+--// MAIN GAME can reach it too - Gap 4 from the class handoff
+local ProfileAPI = require(game:GetService("ServerStorage"):WaitForChild("Shared"):WaitForChild("ProfileAPI"))
 
 local SHOP = Config.ClassShop
 

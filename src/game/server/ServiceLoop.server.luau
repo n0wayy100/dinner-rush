@@ -1474,6 +1474,14 @@ local function collectPayment(tableId, collector)
 	local payment = payments[tableId]
 	if not payment then return end
 	local value = paymentValue(payment)
+
+	--// CHARMER PASSIVE: the collector mints a little extra on top of what
+	--// the party owed (attribute set by ClassService, default 1)
+	local moneyMult = collector:GetAttribute("MoneyMult") or 1
+	if moneyMult ~= 1 then
+		value = math.floor(value * moneyMult)
+	end
+
 	destroyPayment(tableId)
 	addToTill(value, ("payment from table %d"):format(tableId))
 	shift.EarnedTotal += value --// shift-report bookkeeping
@@ -1690,7 +1698,9 @@ local function resolveDialogue(dlg, pickedKey, notifyClient)
 	if pickedKey and dlg.Flow == "recommend" then
 		party.Ticket[1] = pickedKey
 		if Config.Dialogue.RecommendPatienceBonus > 0 then
-			extendBar(party, Config.Dialogue.RecommendPatienceBonus, "great recommendation")
+			--// CHARMER PASSIVE: their recommendations soothe harder
+			local mult = (dlg.Player and dlg.Player:GetAttribute("RecommendBonusMult")) or 1
+			extendBar(party, Config.Dialogue.RecommendPatienceBonus * mult, "great recommendation")
 		end
 	end
 
