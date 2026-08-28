@@ -1,11 +1,13 @@
 --[[
-	Dinner Rush - ProfileAPI  (currently the STUB)
+	Dinner Rush - ProfileAPI
 	ServerScriptService.Server.ProfileAPI  (ModuleScript)
 
-	THE CONTRACT between the lobby UI and player persistence. The real
-	ProfileService (being built in a parallel session) replaces the INSIDES
-	of this module - the interface below must survive exactly as-is, and
-	then the UI never changes.
+	THE CONTRACT between the lobby UI and player persistence.
+
+	This used to be a stub holding everything in memory. It now writes through
+	ServerStorage.Shared.Profiles to the real DataStore. The INTERFACE below is
+	unchanged, which is the whole point of how it was written - ClassVendor,
+	ClassShopClient and StatsServer needed no edits.
 
 	========================  INTERFACE  ========================
 	ProfileAPI.GetSnapshot(player) -> {
@@ -14,74 +16,49 @@
 	    EquippedClass = string,          -- "" = nothing equipped
 	    ClassLevels   = { [classKey] = number },
 	    TaskProgress  = {                -- cumulative career counters, written
-	        PerfectCooks = number,       -- by the MAIN GAME through the real
-	        DishesServed = number,       -- ProfileService (future phase); the
-	        EventChannels = number,      -- lobby only READS them
+	        PerfectCooks = number,       -- by the MAIN GAME
+	        DishesServed = number,
+	        EventChannels = number,
 	        PaymentsCollected = number,
 	        Greetings = number,
 	        Recommendations = number,
 	    },
-	}
-	ProfileAPI.PurchaseClass(player, classKey) -> ok: boolean, reasonText: string?
-	ProfileAPI.EquipClass(player, classKey)    -> ok: boolean, reasonText: string?
-	ProfileAPI.UpgradeClass(player, classKey)  -> ok: boolean, reasonText: string?
-	    -- level-up: requires the class's UpgradeTrack task threshold met
-	    -- (Config.Classes[key].UpgradeTrack.Steps[level]) AND wallet >=
-	    -- Costs[level]. Task gates, money pays - both, always.
-	ProfileAPI.Changed  -> RBXScriptSignal, fires (player) after any change
-
-	--- Stats (the lobby STATS screen; Config.PlayerStats.Registry is the
-	--- single source of truth for keys/defaults) ---
-	GetSnapshot also returns:
-	    Stats      = { [registryKey] = number }  -- merged over registry
-	                                             -- defaults on load, so new
-	                                             -- stats are never nil
+	    Stats = { [registryKey] = number },
 	    BestShifts = { { Grade, Tone, Label, DiffName, Served, Target,
 	                     Net, Seconds, When }, ... }  -- max BestShiftsCap,
 	                                                  -- sorted best-first
+	}
 	ProfileAPI.AddStat(player, key, amount) -> ok
-	    -- THE gameplay write call (e.g. shift end: AddStat(p,
-	    -- "ShiftsCompleted", 1), AddStat(p, "TimeOnFloorSeconds", 480)).
-	    -- Key must exist in the Registry (Stats or TaskProgress source);
-	    -- routed to the right table automatically.
+	    -- THE gameplay write call. Key must exist in the Registry (Stats or
+	    -- TaskProgress source); routed to the right table automatically.
 	ProfileAPI.RecordShift(player, entry) -> ok
-	    -- Insert a Best Shifts candidate; server sorts (Served desc, Net
-	    -- desc) and trims to BestShiftsCap AT INSERT so the saved array
-	    -- has a hard ceiling.
+	ProfileAPI.PurchaseClass(player, classKey) -> ok, reasonText?
+	ProfileAPI.EquipClass(player, classKey)    -> ok, reasonText?
+	ProfileAPI.UpgradeClass(player, classKey)  -> ok, reasonText?
+	ProfileAPI.Changed -> Signal(player)
 	=============================================================
 
-	Rules the real implementation must keep:
-	  * ALL validation server-side IN HERE (valid key, ownership, wallet vs
-	    price, Trainee never buyable). The UI only ever asks.
-	  * New profiles own Trainee by default (there is no tutorial yet; the
-	    "Complete the tutorial!" card state stays unreachable until one
-	    exists - deliberate).
-	  * reasonText is player-facing - keep it short and friendly.
+	Everything here runs on the SERVER and validates against the saved profile.
+	The client never does its own money maths - it renders a snapshot.
 
-	STUB behavior: in-memory only. Dev wallet, Trainee owned, nothing
-	equipped, everything resets on rejoin. It screams in the log when
-	active so it cannot ship silently.
---]]
+	One thing genuinely changed for callers: a profile can be MISSING for a
+	moment after someone joins, while the DataStore is still answering. Reads
+	return an empty snapshot during that window and writes refuse politely,
+	rather than inventing a profile that would later be overwritten.
+]]
 
-local RunService = game:GetService("RunService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerStorage = game:GetService("ServerStorage")
 
 local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
 
-----------------------------------------------------------------
--- THE FLAG. The real ProfileService deletes everything below the
--- interface docs and keeps the same exports.
-----------------------------------------------------------------
-local STUB_MODE = true
-local STUB_WALLET = 5000 --// dev money so purchases are testable in Studio
+local sharedServer = ServerStorage:WaitForChild("Shared", 20)
+local Profiles = sharedServer and require(sharedServer:WaitForChild("Profiles", 20))
 
-if STUB_MODE then
-	if RunService:IsStudio() then
-		warn(("[ProfileAPI] STUB MODE: in-memory profiles, dev wallet %d, resets on rejoin"):format(STUB_WALLET))
-	else
-		warn("[ProfileAPI] !!! STUB is running OUTSIDE Studio - nothing saves and the dev wallet is live. Replace with ProfileService before shipping !!!")
-	end
+if not Profiles then
+	warn("[ProfileAPI] ServerStorage.Shared.Profiles missing - the shop cannot save."
+		.. " Is the Rojo sync complete?")
 end
 
 local ProfileAPI = {}
@@ -89,74 +66,136 @@ local ProfileAPI = {}
 local changed = Instance.new("BindableEvent")
 ProfileAPI.Changed = changed.Event
 
-local profiles = {} --// [userId] = profile (stub: lives only while they do)
+local SETTINGS = Config.Profile
 
-local function profileFor(player)
-	local profile = profiles[player.UserId]
-	if not profile then
-		profile = {
-			Wallet = STUB_MODE and STUB_WALLET or 0,
-			OwnedClasses = { Trainee = true }, --// everyone starts as the Trainee
-			EquippedClass = "",
-			ClassLevels = { Trainee = 1 },
-			--// STUB ONLY: pre-seeded progress so the upgrade flow is testable
-			--// (buy Chef -> Lv2 upgrade is ready, Lv3 is task-blocked)
-			TaskProgress = {
-				PerfectCooks = 22, DishesServed = 9, EventChannels = 4,
-				PaymentsCollected = 3, Greetings = 6, Recommendations = 2,
-			},
+----------------------------------------------------------------
+-- SHAPE
+--
+-- Reconcile fills in keys added to the template, but the Stats table is
+-- driven by a registry rather than the template, so its defaults are merged
+-- here. A stat added to the registry later must come back as its default on
+-- an old profile, never nil.
+----------------------------------------------------------------
 
-			--// Lifetime stats, merged over the registry defaults - the merge
-			--// is the pattern the real ProfileService must keep: a stat added
-			--// to the registry later must come back as its default, not nil
-			Stats = {},
+local function ensureShape(data)
+	data.Stats = data.Stats or {}
+	data.BestShifts = data.BestShifts or {}
+	data.OwnedClasses = data.OwnedClasses or {}
+	data.ClassLevels = data.ClassLevels or {}
+	data.TaskProgress = data.TaskProgress or {}
 
-			--// STUB ONLY: two fake history entries so the panel renders
-			BestShifts = {
-				{ Grade = "GREAT SHIFT!", Tone = "good", Label = "Dinner Rush",
-					DiffName = "NORMAL", Served = 15, Target = 15, Net = 420,
-					Seconds = 510, When = os.time() - 3 * 86400 },
-				{ Grade = "NOT BAD!", Tone = "mid", Label = "Cozy Shift",
-					DiffName = "EASY", Served = 9, Target = 11, Net = 260,
-					Seconds = 495, When = os.time() - 8 * 86400 },
-			},
-		}
-
-		--// Merge registry defaults into Stats (STUB seeds a few for show)
-		for _, entry in ipairs(Config.PlayerStats.Registry) do
-			if entry.Source == "Stats" and profile.Stats[entry.Key] == nil then
-				profile.Stats[entry.Key] = entry.Default
-			end
+	for _, entry in ipairs(Config.PlayerStats.Registry) do
+		if entry.Source == "Stats" and data.Stats[entry.Key] == nil then
+			data.Stats[entry.Key] = entry.Default or 0
+		elseif entry.Source == "TaskProgress" and data.TaskProgress[entry.Key] == nil then
+			data.TaskProgress[entry.Key] = entry.Default or 0
 		end
-		if STUB_MODE then
-			profile.Stats.ShiftsCompleted = 7
-			profile.Stats.ShiftsFailed = 2
-			profile.Stats.CustomersServed = 84
-			profile.Stats.MoneyDeposited = 2350
-			profile.Stats.TimeOnFloorSeconds = 3540
-			profile.Stats.KitchenCrimes = 1
-		end
-		profiles[player.UserId] = profile
 	end
-	return profile
 end
 
-Players.PlayerRemoving:Connect(function(player)
-	profiles[player.UserId] = nil --// stub only: nothing persists, on purpose
-end)
+--// The tutorial that awards the Trainee does not exist yet, so until it does
+--// every profile is handed it on first load. Phase 3 flips the Config flag
+--// and the tutorial grants it instead.
+local function ensureTrainee(player, data)
+	if not SETTINGS.GrantTraineeOnJoin then
+		return false
+	end
+	if data.OwnedClasses.Trainee then
+		return false
+	end
 
-function ProfileAPI.GetSnapshot(player)
-	local profile = profileFor(player)
+	data.OwnedClasses.Trainee = true
+	data.ClassLevels.Trainee = data.ClassLevels.Trainee or 1
+	print(("[ProfileAPI] granted the Trainee to %s"):format(player.Name))
+	return true
+end
+
+--// DEV ONLY, off by default. Writes fake progress into the REAL save so the
+--// upgrade buttons can be exercised without playing shifts. Anything it
+--// grants is permanent for that player - see Config.Profile.DevSeedProgress.
+local function devSeed(player, data)
+	if not SETTINGS.DevSeedProgress or data.DevSeeded then
+		return false
+	end
+
+	data.DevSeeded = true
+	data.Wallet += SETTINGS.DevSeedWallet
+	data.TaskProgress.PerfectCooks = math.max(data.TaskProgress.PerfectCooks or 0, 22)
+	data.TaskProgress.DishesServed = math.max(data.TaskProgress.DishesServed or 0, 25)
+	data.TaskProgress.EventChannels = math.max(data.TaskProgress.EventChannels or 0, 4)
+	data.TaskProgress.PaymentsCollected = math.max(data.TaskProgress.PaymentsCollected or 0, 14)
+
+	warn(("[ProfileAPI] DEV SEED applied to %s - this is written to the REAL save")
+		:format(player.Name))
+	return true
+end
+
+--// nil while the DataStore is still answering, or if they are being kicked
+local function profileFor(player)
+	if not Profiles then
+		return nil
+	end
+
+	local data = Profiles.Get(player)
+	if not data then
+		return nil
+	end
+
+	ensureShape(data)
+	local granted = ensureTrainee(player, data)
+	local seeded = devSeed(player, data)
+	if granted or seeded then
+		changed:Fire(player)
+	end
+	return data
+end
+
+--// What the UI gets when the profile has not arrived yet: a real shape with
+--// nothing in it, so the panel renders empty instead of erroring.
+local function emptySnapshot()
+	local stats, tasks = {}, {}
+	for _, entry in ipairs(Config.PlayerStats.Registry) do
+		if entry.Source == "Stats" then
+			stats[entry.Key] = entry.Default or 0
+		elseif entry.Source == "TaskProgress" then
+			tasks[entry.Key] = entry.Default or 0
+		end
+	end
 	return {
-		Wallet = profile.Wallet,
-		OwnedClasses = table.clone(profile.OwnedClasses),
-		EquippedClass = profile.EquippedClass,
-		ClassLevels = table.clone(profile.ClassLevels),
-		TaskProgress = table.clone(profile.TaskProgress),
-		Stats = table.clone(profile.Stats),
-		BestShifts = table.clone(profile.BestShifts),
+		Wallet = 0,
+		OwnedClasses = {},
+		EquippedClass = "",
+		ClassLevels = {},
+		TaskProgress = tasks,
+		Stats = stats,
+		BestShifts = {},
 	}
 end
+
+----------------------------------------------------------------
+-- READS
+----------------------------------------------------------------
+
+function ProfileAPI.GetSnapshot(player)
+	local data = profileFor(player)
+	if not data then
+		return emptySnapshot()
+	end
+
+	return {
+		Wallet = data.Wallet,
+		OwnedClasses = table.clone(data.OwnedClasses),
+		EquippedClass = data.EquippedClass or "",
+		ClassLevels = table.clone(data.ClassLevels),
+		TaskProgress = table.clone(data.TaskProgress),
+		Stats = table.clone(data.Stats),
+		BestShifts = table.clone(data.BestShifts),
+	}
+end
+
+----------------------------------------------------------------
+-- WRITES
+----------------------------------------------------------------
 
 --// Registry-validated gameplay write: routes the key to the right table.
 --// This is THE call gameplay code makes ("player served a dish", "shift
@@ -177,8 +216,14 @@ function ProfileAPI.AddStat(player, key, amount)
 		return false
 	end
 
-	local profile = profileFor(player)
-	local target = entry.Source == "TaskProgress" and profile.TaskProgress or profile.Stats
+	local data = profileFor(player)
+	if not data then
+		warn(("[ProfileAPI] AddStat: no profile for %s (dropped %s %+d)")
+			:format(player.Name, tostring(key), amount))
+		return false
+	end
+
+	local target = entry.Source == "TaskProgress" and data.TaskProgress or data.Stats
 	target[key] = (target[key] or entry.Default or 0) + amount
 	changed:Fire(player)
 	return true
@@ -189,8 +234,13 @@ end
 function ProfileAPI.RecordShift(player, entry)
 	if type(entry) ~= "table" then return false end
 
-	local profile = profileFor(player)
-	table.insert(profile.BestShifts, {
+	local data = profileFor(player)
+	if not data then
+		warn(("[ProfileAPI] RecordShift: no profile for %s"):format(player.Name))
+		return false
+	end
+
+	table.insert(data.BestShifts, {
 		Grade = tostring(entry.Grade or "?"),
 		Tone = tostring(entry.Tone or "mid"),
 		Label = tostring(entry.Label or ""),
@@ -202,20 +252,29 @@ function ProfileAPI.RecordShift(player, entry)
 		When = tonumber(entry.When) or os.time(),
 	})
 
-	table.sort(profile.BestShifts, function(a, b)
+	table.sort(data.BestShifts, function(a, b)
 		if a.Served ~= b.Served then
 			return a.Served > b.Served
 		end
 		return a.Net > b.Net
 	end)
 
-	while #profile.BestShifts > Config.PlayerStats.BestShiftsCap do
-		table.remove(profile.BestShifts)
+	while #data.BestShifts > Config.PlayerStats.BestShiftsCap do
+		table.remove(data.BestShifts)
 	end
 
 	changed:Fire(player)
 	return true
 end
+
+----------------------------------------------------------------
+-- TRANSACTIONS
+--
+-- Every one of these re-reads the saved profile and does its own maths. The
+-- client's snapshot is a picture, never an authority.
+----------------------------------------------------------------
+
+local NOT_READY = "One moment - still loading your save!"
 
 function ProfileAPI.PurchaseClass(player, classKey)
 	local class = type(classKey) == "string" and Config.Classes[classKey] or nil
@@ -223,23 +282,27 @@ function ProfileAPI.PurchaseClass(player, classKey)
 		return false, "That class does not exist"
 	end
 
-	local profile = profileFor(player)
-	if profile.OwnedClasses[classKey] then
+	local data = profileFor(player)
+	if not data then
+		return false, NOT_READY
+	end
+
+	if data.OwnedClasses[classKey] then
 		return false, "Already owned!"
 	end
 	if classKey == "Trainee" then
 		return false, "Complete the tutorial!" --// never a purchase
 	end
-	if profile.Wallet < class.Price then
-		return false, ("Need %d more coins!"):format(class.Price - profile.Wallet)
+	if data.Wallet < class.Price then
+		return false, ("Need %d more coins!"):format(class.Price - data.Wallet)
 	end
 
-	profile.Wallet -= class.Price
-	profile.OwnedClasses[classKey] = true
-	profile.ClassLevels[classKey] = 1
+	data.Wallet -= class.Price
+	data.OwnedClasses[classKey] = true
+	data.ClassLevels[classKey] = 1
 	changed:Fire(player)
 	print(("[ProfileAPI] %s bought %s for %d (wallet now %d)"):format(
-		player.Name, classKey, class.Price, profile.Wallet))
+		player.Name, classKey, class.Price, data.Wallet))
 	return true
 end
 
@@ -249,15 +312,19 @@ function ProfileAPI.EquipClass(player, classKey)
 		return false, "That class does not exist"
 	end
 
-	local profile = profileFor(player)
-	if not profile.OwnedClasses[classKey] then
+	local data = profileFor(player)
+	if not data then
+		return false, NOT_READY
+	end
+
+	if not data.OwnedClasses[classKey] then
 		return false, "You don't own that yet!"
 	end
-	if profile.EquippedClass == classKey then
+	if data.EquippedClass == classKey then
 		return false, "Already equipped!"
 	end
 
-	profile.EquippedClass = classKey
+	data.EquippedClass = classKey
 	changed:Fire(player)
 	print(("[ProfileAPI] %s equipped %s"):format(player.Name, classKey))
 	return true
@@ -276,33 +343,50 @@ function ProfileAPI.UpgradeClass(player, classKey)
 		return false, "This class doesn't level up"
 	end
 
-	local profile = profileFor(player)
-	if not profile.OwnedClasses[classKey] then
+	local data = profileFor(player)
+	if not data then
+		return false, NOT_READY
+	end
+
+	if not data.OwnedClasses[classKey] then
 		return false, "You don't own that yet!"
 	end
 
-	local level = profile.ClassLevels[classKey] or 1
+	local level = data.ClassLevels[classKey] or 1
 	if level > #track.Steps then
 		return false, "Already max level!"
 	end
 
-	local progress = profile.TaskProgress[track.Counter] or 0
+	local progress = data.TaskProgress[track.Counter] or 0
 	local needed = track.Steps[level]
 	if progress < needed then
 		return false, ("Finish the task first: %s %d/%d"):format(track.Label, progress, needed)
 	end
 
 	local cost = track.Costs[level]
-	if profile.Wallet < cost then
-		return false, ("Need %d more coins!"):format(cost - profile.Wallet)
+	if data.Wallet < cost then
+		return false, ("Need %d more coins!"):format(cost - data.Wallet)
 	end
 
-	profile.Wallet -= cost
-	profile.ClassLevels[classKey] = level + 1
+	data.Wallet -= cost
+	data.ClassLevels[classKey] = level + 1
 	changed:Fire(player)
 	print(("[ProfileAPI] %s upgraded %s to Lv %d (paid %d, wallet now %d)"):format(
-		player.Name, classKey, level + 1, cost, profile.Wallet))
+		player.Name, classKey, level + 1, cost, data.Wallet))
 	return true
 end
+
+----------------------------------------------------------------
+-- The profile lands a moment AFTER the player does, so anyone whose panel
+-- was already open gets one nudge once it arrives.
+----------------------------------------------------------------
+
+Players.PlayerAdded:Connect(function(player)
+	task.spawn(function()
+		if Profiles and Profiles.WaitFor(player, 30) then
+			changed:Fire(player)
+		end
+	end)
+end)
 
 return ProfileAPI

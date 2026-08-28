@@ -1097,7 +1097,7 @@ Config.Profile = {
 		--// actually wants. Deviates from spec 4 deliberately.
 		OwnedClasses = {},            -- ["Chef"] = true
 		ClassLevels = {},             -- ["Chef"] = 1..5
-		EquippedClass = "None",       -- "None" = classless, which is legal
+		EquippedClass = "",           -- "" = classless, which is legal
 
 		--// Cumulative, lifetime. Single-shift challenge counts live in server
 		--// memory (spec 4) - only their completions land here.
@@ -1112,12 +1112,37 @@ Config.Profile = {
 
 		TutorialDone = false,         -- false = next shift runs guided (spec 7)
 
+		--// Set once if DevSeedProgress ever ran on this profile, so a dev seed
+		--// cannot stack every time they rejoin.
+		DevSeeded = false,
+
+		--// Lifetime stats behind the passport screen. Keys and defaults come
+		--// from Config.PlayerStats.Registry and are merged in on load, so a
+		--// stat added to the registry later appears on old profiles too.
+		Stats = {},
+
+		--// Best shifts, sorted and trimmed to PlayerStats.BestShiftsCap at
+		--// insert - the saved array has a hard ceiling forever.
+		BestShifts = {},
+
 		--// Absorbed from the lobby (spec 3) - one profile per player, not one
 		--// per feature. Neither system is built yet; the keys are here so the
 		--// schema does not need a migration when they are.
 		RedeemedCodes = {},           -- ["CODE"] = true
 		DailyGift = { LastClaim = 0, Streak = 0 },
 	},
+
+	--// The tutorial that awards the Trainee is a later phase. Until it exists
+	--// every profile is handed the Trainee on first load, so the CLASSES
+	--// screen is never empty. Phase 3 sets this false and the tutorial grants it.
+	GrantTraineeOnJoin = true,
+
+	--// DEV ONLY. Fills TaskProgress with fake numbers so the class upgrade
+	--// buttons can be tested without playing shifts first.
+	--// WARNING: this writes into the REAL save. Anything it grants is
+	--// permanent for that player. Off unless you are deliberately testing.
+	DevSeedProgress = false,
+	DevSeedWallet = 0,            -- coins granted on first load when seeding
 }
 
 ----------------------------------------------------------------

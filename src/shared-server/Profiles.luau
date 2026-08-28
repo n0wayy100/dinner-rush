@@ -326,14 +326,18 @@ function Profiles.GrantClass(player, classKey)
 	return true
 end
 
---// "None" is always allowed - classless play is legal (spec 2).
+--// "" (and "None") are always allowed - classless play is legal (spec 2).
 function Profiles.SetEquipped(player, classKey)
 	local data = Profiles.Get(player)
 	if not data then
 		return false
 	end
 
-	if classKey ~= "None" and not data.OwnedClasses[classKey] then
+	if classKey == "None" then
+		classKey = "" --// one representation of "nothing equipped", not two
+	end
+
+	if classKey ~= "" and not data.OwnedClasses[classKey] then
 		warn(("[Profiles] %s tried to equip unowned %s"):format(player.Name, tostring(classKey)))
 		return false
 	end
