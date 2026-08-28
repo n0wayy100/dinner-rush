@@ -108,8 +108,22 @@ LeaveButton.Selectable = true
 SetPartyVisible(false)
 
 QueueRemote.OnClientEvent:Connect(function(Action)
-    if Action == "JoinParty" or Action == "HostParty" then
+    if Action == "JoinParty" then
+        --// Joiners never see the settings panel, so their Leave button is
+        --// ready the moment they are in.
         SetPartyVisible(true)
+
+    elseif Action == "HostParty" then
+        --// The host is looking at the party settings panel right now. Two
+        --// buttons over the same corner of the screen read as one broken
+        --// button, so Leave stays hidden and the panel's X is their way out
+        --// until the party exists (see PartySettings).
+        SetPartyVisible(false)
+
+    elseif Action == "PartyCreated" then
+        --// Panel is gone, so the host gets the same Leave button as everyone
+        SetPartyVisible(true)
+
     elseif Action == "LeaveParty" then
         SetPartyVisible(false)
     elseif Action == "PartyNotReady" then

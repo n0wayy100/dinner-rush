@@ -220,8 +220,12 @@ createBtn.Activated:Connect(function()
 	})
 end)
 
+--// X IS LEAVE, not just "hide the panel". Closing it any other way would
+--// strand the host in the zone holding it open for everyone with no visible
+--// way out - the Leave button is deliberately hidden until the party exists.
 closeBtn.Activated:Connect(function()
-	setPanelVisible(false)
+	setPanelVisible(false) --// instant feedback; the server confirms with LeaveParty
+	QueueRemote:FireServer("LeaveParty")
 end)
 
 QueueRemote.OnClientEvent:Connect(function(Action, Settings)
