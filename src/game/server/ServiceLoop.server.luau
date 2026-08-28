@@ -842,6 +842,127 @@ end
 --// than a TableId - a grilled steak is a grilled steak, not "table 3's". The
 --// match is therefore ticket-based: does this party still want what you are
 --// holding? Returns the tool and the dish name.
+--// THE PASS. Plates are owned by PassService; ServiceLoop only says where a
+--// served one goes and when it is free again. tableId -> { slotId, ... }
+local platesByTable = {}
+
+local function passBridge(name)
+	local fn = ServerStorage:FindFirstChild(name)
+	if not fn then
+		warn(("[Service] ServerStorage.%s missing - is PassService running?"):format(name))
+	end
+	return fn
+end
+
+local function returnPlates(tableId, why)
+	local held = platesByTable[tableId]
+	if not held then return end
+	platesByTable[tableId] = nil
+
+	local fn = passBridge("PassReturnPlate")
+	if not fn then return end
+	for _, slotId in ipairs(held) do
+		fn:Invoke(slotId, why)
+	end
+end
+
+--// Half a part's height along WORLD Y whatever its own rotation is. Size is
+--// the LOCAL box, so a table top rotated even slightly reports the wrong
+--// height and the plate ends up sunk into it or floating under it.
+local function worldHalfHeight(part)
+	local cf, size = part.CFrame, part.Size
+	return math.abs(cf.RightVector.Y) * (size.X / 2)
+		+ math.abs(cf.UpVector.Y) * (size.Y / 2)
+		+ math.abs(cf.LookVector.Y) * (size.Z / 2)
+end
+
+--// THE REAL TOP SURFACE at a given spot, found by casting down onto it.
+--//
+--// The part tagged Table is not necessarily the surface people eat off - a
+--// table is usually a top sitting on a frame, and the tag may be on either.
+--// Measuring the tagged part put plates underneath the visible top. A ray
+--// finds whatever is actually there, whichever piece is tagged.
+--//
+--// Everything that could be standing on or over the table is filtered out:
+--// customers, players, and plates already served.
+local function surfaceYAt(x, z, startY)
+	local ignore = {}
+
+	for _, player in ipairs(Players:GetPlayers()) do
+		if player.Character then
+			table.insert(ignore, player.Character)
+		end
+	end
+	for _, plate in ipairs(CollectionService:GetTagged("PassSlot")) do
+		table.insert(ignore, plate)
+	end
+	for _, party in pairs(parties) do
+		if party.Members then
+			for _, member in ipairs(party.Members) do
+				table.insert(ignore, member)
+			end
+		end
+		if party.Pawn then
+			table.insert(ignore, party.Pawn)
+		end
+	end
+
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = ignore
+	params.IgnoreWater = true
+
+	--// Start above head height for a table and cast well past the floor
+	local hit = workspace:Raycast(
+		Vector3.new(x, startY + 12, z),
+		Vector3.new(0, -24, 0),
+		params)
+
+	return hit and hit.Position.Y or nil
+end
+
+--// Where a served plate lands: on the table, in front of the customer whose
+--// dish it is. Seat order matches serve order - the game has no per-customer
+--// ticket, so dish 1 goes to seat 1.
+local function platePlacement(tableId, seatIndex)
+	local tablePart = tableById[tableId]
+	if not tablePart then return nil end
+
+	local seats = seatPositions(tablePart, math.max(seatIndex, 1))
+	local seat = seats[seatIndex] or seats[#seats]
+	if not seat then return nil end
+
+	local centre = tablePart.Position
+	local boxTop = centre.Y + worldHalfHeight(tablePart)
+
+	--// Horizontal direction from the middle of the table out toward the seat
+	local flat = Vector3.new(seat.X - centre.X, 0, seat.Z - centre.Z)
+	local distance = flat.Magnitude
+	local lift = Config.Pass.TablePlateLiftStuds
+
+	if distance < 0.01 then
+		local y = surfaceYAt(centre.X, centre.Z, boxTop) or boxTop
+		return CFrame.new(Vector3.new(centre.X, y + lift, centre.Z))
+	end
+	local direction = flat / distance
+
+	--// HOW FAR OUT WE MAY GO. Seats sit SeatOffsetStuds from the middle, which
+	--// is further than the table is wide - walking that fraction blindly puts
+	--// the plate off the edge, and with no collision it just hangs in the air
+	--// looking like it is under the table. So clamp to the table's own extent
+	--// along this direction, minus a margin so the plate is not half off.
+	local reach = math.abs(direction:Dot(tablePart.CFrame.RightVector)) * (tablePart.Size.X / 2)
+		+ math.abs(direction:Dot(tablePart.CFrame.LookVector)) * (tablePart.Size.Z / 2)
+	local limit = math.max(reach - Config.Pass.TablePlateEdgeMargin, 0)
+
+	local out = math.min(distance * Config.Pass.TablePlateInset, limit)
+	local spot = centre + direction * out
+
+	--// Ray first, measured box as the fallback if nothing was hit
+	local y = surfaceYAt(spot.X, spot.Z, boxTop) or boxTop
+	return CFrame.new(Vector3.new(spot.X, y + lift, spot.Z))
+end
+
 local function findTicketDish(player, party)
 	if not party.Ticket then return nil end
 
@@ -1074,6 +1195,10 @@ local function seatedWalkout(party)
 	removeBar(party)
 	local tid = party.TableId
 	if tid then
+		--// A party can storm out after eating one dish of two, so plates may
+		--// be on this table. No payment is coming, so free them here or they
+		--// would never come back.
+		returnPlates(tid, "party stormed out")
 		tableOccupant[tid] = nil
 		party.TableId = nil
 		refreshTablePrompt(tid)
@@ -1352,6 +1477,9 @@ local function collectPayment(tableId, collector)
 	destroyPayment(tableId)
 	addToTill(value, ("payment from table %d"):format(tableId))
 	shift.EarnedTotal += value --// shift-report bookkeeping
+
+	--// THE PLATE RULE: a plate is only free once its table has paid up.
+	returnPlates(tableId, "payment collected")
 	print(("[Service] %s banked %d coins (Table %d)"):format(
 		collector.Name, value, tableId))
 end
@@ -1731,6 +1859,15 @@ local function setupTable(tableId, tablePart)
 				return
 			end
 
+			--// THE PASS. A bare dish carried straight from the grill cannot be
+			--// served - it has to go through a plate first.
+			local plateSlot = dish:GetAttribute("PlateSlot")
+			if Config.Pass.RequirePlateToServe and not plateSlot then
+				prompt.ObjectText = "Plate it at the pass first"
+				task.delay(1.5, function() refreshTablePrompt(tableId) end)
+				return
+			end
+
 			--// Quality rides on the Tool from KitchenService and decides both
 			--// the tip multiplier and the reputation on this dish
 			local quality = dish:GetAttribute("Quality")
@@ -1746,6 +1883,28 @@ local function setupTable(tableId, tablePart)
 			end
 
 			dish:Destroy()
+
+			--// The plate stays with the table until the payment is collected.
+			--// Seat order follows serve order: there is no per-customer ticket,
+			--// so dish 1 lands in front of seat 1.
+			if plateSlot then
+				local held = platesByTable[tableId]
+				if not held then
+					held = {}
+					platesByTable[tableId] = held
+				end
+				table.insert(held, plateSlot)
+
+				local place = passBridge("PassPlaceOnTable")
+				local where = platePlacement(tableId, #held)
+				if place and where then
+					place:Invoke(plateSlot, where)
+				elseif place then
+					--// No table part to aim at: send it straight home rather
+					--// than leaving a plate stranded in hiding.
+					returnPlates(tableId, "no placement")
+				end
+			end
 
 			--// Remove that one dish from the ticket
 			local index = table.find(party.Ticket, dishName)
@@ -2031,6 +2190,19 @@ local function endShift(success, reason)
 	end
 	for _, tableId in ipairs(paymentTables) do
 		destroyPayment(tableId)
+	end
+
+	--// Never start the next shift short of plates. Anything still out - on a
+	--// table, or in the hands of someone who logged off at the buzzer - comes
+	--// home now.
+	if Config.Pass.ReclaimOnShiftEnd then
+		for tableId in pairs(platesByTable) do
+			returnPlates(tableId, "shift ended")
+		end
+		local reset = passBridge("PassReturnAll")
+		if reset then
+			reset:Invoke("shift ended")
+		end
 	end
 	if uncollected > 0 then
 		addToTill(uncollected, "uncollected table payments")
