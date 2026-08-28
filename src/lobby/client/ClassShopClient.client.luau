@@ -109,8 +109,10 @@ grad.Rotation = 90
 grad.Color = ColorSequence.new(Color3.new(1, 1, 1), WARM)
 grad.Parent = leftPanel
 
---// The CLASSES sticker rides the panel's top edge
-local title = makeText(root, "Title", Enum.Font.FredokaOne, CHOC)
+--// The CLASSES sticker rides the panel's top edge. White with a chocolate
+--// outline, like the lobby's FREE!/CODES! stickers - chocolate-on-mustard
+--// read as a dark smudge (owner feedback).
+local title = makeText(root, "Title", Enum.Font.FredokaOne, Color3.new(1, 1, 1))
 title.AnchorPoint = Vector2.new(0, 0.5)
 title.Position = UDim2.fromScale(0.03, 0.115)
 title.Size = UDim2.fromScale(0.16, 0.065)
@@ -118,6 +120,8 @@ title.BackgroundTransparency = 0
 title.BackgroundColor3 = MUSTARD
 title.Rotation = -2
 title.Text = "CLASSES"
+title.TextStrokeColor3 = CHOC
+title.TextStrokeTransparency = 0
 stylize(title, 2.5)
 
 local list = Instance.new("ScrollingFrame")
@@ -186,6 +190,11 @@ dIcon.BackgroundColor3 = Color3.new(1, 1, 1)
 dIcon.ScaleType = Enum.ScaleType.Fit
 dIcon.Parent = detail
 stylize(dIcon, 2)
+
+--// The class stickers are square 512s; keep their frame square too
+local dIconAspect = Instance.new("UIAspectRatioConstraint")
+dIconAspect.AspectRatio = 1
+dIconAspect.Parent = dIcon
 
 local dInitial = makeText(dIcon, "Initial", Enum.Font.FredokaOne, CHOC)
 dInitial.Size = UDim2.fromScale(1, 1)
@@ -308,7 +317,9 @@ local function makeButton(name)
 	button.BackgroundColor3 = MUSTARD
 	button.Font = Enum.Font.FredokaOne
 	button.TextScaled = true
-	button.TextColor3 = CHOC
+	button.TextColor3 = Color3.new(1, 1, 1)
+	button.TextStrokeColor3 = CHOC
+	button.TextStrokeTransparency = 0.2
 	button.Text = ""
 	button.Parent = detail
 	stylize(button, 2.5)
@@ -322,13 +333,15 @@ upgradeBtn.Visible = false
 ----------------------------------------------------------------
 -- BOTTOM CENTRE: balance + CLOSE, reference-game style
 ----------------------------------------------------------------
-local wallet = makeText(root, "Wallet", Enum.Font.FredokaOne, CHOC)
+local wallet = makeText(root, "Wallet", Enum.Font.FredokaOne, Color3.new(1, 1, 1))
 wallet.AnchorPoint = Vector2.new(0.5, 1)
 wallet.Position = UDim2.fromScale(0.5, 0.89)
 wallet.Size = UDim2.fromScale(0.16, 0.055)
 wallet.BackgroundTransparency = 0
 wallet.BackgroundColor3 = MUSTARD
 wallet.Text = "$ 0"
+wallet.TextStrokeColor3 = CHOC
+wallet.TextStrokeTransparency = 0
 stylize(wallet, 2.5)
 
 local closeBtn = Instance.new("TextButton")
@@ -492,7 +505,7 @@ local function renderDetail()
 			local ready = taskDone and snapshot and snapshot.Wallet >= upgradeCost
 			upgradeBtn.Text = ("UPGRADE · $%d"):format(upgradeCost)
 			upgradeBtn.BackgroundColor3 = ready and GOLD or GREY
-			upgradeBtn.TextColor3 = ready and CHOC or GREY_TEXT
+			upgradeBtn.TextColor3 = ready and Color3.new(1, 1, 1) or GREY_TEXT
 			upgradeBtn.AutoButtonColor = true
 		end
 	else
@@ -526,7 +539,7 @@ local function renderDetail()
 		local short = snapshot and snapshot.Wallet < class.Price
 		actionBtn.Text = ("BUY · $%d"):format(class.Price)
 		actionBtn.BackgroundColor3 = short and GREY or MUSTARD
-		actionBtn.TextColor3 = short and GREY_TEXT or CHOC
+		actionBtn.TextColor3 = short and GREY_TEXT or Color3.new(1, 1, 1)
 		actionBtn.AutoButtonColor = not short
 	end
 end
@@ -609,6 +622,10 @@ local function buildCard(order, classKey)
 	iconBoxStroke.Color = CHOC
 	iconBoxStroke.Parent = iconBox
 
+	local iconBoxAspect = Instance.new("UIAspectRatioConstraint")
+	iconBoxAspect.AspectRatio = 1
+	iconBoxAspect.Parent = iconBox
+
 	local icon = Instance.new("ImageLabel")
 	icon.Size = UDim2.fromScale(1, 1)
 	icon.BackgroundTransparency = 1
@@ -626,7 +643,10 @@ local function buildCard(order, classKey)
 	name.Size = UDim2.fromScale(0.7, 0.36)
 	name.TextXAlignment = Enum.TextXAlignment.Left
 	name.TextStrokeColor3 = CHOC
-	name.TextStrokeTransparency = 0.35
+	name.TextStrokeTransparency = 0
+	--// Card titles drop the "The " - "Chef", not "The Chef" (owner call);
+	--// the detail header keeps the full display name
+	name.Text = (class.Display:gsub("^The ", ""))
 
 	--// Dark pill so the state/price reads on EVERY rarity colour
 	local chip = makeText(frame, "StateChip", Enum.Font.GothamBold, Color3.new(1, 1, 1))

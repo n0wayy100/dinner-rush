@@ -64,12 +64,17 @@ local bubbleLabel, bubbleGui
 local bubbleSerial = 0
 
 local function buildVendorUi(root)
-	--// Floating nametag, in the lobby's chunky sticker style
+	--// Floating nametag, in the lobby's chunky sticker style.
+	--// STUDS-sized, not pixel-sized: pixel billboards stay the same size on
+	--// screen at any distance, which made CLASSES loom over the whole street.
+	--// Studs shrink with perspective like a real sign, MaxDistance hides it
+	--// entirely from afar, and walls are allowed to occlude it.
 	local tag = Instance.new("BillboardGui")
 	tag.Name = "VendorTag"
-	tag.Size = UDim2.fromOffset(160, 44)
+	tag.Size = UDim2.new(5, 0, 1.4, 0)
 	tag.StudsOffsetWorldSpace = Vector3.new(0, 3.6, 0)
-	tag.AlwaysOnTop = true
+	tag.AlwaysOnTop = false
+	tag.MaxDistance = SHOP.TagMaxDistanceStuds
 	tag.Parent = root
 
 	local tagLabel = Instance.new("TextLabel")
@@ -83,12 +88,14 @@ local function buildVendorUi(root)
 	tagLabel.Text = "CLASSES"
 	tagLabel.Parent = tag
 
-	--// Speech bubble: hidden until someone talks
+	--// Speech bubble: hidden until someone talks. Same studs treatment -
+	--// only the player standing at the vendor needs to read it anyway.
 	bubbleGui = Instance.new("BillboardGui")
 	bubbleGui.Name = "VendorBubble"
-	bubbleGui.Size = UDim2.fromOffset(240, 64)
+	bubbleGui.Size = UDim2.new(7, 0, 1.9, 0)
 	bubbleGui.StudsOffsetWorldSpace = Vector3.new(0, 5, 0)
-	bubbleGui.AlwaysOnTop = true
+	bubbleGui.AlwaysOnTop = false
+	bubbleGui.MaxDistance = SHOP.TagMaxDistanceStuds
 	bubbleGui.Enabled = false
 	bubbleGui.Parent = root
 
@@ -134,6 +141,14 @@ local function showGreeting()
 end
 
 local function setupVendor(root)
+	--// Silence the rig's own overhead name ("Shopkeeper") - the CLASSES
+	--// tag is the only label this NPC needs
+	local rigModel = root:FindFirstAncestorOfClass("Model") or root.Parent
+	local rigHumanoid = rigModel and rigModel:FindFirstChildOfClass("Humanoid")
+	if rigHumanoid then
+		rigHumanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+	end
+
 	buildVendorUi(root)
 
 	local prompt = Instance.new("ProximityPrompt")
