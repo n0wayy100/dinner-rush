@@ -32,6 +32,45 @@ local Config = require(sharedFolder:WaitForChild("Config", 10))
 
 print("[Kitchen] script started")
 
+--// Persistence contract - degrade over dying, same as ServiceLoop
+local ProfileAPI
+do
+	local ok, api = pcall(function()
+		return require(game:GetService("ServerStorage"):WaitForChild("Shared", 20):WaitForChild("ProfileAPI", 20))
+	end)
+	if ok and api then
+		ProfileAPI = api
+	else
+		warn("[Kitchen] ProfileAPI unavailable - perfect-cook careers will NOT save")
+		ProfileAPI = { AddStat = function() return false end }
+	end
+end
+
+--// Career + ultimate charge in one call (same shape as ServiceLoop's)
+local function creditStat(player, key, amount)
+	ProfileAPI.AddStat(player, key, amount)
+	local charge = game:GetService("ServerStorage"):FindFirstChild("AddCharge")
+	if charge then
+		pcall(function()
+			charge:Invoke(player, key, amount)
+		end)
+	end
+end
+
+--// COOK TIMING GATE (used by startCook for the compensated timer and by
+--// the collect path to open the minigame - see the cook-timing section)
+local TIMING = Config.CookTiming
+
+local function cookMinigameGated()
+	local bridge = game:GetService("ServerStorage"):FindFirstChild("GetShiftInfo")
+	if not bridge then return false end
+	local ok, info = pcall(function() return bridge:Invoke() end)
+	if not ok or type(info) ~= "table" then return false end
+	local name = Config.IsValidDifficulty(info.Difficulty) and info.Difficulty or "NORMAL"
+	local diff = Config.ForDifficulty(name)
+	return diff.Interactions ~= nil and diff.Interactions.CookMinigame == true
+end
+
 ----------------------------------------------------------------
 -- Remote for the ingredient menu.
 --
@@ -552,11 +591,18 @@ local function startCook(station, player, tool, dishName, recipe)
 
 	tool:Destroy() --// the raw ingredient is consumed
 
+	--// Gated difficulties trade raw cook time for the timing minigame's
+	--// overhead; EASY keeps the frozen full timer
+	local cookTime = timing.CookTime
+	if cookMinigameGated() then
+		cookTime = math.max(cookTime * TIMING.MinigameCookTimeMult, TIMING.MinCookSeconds)
+	end
+
 	station.State = "COOKING"
 	station.Dish = dishName
 	station.Elapsed = 0
-	station.CookTime = timing.CookTime
-	station.PerfectUntil = timing.CookTime + timing.PerfectWindow
+	station.CookTime = cookTime
+	station.PerfectUntil = cookTime + timing.PerfectWindow
 	station.OvercookedUntil = station.PerfectUntil + timing.OvercookAfter
 	station.BurntAt = station.OvercookedUntil + timing.BurntAfter
 
@@ -592,9 +638,218 @@ local function collect(station, player)
 	})
 	tool.Parent = character
 
+	--// The perfect COLLECT is the skill moment - career and ultimate charge
+	--// credit here, at the pan, not later at the table (owner call)
+	if quality == "Perfect" then
+		creditStat(player, "PerfectCooks", 1)
+	end
+
 	print(("[Kitchen] %s collected a %s %s"):format(player.Name, quality, dishName))
 	clearStation(station)
 end
+
+----------------------------------------------------------------
+-- THE COOK TIMING GAME (gated by Difficulty.Interactions.CookMinigame -
+-- EASY keeps the frozen window-collect and never sees this).
+-- Replaces the COLLECT step only: an arrow ping-pongs across a bar, the
+-- GREEN zone lands somewhere new every swing, and the SERVER keeps its
+-- own clock - a client claim outside StopToleranceSeconds of the server's arrow
+-- is overruled. The dish keeps AGING while the panel is up: a fumbling
+-- cook can still burn it.
+--   green (swing 1) -> Perfect  ·  yellow then green -> Good
+--   yellow then yellow -> Overcooked  ·  red -> swing again
+----------------------------------------------------------------
+local cookTimingRemote = remotes:FindFirstChild("CookTimingRemote")
+if not cookTimingRemote then
+	cookTimingRemote = Instance.new("RemoteEvent")
+	cookTimingRemote.Name = "CookTimingRemote"
+	cookTimingRemote.Parent = remotes
+end
+
+local cookSessions = {} --// [station] = { Player, Stage, GreenCenter, SwingStart, Token }
+local cookToken = 0
+
+--// Where the server says the arrow is, 0..1, ping-ponging
+local function arrowAt(elapsed, sweepSeconds)
+	elapsed = math.max(elapsed, 0)
+	local phase = (elapsed % (sweepSeconds * 2)) / sweepSeconds
+	if phase <= 1 then
+		return phase
+	end
+	return 2 - phase
+end
+
+--// A fresh pace every swing - no metronome to memorise
+local function rollSweepSeconds()
+	return TIMING.SweepSecondsMin
+		+ math.random() * (TIMING.SweepSecondsMax - TIMING.SweepSecondsMin)
+end
+
+--// The green lands anywhere its full zone (plus yellows) fits on the bar
+local function rollGreenCenter()
+	local half = TIMING.GreenWidth / 2 + TIMING.YellowWidth
+	return half + math.random() * (1 - 2 * half)
+end
+
+local function zoneFor(position, greenCenter)
+	local fromGreen = math.abs(position - greenCenter)
+	if fromGreen <= TIMING.GreenWidth / 2 then
+		return "green"
+	elseif fromGreen <= TIMING.GreenWidth / 2 + TIMING.YellowWidth then
+		return "yellow"
+	end
+	return "red"
+end
+
+local function closeCookSession(station, tellClient)
+	local session = cookSessions[station]
+	if not session then return end
+	cookSessions[station] = nil
+	if tellClient and session.Player and session.Player.Parent then
+		cookTimingRemote:FireClient(session.Player, "Close", session.Token)
+	end
+end
+
+--// The minigame's version of collect(): same tool shape, same bookkeeping
+local function grantFromMinigame(station, player, quality)
+	local character = player.Character
+	if not character then return false end
+	if isFull(player) then
+		flash(station.Prompt, ("Hands full (max %d)"):format(carryLimitFor(player)),
+			stationPromptText(station))
+		return false
+	end
+
+	local dishName = station.Dish
+	local recipe = Config.Recipes[dishName]
+	if not recipe then return false end
+
+	local tool = makeTool(recipe.Display, recipe.Icon, recipe.Color, {
+		Dish = dishName,
+		Quality = quality,
+	})
+	tool.Parent = character
+
+	if quality == "Perfect" then
+		creditStat(player, "PerfectCooks", 1) --// the Chef's moment, as ever
+	end
+
+	print(("[Kitchen] %s timed a %s %s off the arrow"):format(player.Name, quality, dishName))
+	clearStation(station)
+	return true
+end
+
+local function beginCookSession(station, player)
+	local existing = cookSessions[station]
+	if existing then
+		if existing.Player ~= player then
+			flash(station.Prompt, "Being collected!", stationPromptText(station))
+		end
+		return
+	end
+
+	cookToken += 1
+	local session = {
+		Player = player,
+		Stage = 1,
+		GreenCenter = rollGreenCenter(),
+		SweepSeconds = rollSweepSeconds(),
+		SwingStart = os.clock(),
+		Token = cookToken,
+	}
+	cookSessions[station] = session
+
+	cookTimingRemote:FireClient(player, "Open", {
+		Token = session.Token,
+		Stage = 1,
+		GreenCenter = session.GreenCenter,
+		SweepSeconds = session.SweepSeconds,
+		StationPosition = station.Part.Position,
+	})
+
+	--// An abandoned panel must never lock the pan
+	local myToken = session.Token
+	task.delay(TIMING.TimeoutSeconds, function()
+		local live = cookSessions[station]
+		if live and live.Token == myToken then
+			print("[Kitchen] timing panel timed out - station freed")
+			closeCookSession(station, true)
+		end
+	end)
+end
+
+local function findCookSession(player, token)
+	for station, session in pairs(cookSessions) do
+		if session.Token == token and session.Player == player then
+			return station, session
+		end
+	end
+	return nil, nil
+end
+
+cookTimingRemote.OnServerEvent:Connect(function(player, action, token, claimed)
+	if action == "Abandon" then
+		local station = findCookSession(player, token)
+		if station then
+			closeCookSession(station, false)
+		end
+		return
+	end
+	if action ~= "Stop" then return end
+
+	local station, session = findCookSession(player, token)
+	if not station then return end
+
+	--// The dish must still be sitting there collectable (not burnt away,
+	--// not wiped by a grease fire)
+	if station.State ~= "PERFECT" and station.State ~= "OVERCOOKED" then
+		closeCookSession(station, true)
+		return
+	end
+
+	--// SERVER CLOCK RULES: honour the claim only within tolerance.
+	--// Tolerance is lag in seconds converted to bar distance at THIS
+	--// swing's speed, so a fast swing forgives the same ping
+	local expected = arrowAt(os.clock() - session.SwingStart, session.SweepSeconds)
+	local tolerance = TIMING.StopToleranceSeconds / session.SweepSeconds
+	local position = tonumber(claimed)
+	if not position or math.abs(position - expected) > tolerance then
+		position = expected
+	end
+	position = math.clamp(position, 0, 1)
+
+	local zone = zoneFor(position, session.GreenCenter)
+	local done, quality = false, nil
+
+	if zone == "green" then
+		done = true
+		quality = session.Stage == 1 and "Perfect" or "Good"
+	elseif zone == "yellow" then
+		if session.Stage == 1 then
+			session.Stage = 2 --// one more swing to save the dish
+		else
+			done = true
+			quality = "Overcooked"
+		end
+	end
+	--// red: same stage, swing again
+
+	if done then
+		cookTimingRemote:FireClient(player, "Result", token, zone, quality)
+		grantFromMinigame(station, player, quality)
+		closeCookSession(station, true)
+		return
+	end
+
+	--// Next swing: fresh green, fresh pace, and the server clock waits
+	--// out the client's result flash so both arrows launch together
+	session.GreenCenter = rollGreenCenter()
+	session.SweepSeconds = rollSweepSeconds()
+	session.SwingStart = os.clock() + TIMING.ResultFlashSeconds
+	cookTimingRemote:FireClient(player, "Result", token, zone, nil)
+	cookTimingRemote:FireClient(player, "Sweep", token,
+		session.Stage, session.GreenCenter, session.SweepSeconds)
+end)
 
 --// Wipes whatever is on the pan. Used by the grease fire.
 local function cancelCook(station)
@@ -716,8 +971,14 @@ local function setupStation(instance)
 		elseif station.State == "COOKING" then
 			flash(prompt, "Not ready yet", stationPromptText(station))
 
+		elseif station.State == "BURNT" then
+			collect(station, player) --// binning stays a plain hold everywhere
+
+		elseif cookMinigameGated() then
+			beginCookSession(station, player) --// gated: the arrow decides quality
+
 		else
-			collect(station, player)
+			collect(station, player) --// EASY: the frozen window-collect
 		end
 	end)
 

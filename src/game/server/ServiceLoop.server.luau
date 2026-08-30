@@ -1563,9 +1563,11 @@ local function createPayment(party, tableId)
 	--// Exactly the money the old instant flow would have paid - same
 	--// math, just deferred to the collect point.
 	local perfect = party.PerfectDishes or 0
+	local good = party.GoodDishes or 0
 	local overcooked = party.OvercookedDishes or 0
-	local served = math.max(perfect + overcooked, 1)
+	local served = math.max(perfect + good + overcooked, 1)
 	local qualityMult = ((perfect * Config.Kitchen.PerfectPayMult)
+		+ (good * Config.Kitchen.GoodPayMult)
 		+ (overcooked * Config.Kitchen.OvercookedPayMult)) / served
 
 	local payout = math.floor(BASE_COINS_PER_PARTY * party.Size * diff.Rewards.CoinMult
@@ -1948,8 +1950,12 @@ local function setupTable(tableId, tablePart)
 			if quality == "Perfect" then
 				party.PerfectDishes = (party.PerfectDishes or 0) + 1
 				shift.PerfectCooks += 1 --// shift-report bookkeeping
-				creditStat(player, "PerfectCooks", 1) --// the Chef's career
+				--// (career + charge for the perfect credit at the COLLECT
+				--// moment in KitchenService now - not here at the serve)
 				repChange(Config.Reputation.PerfectDish, "perfect dish")
+			elseif quality == "Good" then
+				--// The cook minigame's middle tier: solid pay, no rep swing
+				party.GoodDishes = (party.GoodDishes or 0) + 1
 			elseif quality == "Overcooked" then
 				party.OvercookedDishes = (party.OvercookedDishes or 0) + 1
 				if Config.Kitchen.OvercookedRep ~= 0 then

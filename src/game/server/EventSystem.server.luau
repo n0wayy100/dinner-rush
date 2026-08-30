@@ -444,10 +444,16 @@ local function refreshToiletPrompt()
 	local diff = difficultyBlock()
 	toilet.Prompt.ActionText = "Plunge"
 	toilet.Prompt.ObjectText = toilet.Phase == "FLOODED" and "Flooded!" or "Overflowing!"
-	toilet.Prompt.HoldDuration = channelSecondsFor(diff)
+	if diff.Interactions and diff.Interactions.PlungeMinigame then
+		toilet.Prompt.HoldDuration = 0 --// gated: a TAP opens the tapping panel
+	else
+		toilet.Prompt.HoldDuration = channelSecondsFor(diff) --// EASY (frozen)
+	end
 end
 
 local stopToilet --// forward declared, the scheduler needs it too
+local cancelPlungeSession --// forward declared (plunge-tap section, below stopToilet)
+local beginPlungeSession --// forward declared (same section)
 
 local function startToilet()
 	local diff = difficultyBlock()
@@ -469,6 +475,9 @@ end
 local function floodToilet()
 	toilet.Phase = "FLOODED"
 	toilet.Remaining = 0
+	if cancelPlungeSession then
+		cancelPlungeSession() --// the flooded deal needs more taps - re-open
+	end
 	spawnFlood()
 	applyRep(-TOILET.FloodInstantRepHit, "toilet flood")
 
@@ -488,6 +497,9 @@ function stopToilet(fixedBy)
 	toilet.Remaining = 0
 	toilet.Total = 0
 	toilet.DrainAccum = 0
+	if cancelPlungeSession then
+		cancelPlungeSession() --// an open tap panel closes with the event
+	end
 	clearPuddles()
 	refreshToiletUi()
 	refreshToiletPrompt()
@@ -521,6 +533,138 @@ function stopToilet(fixedBy)
 		math.floor(elapsed + SCHEDULER.MinGapSeconds)))
 end
 
+----------------------------------------------------------------
+-- THE PLUNGE TAP (gated by Difficulty.Interactions.PlungeMinigame -
+-- EASY keeps the frozen channel hold). Spam tap/click fills a bar that
+-- leaks while you rest. The server counts its OWN taps - rate-capped
+-- against autoclickers, plunger-in-hand and proximity re-checked every
+-- tap - and a full bar exits through stopToilet's normal success path.
+-- One plumber at a time; every exit path frees the toilet.
+----------------------------------------------------------------
+local PLUNGE = Config.PlungeTap
+
+local plungeRemoteFolder = ReplicatedStorage:FindFirstChild("Remotes")
+if not plungeRemoteFolder then
+	plungeRemoteFolder = Instance.new("Folder")
+	plungeRemoteFolder.Name = "Remotes"
+	plungeRemoteFolder.Parent = ReplicatedStorage
+end
+
+local plungeRemote = plungeRemoteFolder:FindFirstChild("PlungeRemote")
+if not plungeRemote then
+	plungeRemote = Instance.new("RemoteEvent")
+	plungeRemote.Name = "PlungeRemote"
+	plungeRemote.Parent = plungeRemoteFolder
+end
+
+local plungeSession = nil --// { Player, Fill, TapsNeeded, LastTapAt, Token }
+local plungeToken = 0
+
+cancelPlungeSession = function()
+	if not plungeSession then return end
+	local session = plungeSession
+	plungeSession = nil
+	if session.Player and session.Player.Parent then
+		plungeRemote:FireClient(session.Player, "Close", session.Token, false)
+	end
+end
+
+beginPlungeSession = function(player)
+	--// One plumber at a time
+	if plungeSession then
+		if plungeSession.Player ~= player and toilet.Prompt then
+			toilet.Prompt.ObjectText = "Being plunged!"
+			task.delay(1.5, function()
+				if toilet.Active then
+					refreshToiletPrompt()
+				end
+			end)
+		end
+		return
+	end
+
+	local tapsNeeded = PLUNGE.TapsToFill
+	if toilet.Phase == "FLOODED" then
+		tapsNeeded *= PLUNGE.FloodTapsMultiplier
+	end
+	--// FIXER PASSIVE in tap grammar: ChannelMult trims the taps needed
+	tapsNeeded = math.max(1, math.ceil(tapsNeeded * (player:GetAttribute("ChannelMult") or 1)))
+
+	plungeToken += 1
+	plungeSession = {
+		Player = player,
+		Fill = 0,
+		TapsNeeded = tapsNeeded,
+		LastTapAt = os.clock(),
+		Token = plungeToken,
+	}
+
+	plungeRemote:FireClient(player, "Open", {
+		Token = plungeToken,
+		FillPerTap = 1 / tapsNeeded, --// lets the client bump optimistically
+		ToiletPosition = toilet.Part and toilet.Part.Position or Vector3.zero,
+	})
+
+	--// An abandoned panel must never deadlock the toilet
+	local myToken = plungeToken
+	task.delay(PLUNGE.TimeoutSeconds, function()
+		if plungeSession and plungeSession.Token == myToken then
+			print("[Events] plunge panel timed out - toilet freed")
+			cancelPlungeSession()
+		end
+	end)
+
+	print(("[Events] %s started plunging (%d taps)"):format(player.Name, tapsNeeded))
+end
+
+plungeRemote.OnServerEvent:Connect(function(player, action, token)
+	local session = plungeSession
+	if not session or session.Token ~= token or session.Player ~= player then return end
+
+	if action == "Abandon" then
+		cancelPlungeSession()
+		return
+	end
+	if action ~= "Tap" then return end
+	if not toilet.Active then
+		cancelPlungeSession()
+		return
+	end
+
+	--// The plunger must still be in hand and the plumber at the bowl
+	local character = player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	if not holdingPlunger(player) or not root or not toilet.Part
+		or (root.Position - toilet.Part.Position).Magnitude > PLUNGE.WalkAwayStuds + 6 then
+		cancelPlungeSession()
+		return
+	end
+
+	--// Rate cap: taps beyond human speed simply don't count
+	local now = os.clock()
+	local sinceLast = now - session.LastTapAt
+	if sinceLast < 1 / PLUNGE.MaxTapsPerSecond then
+		return
+	end
+
+	--// The bar leaked while they rested; this tap pushes it back up
+	session.Fill = math.max(0, session.Fill - PLUNGE.DecayPerSecond * sinceLast)
+	session.Fill += 1 / session.TapsNeeded
+	session.LastTapAt = now
+
+	if session.Fill >= 1 then
+		--// Filled: exit through the SAME success path as EASY's hold -
+		--// reward, career credit, charge and announcement all come free
+		plungeSession = nil --// before stopToilet so its cancel is a no-op
+		plungeRemote:FireClient(player, "Close", session.Token, true)
+		print(("[Events] %s tapped the toilet clear"):format(player.Name))
+		stopToilet(player)
+		return
+	end
+
+	plungeRemote:FireClient(player, "Progress", session.Token, session.Fill)
+end)
+
 local function setupToilet()
 	toilet.Part = firstTaggedPart("Toilet")
 	if not toilet.Part then
@@ -544,9 +688,13 @@ local function setupToilet()
 	--// as the kitchen's collect holds: scale when THIS player's hold
 	--// begins, restore on release.
 	prompt.PromptButtonHoldBegan:Connect(function(player)
+		local diffTable = difficultyBlock()
+		if diffTable.Interactions and diffTable.Interactions.PlungeMinigame then
+			return --// gated: tap-to-open, no hold to scale
+		end
 		local mult = player:GetAttribute("ChannelMult") or 1
 		if mult ~= 1 and toilet.Active then
-			prompt.HoldDuration = channelSecondsFor(difficultyBlock()) * mult
+			prompt.HoldDuration = channelSecondsFor(diffTable) * mult
 		end
 	end)
 	prompt.PromptButtonHoldEnded:Connect(function()
@@ -568,8 +716,13 @@ local function setupToilet()
 			return
 		end
 
-		print(("[Events] %s plunged the toilet"):format(player.Name))
-		stopToilet(player)
+		local diffTable = difficultyBlock()
+		if diffTable.Interactions and diffTable.Interactions.PlungeMinigame then
+			beginPlungeSession(player) --// gated: the tap opens the tapping panel
+		else
+			print(("[Events] %s plunged the toilet"):format(player.Name))
+			stopToilet(player) --// EASY: the channel hold just completed
+		end
 	end)
 
 	print(("[Events] toilet ready at %s"):format(toilet.Part:GetFullName()))
@@ -1222,15 +1375,25 @@ local function refreshOutageUi()
 	if outage.Prompt then
 		outage.Prompt.Enabled = outage.Active
 		if outage.Active then
-			local diff = difficultyBlock()
-			local seconds = OUTAGE.FixChannelSeconds[
-				Config.IsValidDifficulty(shiftInfo().Difficulty) and shiftInfo().Difficulty or "NORMAL"]
-			outage.Prompt.HoldDuration = seconds or OUTAGE.FixChannelSeconds.NORMAL
+			local diffTable = difficultyBlock()
+			if diffTable.Interactions and diffTable.Interactions.BreakerMinigame then
+				--// Gated difficulties: a TAP opens the wire panel
+				outage.Prompt.ActionText = "Fix the wires"
+				outage.Prompt.HoldDuration = 0
+			else
+				--// EASY (frozen): the original channel hold, untouched
+				outage.Prompt.ActionText = "Restore power"
+				local seconds = OUTAGE.FixChannelSeconds[
+					Config.IsValidDifficulty(shiftInfo().Difficulty) and shiftInfo().Difficulty or "NORMAL"]
+				outage.Prompt.HoldDuration = seconds or OUTAGE.FixChannelSeconds.NORMAL
+			end
 		end
 	end
 end
 
 local stopOutage --// forward declared
+local cancelWirePuzzle --// forward declared (wire-fix section, below stopOutage)
+local beginWirePuzzle --// forward declared (same section)
 
 local function startOutage()
 	if outage.Active or not outage.Part then return end
@@ -1258,6 +1421,9 @@ function stopOutage(fixedBy)
 
 	outage.Active = false
 	outage.DrainAccum = 0
+	if cancelWirePuzzle then
+		cancelWirePuzzle() --// an open panel closes with the outage
+	end
 	restoreLighting()
 	EventState:SetAttribute("PatienceMultiplier", 1)
 	EventState:SetAttribute("PowerOut", false)
@@ -1282,6 +1448,144 @@ function stopOutage(fixedBy)
 	print(("[Events] power outage ended%s"):format(
 		fixedBy and (" (fixed by " .. fixedBy.Name .. ")") or ""))
 end
+
+----------------------------------------------------------------
+-- THE WIRE FIX (gated by Difficulty.Interactions.BreakerMinigame - the
+-- first minigame under the EASY FREEZE). The server DEALS the shuffle
+-- and CHECKS the answer; the client only renders and reports taps. One
+-- solver holds the breaker at a time, the outage keeps draining while
+-- they fumble, and every exit path unlocks. EASY never sees any of this.
+----------------------------------------------------------------
+local WIREFIX = Config.WireFix
+
+local wireRemotes = ReplicatedStorage:FindFirstChild("Remotes")
+if not wireRemotes then
+	wireRemotes = Instance.new("Folder")
+	wireRemotes.Name = "Remotes"
+	wireRemotes.Parent = ReplicatedStorage
+end
+
+local wireRemote = wireRemotes:FindFirstChild("WireFixRemote")
+if not wireRemote then
+	wireRemote = Instance.new("RemoteEvent")
+	wireRemote.Name = "WireFixRemote"
+	wireRemote.Parent = wireRemotes
+end
+
+local wirePuzzle = nil --// { Player, RightSlots, Wires, Token }
+local wireToken = 0
+
+cancelWirePuzzle = function()
+	if not wirePuzzle then return end
+	local puzzle = wirePuzzle
+	wirePuzzle = nil
+	if puzzle.Player and puzzle.Player.Parent then
+		wireRemote:FireClient(puzzle.Player, "Close", puzzle.Token)
+	end
+end
+
+beginWirePuzzle = function(player)
+	--// One electrician at a time
+	if wirePuzzle then
+		if wirePuzzle.Player ~= player and outage.Prompt then
+			outage.Prompt.ObjectText = "Being fixed!"
+			task.delay(1.5, function()
+				if outage.Prompt and outage.Active then
+					outage.Prompt.ObjectText = "Breaker box"
+				end
+			end)
+		end
+		return
+	end
+
+	local diffTable = difficultyBlock()
+	local wires = (diffTable.Interactions and diffTable.Interactions.BreakerWires) or 4
+
+	--// FIXER PASSIVE in minigame grammar: one fewer wire to match
+	if player:GetAttribute("ClassKey") == "Fixer" then
+		wires = math.max(WIREFIX.MinWires, wires - WIREFIX.FixerWireDiscount)
+	end
+	wires = math.min(wires, #WIREFIX.Colors)
+
+	--// RightSlots[k] = which LEFT wire's colour sits in right slot k
+	local rightSlots = {}
+	for index = 1, wires do
+		rightSlots[index] = index
+	end
+	for index = wires, 2, -1 do
+		local swap = math.random(index)
+		rightSlots[index], rightSlots[swap] = rightSlots[swap], rightSlots[index]
+	end
+
+	wireToken += 1
+	wirePuzzle = {
+		Player = player,
+		RightSlots = rightSlots,
+		Wires = wires,
+		Token = wireToken,
+	}
+
+	wireRemote:FireClient(player, "Open", {
+		Token = wireToken,
+		Wires = wires,
+		RightSlots = rightSlots, --// the colour layout IS the puzzle
+		BreakerPosition = outage.Part and outage.Part.Position or Vector3.zero,
+	})
+
+	--// An abandoned panel must never deadlock the breaker
+	local myToken = wireToken
+	task.delay(WIREFIX.TimeoutSeconds, function()
+		if wirePuzzle and wirePuzzle.Token == myToken then
+			print("[Events] wire panel timed out - breaker unlocked")
+			cancelWirePuzzle()
+		end
+	end)
+
+	print(("[Events] %s opened the wire panel (%d wires)"):format(player.Name, wires))
+end
+
+wireRemote.OnServerEvent:Connect(function(player, action, token, answer)
+	if action == "Abandon" then
+		if wirePuzzle and wirePuzzle.Token == token and wirePuzzle.Player == player then
+			cancelWirePuzzle()
+		end
+		return
+	end
+	if action ~= "Submit" then return end
+
+	local puzzle = wirePuzzle
+	if not puzzle or puzzle.Token ~= token or puzzle.Player ~= player then return end
+	if not outage.Active then return end
+
+	--// The server's own walk-away check (the client also closes itself)
+	local character = player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	if not root or not outage.Part
+		or (root.Position - outage.Part.Position).Magnitude > WIREFIX.WalkAwayStuds + 6 then
+		cancelWirePuzzle()
+		return
+	end
+
+	--// THE CHECK: answer[leftIndex] = right slot. Every wire must land in
+	--// the slot holding its own colour, each slot used exactly once.
+	if type(answer) ~= "table" then return end
+	local used = {}
+	for leftIndex = 1, puzzle.Wires do
+		local slot = tonumber(answer[leftIndex])
+		if not slot or used[slot] or puzzle.RightSlots[slot] ~= leftIndex then
+			wireRemote:FireClient(player, "Deny", puzzle.Token)
+			return
+		end
+		used[slot] = true
+	end
+
+	--// Solved: exit through the SAME success path as EASY's hold -
+	--// reward, career credit, charge and announcement all come free
+	wirePuzzle = nil
+	wireRemote:FireClient(player, "Close", puzzle.Token)
+	print(("[Events] %s matched every wire - power restored"):format(player.Name))
+	stopOutage(player)
+end)
 
 local function setupBreaker()
 	outage.Part = firstTaggedPart("BreakerBox")
@@ -1340,7 +1644,12 @@ local function setupBreaker()
 	--// No tool needed - the whole point is that anyone can run for it
 	prompt.Triggered:Connect(function(player)
 		if not outage.Active then return end
-		stopOutage(player)
+		local diffTable = difficultyBlock()
+		if diffTable.Interactions and diffTable.Interactions.BreakerMinigame then
+			beginWirePuzzle(player) --// gated: the tap opens the wire panel
+		else
+			stopOutage(player) --// EASY: the channel hold just completed
+		end
 	end)
 
 	print(("[Events] breaker box ready at %s"):format(outage.Part:GetFullName()))

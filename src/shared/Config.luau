@@ -7,7 +7,9 @@
 	catalog, Easy/Normal/Hard, Map Details v2, Rates and Bars (Aug 2026).
 
 	Rules:
-	  * NORMAL is the balance reference. EASY/HARD are defined relative to it.
+	  * THE EASY FREEZE: EASY is the frozen baseline (the game as it felt
+	    Aug 2026). Do not retune EASY values; new mechanics ship EASY-neutral
+	    (weight 0 / flag false / mult 1) and ramp on NORMAL/HARD upward.
 	  * Cooking windows NEVER scale with difficulty (demand scales, not dexterity).
 	  * All timers run on the SERVER; clients only render replicated values.
 
@@ -152,8 +154,11 @@ Config.Kitchen = {
 	--// station's prompt in reach at once and E would fire an arbitrary one.
 	StationPromptRangeStuds = 5,
 
-	--// Payout multipliers applied when the dish is served
+	--// Payout multipliers applied when the dish is served.
+	--// "Good" is the cook-minigame's middle tier (yellow saved by green);
+	--// the yellow-yellow "OK" result reuses the Overcooked tier.
 	PerfectPayMult = 1.5,
+	GoodPayMult = 1.0,
 	OvercookedPayMult = 0.6,
 
 	--// Reputation. PerfectDish already exists in Config.Reputation and is
@@ -324,6 +329,10 @@ Config.Reputation = {
 Config.Difficulty = {
 
 	EASY = {
+		--// FROZEN (THE EASY FREEZE, Aug 2026): these values are the locked
+		--// baseline - EASY must forever feel like the game felt today.
+		--// Tune NORMAL/HARD instead; new mechanics arrive here as neutral
+		--// (weight 0 / false / 1) only.
 		Label = "Cozy Shift",
 		Patience = 1.2,               -- multiplies both bars
 		SpawnRate = 0.8,              -- interval = base / SpawnRate
@@ -368,6 +377,12 @@ Config.Difficulty = {
 			                          -- predated the extinguisher fetch, unwinnable)
 		},
 		Reputation = { SatisfiedParty = 3, VIPSatisfied = 5 },
+		--// THE EASY FREEZE: interactions stay simple here, forever.
+		Interactions = {
+			BreakerMinigame = false,  -- hold-E, as the game shipped
+			CookMinigame = false,     -- window-collect, as the game shipped
+			PlungeMinigame = false,   -- hold-E plunge, as the game shipped
+		},
 		Rewards = {
 			CoinMult = 0.8, CompletionBonus = 100,
 			StreakCap = 2.0, XPMult = 0.9,
@@ -415,6 +430,12 @@ Config.Difficulty = {
 			FireSpreadSeconds = 35,   -- retuned from 8, see EASY note
 		},
 		Reputation = { SatisfiedParty = 2, VIPSatisfied = 4 },
+		Interactions = {
+			BreakerMinigame = true,   -- the wire-matching panel
+			BreakerWires = 4,
+			CookMinigame = true,      -- the timing-arrow collect
+			PlungeMinigame = true,    -- the spam-tap plunge bar
+		},
 		Rewards = {
 			CoinMult = 1.0, CompletionBonus = 150,
 			StreakCap = 2.5, XPMult = 1.0,
@@ -463,6 +484,12 @@ Config.Difficulty = {
 			FireSpreadSeconds = 25,   -- retuned from 6, see EASY note
 		},
 		Reputation = { SatisfiedParty = 2, VIPSatisfied = 4 },
+		Interactions = {
+			BreakerMinigame = true,
+			BreakerWires = 5,         -- one more wire than NORMAL
+			CookMinigame = true,
+			PlungeMinigame = true,
+		},
 		Rewards = {
 			CoinMult = 1.5, CompletionBonus = 250,
 			StreakCap = 3.0, XPMult = 1.25,
@@ -958,6 +985,84 @@ Config.PlayerStats = {
 		{ Key = "KitchenCrimes",     Source = "Stats",        Label = "Kitchen Crimes",     Format = "int",      Default = 0 },
 		{ Key = "ClassesOwned",      Source = "Computed",     Label = "Classes Owned",      Format = "int",      Default = 0 },
 	},
+}
+
+----------------------------------------------------------------
+-- WIRE FIX (the breaker minigame - see EventSystem + WireFixClient).
+-- The first gated interaction under the EASY FREEZE: EASY holds E, the
+-- gated difficulties match wires. The SERVER deals the shuffle and checks
+-- the answer; the client only renders and reports taps. The puzzle is
+-- unfailable by design (only matching colours connect) - the fun is the
+-- fingers, the anti-exploit is the server check.
+----------------------------------------------------------------
+Config.WireFix = {
+	FixerWireDiscount = 1,        -- the Fixer's passive in minigame grammar:
+	                              -- one fewer wire to connect
+	MinWires = 3,                 -- the discount never goes below this
+	TimeoutSeconds = 25,          -- abandoned panel auto-unlocks the breaker
+	WalkAwayStuds = 12,           -- leaving the breaker closes the panel
+
+	--// Wire palette, in deal order (HARD's 5th wire = the 5th colour)
+	Colors = {
+		Color3.fromRGB(229, 72, 77),    -- tomato
+		Color3.fromRGB(245, 184, 65),   -- mustard
+		Color3.fromRGB(76, 175, 109),   -- basil
+		Color3.fromRGB(80, 150, 255),   -- blue
+		Color3.fromRGB(170, 110, 220),  -- grape
+	},
+}
+
+----------------------------------------------------------------
+-- COOK TIMING (the cooking minigame - see KitchenService + CookTimingClient)
+-- Gated by Difficulty.Interactions.CookMinigame (EASY keeps the frozen
+-- window-collect). Replaces the COLLECT step only: the cook timer, the
+-- station flow and the burn threat are untouched. An arrow sweeps a bar;
+-- the GREEN zone sits at a RANDOM position each swing (owner call):
+--   green (1st swing)          -> Perfect
+--   yellow -> green            -> Good
+--   yellow -> yellow           -> Overcooked ("OK")
+--   red                        -> swing again (dish keeps aging - it can
+--                                 still burn under a fumbling cook!)
+-- LAW NOTE (owner-sanctioned): quality comes from the arrow on gated
+-- difficulties. Zone widths are IDENTICAL on every gated difficulty -
+-- the law holds within the mechanic, and EASY's windows are untouched.
+----------------------------------------------------------------
+Config.CookTiming = {
+	--// Every swing rolls a fresh pace from this pool (server-dealt) so
+	--// there is no metronome to memorise - each swing needs a real read.
+	--// Same pool on every gated difficulty (THE LAW).
+	SweepSecondsMin = 0.8,        -- fastest end-to-end arrow pass
+	SweepSecondsMax = 1.4,        -- slowest
+
+	--// The arrow adds seconds per dish, so gated difficulties trade raw
+	--// cook time for it - the late game is hard enough already (owner
+	--// ruling: fry 5s, grill 7s). Follows the GATE, not the difficulty:
+	--// same value on every gated difficulty (THE LAW), EASY untouched.
+	MinigameCookTimeMult = 0.5,   -- CookTime x this where the minigame runs
+	MinCookSeconds = 4,           -- the discount never cuts below this
+	GreenWidth = 0.09,            -- fraction of the bar; NEVER per-difficulty
+	YellowWidth = 0.11,           -- each side of the green
+	StopToleranceSeconds = 0.13,  -- claim-vs-server-clock slack in SECONDS of lag,
+	                              -- so fast swings don't punish ping harder
+	ResultFlashSeconds = 0.6,     -- PERFECT!/GOOD!/OK!/MISS! beat between swings
+	TimeoutSeconds = 20,          -- abandoned panel frees the station
+	WalkAwayStuds = 10,           -- leaving the station closes the panel
+}
+
+----------------------------------------------------------------
+-- THE PLUNGE TAP (Difficulty.Interactions.PlungeMinigame - EASY keeps
+-- the frozen hold-E plunge). Spam tap / left-click to fill the bar;
+-- it leaks while you rest. The SERVER counts its own taps (rate-capped
+-- against autoclickers) and succeeds through stopToilet's normal path.
+-- Same numbers on every gated difficulty (THE LAW).
+----------------------------------------------------------------
+Config.PlungeTap = {
+	TapsToFill = 12,           -- taps to fill the bar (before class scaling)
+	FloodTapsMultiplier = 1.5, -- a FLOODED toilet needs this x more taps
+	DecayPerSecond = 0.10,     -- bar fraction leaking away per idle second
+	MaxTapsPerSecond = 10,     -- server ignores taps faster than this
+	TimeoutSeconds = 20,       -- abandoned panel frees the toilet
+	WalkAwayStuds = 10,        -- wander this far and the panel closes
 }
 
 ----------------------------------------------------------------
