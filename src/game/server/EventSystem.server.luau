@@ -50,7 +50,8 @@ do
 	end
 end
 
---// Career + ultimate charge in one call (same shape as ServiceLoop's)
+--// Career + ultimate charge + hidden score in one call (same shape as
+--// ServiceLoop's; ScoreService quietly counts every credited moment)
 local function creditStat(player, key, amount)
 	ProfileAPI.AddStat(player, key, amount)
 	local charge = ServerStorage:FindFirstChild("AddCharge")
@@ -58,6 +59,10 @@ local function creditStat(player, key, amount)
 		pcall(function()
 			charge:Invoke(player, key, amount)
 		end)
+	end
+	local bus = ServerStorage:FindFirstChild("AddScore")
+	if bus then
+		bus:Fire(player, key, amount)
 	end
 end
 
@@ -852,11 +857,13 @@ end)
 
 ----------------------------------------------------------------
 -- THE GREASE FIRE
--- A cook station ignites (its in-progress dish is destroyed), burns on a
--- per-station fuse, and when any fuse runs out every station within
--- SpreadRadiusStuds of any burning one catches too - chain spread is
--- intended. The extinguisher is the fix, one channel-hold per station.
--- Thrown water is an instant spread plus a lesson on the screen.
+-- A cook station ignites (its in-progress dish is destroyed) under ONE
+-- big blaze covering the whole appliance, burns on a per-station fuse,
+-- and when any fuse runs out every station within SpreadRadiusStuds of
+-- any burning one catches too - chain spread is intended. The
+-- extinguisher is the fix: ONE completed spray clears the ENTIRE fire
+-- however far it spread (owner ruling, Aug 2026 - dousing station by
+-- station dragged). Thrown water is an instant spread plus a lesson.
 --
 -- Stations are driven through ServerStorage.KitchenStationControl -
 -- EventSystem never reaches into KitchenService's internals.
@@ -868,6 +875,7 @@ local fire = {
 	Burning = {},        -- station Id -> burn record
 	Count = 0,
 	DrainAccum = 0,
+	Dousing = nil,       -- the ONE shared spray channel { Player, Remaining, Total, Target }
 	AlertOverride = nil, -- "<player> threw water..." wins the banner briefly
 	AlertUntil = 0,
 }
@@ -885,7 +893,7 @@ local function fireAlertText()
 		return fire.AlertOverride
 	end
 	if fire.Count >= 2 then
-		return ("%d stations are on FIRE! Spray them out!"):format(fire.Count)
+		return ("%d stations ablaze - one good spray clears it all!"):format(fire.Count)
 	end
 	return "GREASE FIRE! Grab the extinguisher and CLICK the flames!"
 end
@@ -970,11 +978,12 @@ local function buildFireUi(part)
 end
 
 local function refreshFireUi(burn)
-	--// Someone is spraying: the bar becomes their basil progress and the
-	--// spread fuse is on hold
-	if burn.Dousing then
-		burn.Label.Text = ("DOUSING... %ds"):format(math.max(0, math.ceil(burn.Dousing.Remaining)))
-		local progress = 1 - math.clamp(burn.Dousing.Remaining / burn.Dousing.Total, 0, 1)
+	--// Someone is spraying: every burning station's bar becomes the one
+	--// shared basil progress, and every spread fuse is on hold
+	local douse = fire.Dousing
+	if douse then
+		burn.Label.Text = ("DOUSING... %ds"):format(math.max(0, math.ceil(douse.Remaining)))
+		local progress = 1 - math.clamp(douse.Remaining / douse.Total, 0, 1)
 		burn.Fill.Size = UDim2.fromScale(progress, 1)
 		burn.Fill.BackgroundColor3 = Color3.fromRGB(76, 175, 109)
 		return
@@ -990,14 +999,14 @@ end
 
 local function clearBurnVisuals(burn)
 	if burn.Gui then burn.Gui:Destroy() end
-	if burn.Fx then burn.Fx:Destroy() end
-	if burn.Light then burn.Light:Destroy() end
-	if burn.Steam then burn.Steam:Destroy() end
+	if burn.Blaze then burn.Blaze:Destroy() end --// takes Fx/Light/Steam with it
 	if burn.WaterPrompt then burn.WaterPrompt:Destroy() end
 end
 
 local igniteStation  --// forward declared: spreadFrom calls it
-local extinguishStation
+local igniteAppliance --// forward declared: spreadFrom calls this one too
+                      --// (a plain local function below it would be invisible
+                      --// to spreadFrom's compiled body - real crash, was live)
 
 --// One fuse ran out (or water was thrown): every station within radius of
 --// ANY burning station catches. The source keeps raging with a fresh fuse,
@@ -1053,7 +1062,7 @@ end
 
 --// One stove catches all at once: three burners on one appliance is one
 --// fire, not three that happen to be near each other.
-local function igniteAppliance(entry, list)
+igniteAppliance = function(entry, list)
 	local group = applianceGroup(entry, list or kitchenStations("List"))
 	for _, member in ipairs(group) do
 		igniteStation(member)
@@ -1070,16 +1079,30 @@ igniteStation = function(entry)
 	kitchenStations("CancelCook", entry.Id)
 	kitchenStations("SetDisabled", entry.Id, true)
 
+	--// ONE big blaze: an invisible pad covering the whole appliance so the
+	--// flames read as one fire engulfing the station, not a candle on the
+	--// small anchor part
+	local blaze = Instance.new("Part")
+	blaze.Name = "GreaseBlaze"
+	blaze.Size = Vector3.new(FIRE.BlazeCoverStuds, 1, FIRE.BlazeCoverStuds)
+	blaze.CFrame = CFrame.new(part.Position + Vector3.new(0, 1, 0))
+	blaze.Anchored = true
+	blaze.CanCollide = false
+	blaze.CanQuery = false
+	blaze.CanTouch = false
+	blaze.Transparency = 1
+	blaze.Parent = workspace
+
 	local fx = Instance.new("Fire")
 	fx.Size = FIRE.FireSize
 	fx.Heat = 12
-	fx.Parent = part
+	fx.Parent = blaze
 
 	local light = Instance.new("PointLight")
 	light.Color = Color3.fromRGB(255, 140, 40)
 	light.Range = FIRE.LightRange
 	light.Brightness = 2
-	light.Parent = part
+	light.Parent = blaze
 
 	local gui, fill, label = buildFireUi(part)
 
@@ -1106,7 +1129,7 @@ igniteStation = function(entry)
 		Total = diff.Consequences.FireSpreadSeconds,
 		Remaining = diff.Consequences.FireSpreadSeconds,
 		Gui = gui, Fill = fill, Label = label,
-		Fx = fx, Light = light,
+		Fx = fx, Light = light, Blaze = blaze,
 		WaterPrompt = waterPrompt,
 	}
 	fire.Burning[entry.Id] = burn
@@ -1148,7 +1171,8 @@ igniteStation = function(entry)
 		fire.AlertUntil = os.clock() + FIRE.ToastSeconds
 		showToast(FIRE.WaterTrapMessage)
 		eventStats.WaterIncidents += 1
-		ProfileAPI.AddStat(player, "KitchenCrimes", 1) --// the permanent record
+		creditStat(player, "KitchenCrimes", 1) --// the permanent record (and
+		                                       --// the hidden score's penalty)
 		print(("[Events] %s threw water on the %s fire - it spreads!"):format(
 			player.Name, active.Method))
 		spreadFrom(active, "water!!")
@@ -1157,77 +1181,60 @@ igniteStation = function(entry)
 	print(("[Events] the %s station is on fire - fuse %ds"):format(entry.Method, burn.Total))
 end
 
-extinguishStation = function(id, player)
-	local burn = fire.Burning[id]
-	if not burn then return end
-
-	fire.Burning[id] = nil
-	fire.Count -= 1
-	clearBurnVisuals(burn)
-	kitchenStations("SetDisabled", id, false)
-	eventStats.FiresExtinguished += 1
-	creditStat(player, "EventChannels", 1) --// the Fixer's career
-	print(("[Events] %s extinguished the %s station (%d still burning)"):format(
-		player.Name, burn.Method, fire.Count))
-
-	if fire.Count <= 0 then
-		stopFire(player)
-	else
-		publishFire()
-	end
-end
-
 --// Left-click / tap / gamepad trigger with the extinguisher equipped:
---// start spraying the nearest burning station in range. The channel runs
---// in the heartbeat; walking away, dying, or unequipping cancels it, and
---// the spread fuse pauses while the spray is on.
+--// start THE spray - one shared channel aimed at the nearest flames that
+--// clears the ENTIRE fire when it completes. It runs in the heartbeat;
+--// walking away, dying, or unequipping cancels it, and every spread fuse
+--// pauses while the spray is on.
 onExtinguisherActivated = function(player)
 	if not fire.Active then return end
+	if fire.Dousing then return end --// one spray at a time
 	local character = player.Character
 	local root = character and character:FindFirstChild("HumanoidRootPart")
 	if not root then return end
 
 	local best, bestDist = nil, math.huge
 	for _, burn in pairs(fire.Burning) do
-		if not burn.Dousing then
-			local dist = (burn.Part.Position - root.Position).Magnitude
-			if dist <= FIRE.DouseRangeStuds and dist < bestDist then
-				best, bestDist = burn, dist
-			end
+		local dist = (burn.Part.Position - root.Position).Magnitude
+		if dist <= FIRE.DouseRangeStuds and dist < bestDist then
+			best, bestDist = burn, dist
 		end
 	end
 	if not best then return end
 
 	local diff = difficultyBlock()
-	--// FIXER PASSIVE: the spray channel is per-douse and knows its player,
-	--// so this one scales directly - no prompt trickery needed
+	--// FIXER PASSIVE: the spray channel knows its player, so this one
+	--// scales directly - no prompt trickery needed
 	local channelSeconds = diff.ExtinguishChannelSeconds
 		* (player:GetAttribute("ChannelMult") or 1)
-	best.Dousing = {
+	fire.Dousing = {
 		Player = player,
 		Remaining = channelSeconds,
 		Total = channelSeconds,
+		Target = best, --// range is held against these flames
 	}
 
-	--// Code-built spray: white steam billowing off the station while the
-	--// channel runs (the Fire instance also shrinks - see the heartbeat)
-	if not best.Steam then
-		local steam = Instance.new("ParticleEmitter")
-		steam.Name = "DouseSteam"
-		steam.Color = ColorSequence.new(Color3.fromRGB(240, 240, 240))
-		steam.Size = NumberSequence.new(2, 4)
-		steam.Lifetime = NumberRange.new(0.6, 1.1)
-		steam.Rate = 40
-		steam.Speed = NumberRange.new(4, 7)
-		steam.SpreadAngle = Vector2.new(35, 35)
-		steam.Transparency = NumberSequence.new(0.3, 1)
-		steam.Enabled = false
-		steam.Parent = best.Part
-		best.Steam = steam
+	--// Code-built spray: white steam billowing off EVERY burning station -
+	--// the whole fire is dying together (the flames also shrink - heartbeat)
+	for _, burn in pairs(fire.Burning) do
+		if not burn.Steam then
+			local steam = Instance.new("ParticleEmitter")
+			steam.Name = "DouseSteam"
+			steam.Color = ColorSequence.new(Color3.fromRGB(240, 240, 240))
+			steam.Size = NumberSequence.new(2, 4)
+			steam.Lifetime = NumberRange.new(0.6, 1.1)
+			steam.Rate = 40
+			steam.Speed = NumberRange.new(4, 7)
+			steam.SpreadAngle = Vector2.new(35, 35)
+			steam.Transparency = NumberSequence.new(0.3, 1)
+			steam.Enabled = false
+			steam.Parent = burn.Blaze
+			burn.Steam = steam
+		end
+		burn.Steam.Enabled = true
 	end
-	best.Steam.Enabled = true
 
-	print(("[Events] %s is dousing the %s station"):format(player.Name, best.Method))
+	print(("[Events] %s is spraying down the fire"):format(player.Name))
 end
 
 local function startFire()
@@ -1267,6 +1274,7 @@ stopFire = function(fixedBy)
 	fire.Burning = {}
 	fire.Count = 0
 	fire.DrainAccum = 0
+	fire.Dousing = nil
 	fire.AlertOverride = nil
 
 	--// Defensive: EVERY station re-enabled no matter how the event died -
@@ -1782,47 +1790,66 @@ RunService.Heartbeat:Connect(function(dt)
 		end
 	end
 
-	--// Tick the fire: every burning station's fuse runs independently,
-	--// except while someone is actively spraying it
+	--// Tick the fire: ONE shared spray channel fights the whole blaze,
+	--// and every spread fuse pauses while it runs. No sprayer = the
+	--// fuses burn down toward spread.
 	if fire.Active then
-		local expired, doused = nil, nil
-		local soonest = math.huge
-		for _, burn in pairs(fire.Burning) do
-			local douse = burn.Dousing
-			if douse then
-				--// Cancel if the sprayer let go of the tool, died, or
-				--// wandered out of range; finish when the channel completes
-				local character = douse.Player and douse.Player.Character
-				local holding = character and extinguisherTool
-					and extinguisherTool.Parent == character
-				local root = character and character:FindFirstChild("HumanoidRootPart")
-				local inRange = root
-					and (burn.Part.Position - root.Position).Magnitude <= FIRE.DouseRangeStuds
+		local douse = fire.Dousing
+		if douse then
+			--// Cancel if the sprayer let go of the tool, died, or wandered
+			--// from the flames they aimed at; finish = the WHOLE fire out
+			local character = douse.Player and douse.Player.Character
+			local holding = character and extinguisherTool
+				and extinguisherTool.Parent == character
+			local root = character and character:FindFirstChild("HumanoidRootPart")
+			local inRange = root and douse.Target
+				and (douse.Target.Part.Position - root.Position).Magnitude <= FIRE.DouseRangeStuds
 
-				if not (holding and inRange) then
-					burn.Dousing = nil
+			if not (holding and inRange) then
+				fire.Dousing = nil
+				for _, burn in pairs(fire.Burning) do
 					if burn.Steam then burn.Steam.Enabled = false end
 					if burn.Fx then burn.Fx.Size = FIRE.FireSize end
-				else
-					douse.Remaining -= dt
-					--// The flames visibly die back as the spray works
-					if burn.Fx then
-						burn.Fx.Size = math.max(2,
-							FIRE.FireSize * math.clamp(douse.Remaining / douse.Total, 0, 1))
-					end
-					if douse.Remaining <= 0 then
-						doused = doused or {}
-						table.insert(doused, burn)
-					end
 				end
 			else
+				douse.Remaining -= dt
+				--// Every flame in the kitchen dies back together
+				local shrunk = math.max(2,
+					FIRE.FireSize * math.clamp(douse.Remaining / douse.Total, 0, 1))
+				for _, burn in pairs(fire.Burning) do
+					if burn.Fx then burn.Fx.Size = shrunk end
+				end
+				if douse.Remaining <= 0 then
+					eventStats.FiresExtinguished += 1
+					creditStat(douse.Player, "EventChannels", 1) --// the Fixer's career
+					print(("[Events] %s sprayed the fire out"):format(douse.Player.Name))
+					stopFire(douse.Player)
+				end
+			end
+		else
+			local expired = nil
+			for _, burn in pairs(fire.Burning) do
 				burn.Remaining -= dt
 				if burn.Remaining <= 0 then
 					expired = expired or {}
 					table.insert(expired, burn)
 				end
 			end
+			if expired then
+				for _, burn in ipairs(expired) do
+					if fire.Active and fire.Burning[burn.Id] then
+						spreadFrom(burn, "the fuse ran out")
+					end
+				end
+			end
+		end
+	end
 
+	--// The spray may have just ended the event - everything below is
+	--// live-fire bookkeeping only
+	if fire.Active then
+		local soonest = math.huge
+		for _, burn in pairs(fire.Burning) do
 			refreshFireUi(burn)
 			if burn.Remaining < soonest then
 				soonest = burn.Remaining
@@ -1830,22 +1857,6 @@ RunService.Heartbeat:Connect(function(dt)
 		end
 		if soonest < math.huge then
 			EventState:SetAttribute("FuseRemaining", math.max(0, soonest))
-		end
-
-		if doused then
-			for _, burn in ipairs(doused) do
-				if fire.Burning[burn.Id] and burn.Dousing then
-					extinguishStation(burn.Id, burn.Dousing.Player)
-				end
-			end
-		end
-
-		if expired then
-			for _, burn in ipairs(expired) do
-				if fire.Active and fire.Burning[burn.Id] then
-					spreadFrom(burn, "the fuse ran out")
-				end
-			end
 		end
 
 		--// Each burning station bleeds reputation independently

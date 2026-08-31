@@ -46,7 +46,16 @@ do
 	end
 end
 
---// Career + ultimate charge in one call (same shape as ServiceLoop's)
+--// Score-only moments (no career write): the HIDDEN shift score still
+--// counts them (same shape as ServiceLoop's helper)
+local function scoreOnly(player, key, amount)
+	local bus = game:GetService("ServerStorage"):FindFirstChild("AddScore")
+	if bus then
+		bus:Fire(player, key, amount)
+	end
+end
+
+--// Career + ultimate charge + hidden score in one call
 local function creditStat(player, key, amount)
 	ProfileAPI.AddStat(player, key, amount)
 	local charge = game:GetService("ServerStorage"):FindFirstChild("AddCharge")
@@ -55,6 +64,7 @@ local function creditStat(player, key, amount)
 			charge:Invoke(player, key, amount)
 		end)
 	end
+	scoreOnly(player, key, amount)
 end
 
 --// COOK TIMING GATE (used by startCook for the compensated timer and by
@@ -591,11 +601,11 @@ local function startCook(station, player, tool, dishName, recipe)
 
 	tool:Destroy() --// the raw ingredient is consumed
 
-	--// Gated difficulties trade raw cook time for the timing minigame's
-	--// overhead; EASY keeps the frozen full timer
+	--// Gated difficulties cook in one flat time - the minigame is the
+	--// skill there; EASY keeps the frozen per-method timers
 	local cookTime = timing.CookTime
 	if cookMinigameGated() then
-		cookTime = math.max(cookTime * TIMING.MinigameCookTimeMult, TIMING.MinCookSeconds)
+		cookTime = TIMING.MinigameCookSeconds
 	end
 
 	station.State = "COOKING"
@@ -642,6 +652,8 @@ local function collect(station, player)
 	--// credit here, at the pan, not later at the table (owner call)
 	if quality == "Perfect" then
 		creditStat(player, "PerfectCooks", 1)
+	else
+		scoreOnly(player, "OvercookedCooks", 1) --// hidden score only
 	end
 
 	print(("[Kitchen] %s collected a %s %s"):format(player.Name, quality, dishName))
@@ -732,6 +744,10 @@ local function grantFromMinigame(station, player, quality)
 
 	if quality == "Perfect" then
 		creditStat(player, "PerfectCooks", 1) --// the Chef's moment, as ever
+	elseif quality == "Good" then
+		scoreOnly(player, "GoodCooks", 1) --// hidden score only
+	else
+		scoreOnly(player, "OvercookedCooks", 1)
 	end
 
 	print(("[Kitchen] %s timed a %s %s off the arrow"):format(player.Name, quality, dishName))

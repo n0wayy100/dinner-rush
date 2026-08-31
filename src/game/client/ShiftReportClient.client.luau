@@ -7,6 +7,10 @@
 	one "Show" payload to everyone at shift end). Nothing here derives a
 	stat - it prints what it was handed.
 
+	When payload.Awards is present the AWARDS CEREMONY plays first (see
+	the section below): title cards for the whole crew, then the MVP
+	crown - the report card waits its turn behind the theatre.
+
 	The fun is the drumroll: rows reveal one by one (payload.RowReveal
 	apart), then the verdict stamp slams in - rotated, thick-bordered,
 	coloured by GradeTone ("good" basil / "mid" mustard / "bad" tomato).
@@ -25,6 +29,8 @@ local TweenService = game:GetService("TweenService")
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 local reportRemote = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("ShiftReportRemote")
+local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
+local SCORE = Config.Score
 
 local CREAM = Color3.fromRGB(255, 246, 233)
 local WARM = Color3.fromRGB(255, 236, 210)
@@ -254,7 +260,9 @@ local function showReport(payload)
 
 	local netPositive = (payload.Net or 0) >= 0
 	local rows = {
-		buildRow(1, "Served", ("%d / %d"):format(payload.Served or 0, payload.Target or 0)),
+		--// Owner ruling: the plain count, no "/ target" framing - the
+		--// grade stamp already does the judging
+		buildRow(1, "Parties served", tostring(payload.Served or 0)),
 		buildRow(2, "Walkouts", tostring(payload.Walkouts or 0),
 			(payload.Walkouts or 0) > 0 and TOMATO or CHOC),
 		buildRow(3, "Perfect cooks", tostring(payload.PerfectCooks or 0),
@@ -313,8 +321,354 @@ local function showReport(payload)
 	end)
 end
 
+----------------------------------------------------------------
+-- THE AWARDS CEREMONY (before the report card). The hidden shift
+-- score's reveal: one title card per player - avatar, name, title -
+-- popping in one by one, then the MVP crown with its receipt lines.
+-- Tap anywhere to hurry a phase along. Everything here is printed
+-- verbatim from the server's awards payload; the point math never
+-- reached the client at all.
+----------------------------------------------------------------
+local awardsGui = Instance.new("ScreenGui")
+awardsGui.Name = "ShiftAwards_UI"
+awardsGui.ResetOnSpawn = false
+awardsGui.IgnoreGuiInset = true
+awardsGui.DisplayOrder = 65 --// above the report (60)
+awardsGui.Enabled = false
+awardsGui.Parent = playerGui
+
+local dim = Instance.new("Frame")
+dim.Size = UDim2.fromScale(1, 1)
+dim.BackgroundColor3 = CHOC
+dim.BackgroundTransparency = 0.3
+dim.BorderSizePixel = 0
+dim.Parent = awardsGui
+
+--// Tap anywhere = hurry
+local ceremonyCatcher = Instance.new("TextButton")
+ceremonyCatcher.Size = UDim2.fromScale(1, 1)
+ceremonyCatcher.BackgroundTransparency = 1
+ceremonyCatcher.Text = ""
+ceremonyCatcher.Parent = awardsGui
+
+local awardsHeader = Instance.new("TextLabel")
+awardsHeader.AnchorPoint = Vector2.new(0.5, 0)
+awardsHeader.Position = UDim2.fromScale(0.5, 0.08)
+awardsHeader.Size = UDim2.fromScale(0.8, 0.1)
+awardsHeader.BackgroundTransparency = 1
+awardsHeader.Font = Enum.Font.FredokaOne
+awardsHeader.TextScaled = true
+awardsHeader.TextColor3 = CREAM
+awardsHeader.TextStrokeColor3 = CHOC
+awardsHeader.TextStrokeTransparency = 0
+awardsHeader.Text = ""
+awardsHeader.Parent = awardsGui
+
+local tapHint = Instance.new("TextLabel")
+tapHint.AnchorPoint = Vector2.new(0.5, 1)
+tapHint.Position = UDim2.fromScale(0.5, 0.97)
+tapHint.Size = UDim2.fromScale(0.5, 0.04)
+tapHint.BackgroundTransparency = 1
+tapHint.Font = Enum.Font.FredokaOne
+tapHint.TextScaled = true
+tapHint.TextColor3 = CREAM
+tapHint.TextTransparency = 0.35
+tapHint.Text = "tap to continue"
+tapHint.Parent = awardsGui
+
+local cardsHolder = Instance.new("Frame")
+cardsHolder.AnchorPoint = Vector2.new(0.5, 0.5)
+cardsHolder.Position = UDim2.fromScale(0.5, 0.52)
+cardsHolder.Size = UDim2.fromScale(0.96, 0.48)
+cardsHolder.BackgroundTransparency = 1
+cardsHolder.Parent = awardsGui
+
+local cardsLayout = Instance.new("UIListLayout")
+cardsLayout.FillDirection = Enum.FillDirection.Horizontal
+cardsLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+cardsLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+cardsLayout.SortOrder = Enum.SortOrder.LayoutOrder
+cardsLayout.Padding = UDim.new(0.012, 0)
+cardsLayout.Parent = cardsHolder
+
+local function avatarUrl(userId)
+	return ("rbxthumb://type=AvatarHeadShot&id=%d&w=150&h=150"):format(userId)
+end
+
+--// One title card: avatar in a circle, name, emoji, title
+local function buildTitleCard(order, entry)
+	local card = Instance.new("Frame")
+	card.Size = UDim2.fromScale(0.155, 1)
+	card.LayoutOrder = order
+	card.BackgroundColor3 = CREAM
+	card.Parent = cardsHolder
+
+	local scale = Instance.new("UIScale")
+	scale.Scale = 0 --// pops in on reveal
+	scale.Parent = card
+
+	local cc = Instance.new("UICorner")
+	cc.CornerRadius = UDim.new(0, 14)
+	cc.Parent = card
+
+	local cs = Instance.new("UIStroke")
+	cs.Thickness = 3
+	cs.Color = CHOC
+	cs.Parent = card
+
+	local cg = Instance.new("UIGradient")
+	cg.Rotation = 90
+	cg.Color = ColorSequence.new(Color3.new(1, 1, 1), WARM)
+	cg.Parent = card
+
+	local avatar = Instance.new("ImageLabel")
+	avatar.AnchorPoint = Vector2.new(0.5, 0)
+	avatar.Position = UDim2.fromScale(0.5, 0.06)
+	avatar.Size = UDim2.fromScale(0.66, 0.4)
+	avatar.BackgroundColor3 = WARM
+	avatar.Image = avatarUrl(entry.UserId)
+	avatar.Parent = card
+
+	local ar = Instance.new("UIAspectRatioConstraint")
+	ar.AspectRatio = 1
+	ar.Parent = avatar
+
+	local ac = Instance.new("UICorner")
+	ac.CornerRadius = UDim.new(1, 0)
+	ac.Parent = avatar
+
+	local as = Instance.new("UIStroke")
+	as.Thickness = 2
+	as.Color = CHOC
+	as.Parent = avatar
+
+	local name = Instance.new("TextLabel")
+	name.AnchorPoint = Vector2.new(0.5, 0)
+	name.Position = UDim2.fromScale(0.5, 0.5)
+	name.Size = UDim2.fromScale(0.92, 0.12)
+	name.BackgroundTransparency = 1
+	name.Font = Enum.Font.FredokaOne
+	name.TextScaled = true
+	name.TextColor3 = CHOC
+	name.Text = entry.Name or "?"
+	name.Parent = card
+
+	local emoji = Instance.new("TextLabel")
+	emoji.AnchorPoint = Vector2.new(0.5, 0)
+	emoji.Position = UDim2.fromScale(0.5, 0.63)
+	emoji.Size = UDim2.fromScale(0.9, 0.17)
+	emoji.BackgroundTransparency = 1
+	emoji.Font = Enum.Font.FredokaOne
+	emoji.TextScaled = true
+	emoji.Text = entry.Emoji or "🌟"
+	emoji.Parent = card
+
+	local titleText = Instance.new("TextLabel")
+	titleText.AnchorPoint = Vector2.new(0.5, 0)
+	titleText.Position = UDim2.fromScale(0.5, 0.81)
+	titleText.Size = UDim2.fromScale(0.94, 0.13)
+	titleText.BackgroundTransparency = 1
+	titleText.Font = Enum.Font.FredokaOne
+	titleText.TextScaled = true
+	titleText.TextColor3 = TOMATO
+	titleText.Text = entry.Title or ""
+	titleText.Parent = card
+
+	return scale
+end
+
+--// The MVP screen: crown, big avatar, name, receipt lines
+local mvpFrame = Instance.new("Frame")
+mvpFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+mvpFrame.Position = UDim2.fromScale(0.5, 0.54)
+mvpFrame.Size = UDim2.fromScale(0.34, 0.66)
+mvpFrame.BackgroundColor3 = CREAM
+mvpFrame.Visible = false
+mvpFrame.Parent = awardsGui
+
+local mvpScale = Instance.new("UIScale")
+mvpScale.Parent = mvpFrame
+
+local mc = Instance.new("UICorner")
+mc.CornerRadius = UDim.new(0, 16)
+mc.Parent = mvpFrame
+
+local ms = Instance.new("UIStroke")
+ms.Thickness = 5
+ms.Color = MUSTARD --// the gold frame
+ms.Parent = mvpFrame
+
+local mg = Instance.new("UIGradient")
+mg.Rotation = 90
+mg.Color = ColorSequence.new(Color3.new(1, 1, 1), WARM)
+mg.Parent = mvpFrame
+
+local crown = Instance.new("TextLabel")
+crown.AnchorPoint = Vector2.new(0.5, 0)
+crown.Position = UDim2.fromScale(0.5, 0.02)
+crown.Size = UDim2.fromScale(0.5, 0.14)
+crown.BackgroundTransparency = 1
+crown.Font = Enum.Font.FredokaOne
+crown.TextScaled = true
+crown.Text = "👑"
+crown.Parent = mvpFrame
+
+local mvpAvatar = Instance.new("ImageLabel")
+mvpAvatar.AnchorPoint = Vector2.new(0.5, 0)
+mvpAvatar.Position = UDim2.fromScale(0.5, 0.17)
+mvpAvatar.Size = UDim2.fromScale(0.42, 0.34)
+mvpAvatar.BackgroundColor3 = WARM
+mvpAvatar.Parent = mvpFrame
+
+local mar = Instance.new("UIAspectRatioConstraint")
+mar.AspectRatio = 1
+mar.Parent = mvpAvatar
+
+local mac = Instance.new("UICorner")
+mac.CornerRadius = UDim.new(1, 0)
+mac.Parent = mvpAvatar
+
+local mas = Instance.new("UIStroke")
+mas.Thickness = 3
+mas.Color = MUSTARD
+mas.Parent = mvpAvatar
+
+local mvpBanner = Instance.new("TextLabel")
+mvpBanner.AnchorPoint = Vector2.new(0.5, 0)
+mvpBanner.Position = UDim2.fromScale(0.5, 0.53)
+mvpBanner.Size = UDim2.fromScale(0.8, 0.12)
+mvpBanner.BackgroundTransparency = 1
+mvpBanner.Font = Enum.Font.FredokaOne
+mvpBanner.TextScaled = true
+mvpBanner.TextColor3 = TOMATO
+mvpBanner.Text = "MVP!"
+mvpBanner.Parent = mvpFrame
+
+local mvpName = Instance.new("TextLabel")
+mvpName.AnchorPoint = Vector2.new(0.5, 0)
+mvpName.Position = UDim2.fromScale(0.5, 0.66)
+mvpName.Size = UDim2.fromScale(0.9, 0.11)
+mvpName.BackgroundTransparency = 1
+mvpName.Font = Enum.Font.FredokaOne
+mvpName.TextScaled = true
+mvpName.TextColor3 = CHOC
+mvpName.Text = ""
+mvpName.Parent = mvpFrame
+
+local mvpReceipts = Instance.new("TextLabel")
+mvpReceipts.AnchorPoint = Vector2.new(0.5, 0)
+mvpReceipts.Position = UDim2.fromScale(0.5, 0.78)
+mvpReceipts.Size = UDim2.fromScale(0.9, 0.18)
+mvpReceipts.BackgroundTransparency = 1
+mvpReceipts.Font = Enum.Font.FredokaOne
+mvpReceipts.TextScaled = true
+mvpReceipts.TextWrapped = true
+mvpReceipts.TextColor3 = CHOC
+mvpReceipts.TextTransparency = 0.2
+mvpReceipts.Text = ""
+mvpReceipts.Parent = mvpFrame
+
+local ceremonySeq = 0
+local ceremonyTapped = false
+
+ceremonyCatcher.Activated:Connect(function()
+	ceremonyTapped = true
+end)
+
+--// Wait that a tap (or a newer ceremony) cuts short
+local function ceremonyWait(seconds, mySeq)
+	local deadline = os.clock() + seconds
+	while os.clock() < deadline do
+		if ceremonySeq ~= mySeq or ceremonyTapped then return end
+		task.wait(0.05)
+	end
+end
+
+local function endCeremony()
+	awardsGui.Enabled = false
+	mvpFrame.Visible = false
+end
+
+local function runCeremony(awards, done)
+	ceremonySeq += 1
+	local mySeq = ceremonySeq
+	ceremonyTapped = false
+
+	--// Same courtesy showReport extends: the HUD's end overlay would
+	--// fight the ceremony, and dismiss() restores it later
+	local intro = playerGui:FindFirstChild("ShiftIntro")
+	if intro and intro:IsA("ScreenGui") and intro.Enabled then
+		intro.Enabled = false
+		hiddenIntro = intro
+	end
+
+	for _, child in ipairs(cardsHolder:GetChildren()) do
+		if child:IsA("Frame") then child:Destroy() end
+	end
+	mvpFrame.Visible = false
+	cardsHolder.Visible = true
+	awardsHeader.Text = "⭐ TONIGHT'S CREW ⭐"
+
+	local scales = {}
+	for order, entry in ipairs(awards.Players) do
+		table.insert(scales, buildTitleCard(order, entry))
+	end
+
+	awardsGui.Enabled = true
+
+	task.spawn(function()
+		--// Phase 1: the crew, one card at a time (a tap deals the rest)
+		for _, scale in ipairs(scales) do
+			if ceremonySeq ~= mySeq then return end
+			TweenService:Create(scale,
+				TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+				{ Scale = 1 }):Play()
+			ceremonyWait(SCORE.CardRevealSeconds, mySeq)
+		end
+		if ceremonySeq ~= mySeq then return end
+		for _, scale in ipairs(scales) do
+			scale.Scale = 1 --// a tap mid-stagger still shows everyone
+		end
+
+		ceremonyTapped = false
+		ceremonyWait(SCORE.TitlesHoldSeconds, mySeq)
+		if ceremonySeq ~= mySeq then return end
+
+		--// Phase 2: the crown
+		if awards.MVP then
+			cardsHolder.Visible = false
+			awardsHeader.Text = awards.Solo and "AND TONIGHT'S HERO..." or "AND TONIGHT'S MVP..."
+			mvpBanner.Text = awards.Solo and (SCORE.SoloBanner .. "!") or "MVP!"
+			mvpAvatar.Image = avatarUrl(awards.MVP.UserId)
+			mvpName.Text = awards.MVP.Name or "?"
+			mvpReceipts.Text = table.concat(awards.MVP.Receipts or {}, "\n")
+			mvpFrame.Visible = true
+			mvpScale.Scale = 0
+			TweenService:Create(mvpScale,
+				TweenInfo.new(0.45, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+				{ Scale = 1 }):Play()
+
+			ceremonyTapped = false
+			ceremonyWait(SCORE.MVPHoldSeconds, mySeq)
+			if ceremonySeq ~= mySeq then return end
+		end
+
+		endCeremony()
+		done()
+	end)
+end
+
 reportRemote.OnClientEvent:Connect(function(action, payload)
 	if action == "Show" and type(payload) == "table" then
-		showReport(payload)
+		local awards = payload.Awards
+		if type(awards) == "table" and type(awards.Players) == "table"
+			and #awards.Players > 0 then
+			--// Owner ruling: the ceremony FIRST, the stat rows only after
+			runCeremony(awards, function()
+				showReport(payload)
+			end)
+		else
+			showReport(payload)
+		end
 	end
 end)

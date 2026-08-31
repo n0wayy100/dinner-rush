@@ -570,12 +570,15 @@ Config.Events = {
 		DouseRangeStuds = 10,         -- click-to-spray works within this range;
 		                              -- walking out of it cancels the douse
 		RepDrainPer10sPerFire = 1,    -- each burning station bleeds independently
-		FixRepReward = 1,             -- for putting out the LAST fire
+		FixRepReward = 1,             -- for spraying the blaze out
 		WaterTrapMessage = "NEVER put water on a grease fire!",
 		ToastSeconds = 4,             -- how long the water-trap lesson fills the screen
 
 		--// Cosmetics
-		FireSize = 8,                 -- Roblox Fire instance size on a burning station
+		FireSize = 12,                -- Roblox Fire instance size on the blaze
+		BlazeCoverStuds = 7,          -- footprint of the invisible pad the flames
+		                              -- ride on - ONE big fire covering the whole
+		                              -- appliance, not a candle on the anchor
 		LightRange = 14,              -- orange glow radius
 	},
 
@@ -1034,12 +1037,11 @@ Config.CookTiming = {
 	SweepSecondsMin = 0.8,        -- fastest end-to-end arrow pass
 	SweepSecondsMax = 1.4,        -- slowest
 
-	--// The arrow adds seconds per dish, so gated difficulties trade raw
-	--// cook time for it - the late game is hard enough already (owner
-	--// ruling: fry 5s, grill 7s). Follows the GATE, not the difficulty:
-	--// same value on every gated difficulty (THE LAW), EASY untouched.
-	MinigameCookTimeMult = 0.5,   -- CookTime x this where the minigame runs
-	MinCookSeconds = 4,           -- the discount never cuts below this
+	--// Where the minigame runs, EVERY station cooks in the same flat time
+	--// (owner ruling: the arrow is the skill, the wait is uniform - and
+	--// the late game is hard enough already). Follows the GATE, not the
+	--// difficulty (THE LAW); EASY keeps its frozen per-method timers.
+	MinigameCookSeconds = 5,      -- flat cook time on gated difficulties
 	GreenWidth = 0.09,            -- fraction of the bar; NEVER per-difficulty
 	YellowWidth = 0.11,           -- each side of the green
 	StopToleranceSeconds = 0.13,  -- claim-vs-server-clock slack in SECONDS of lag,
@@ -1063,6 +1065,164 @@ Config.PlungeTap = {
 	MaxTapsPerSecond = 10,     -- server ignores taps faster than this
 	TimeoutSeconds = 20,       -- abandoned panel frees the toilet
 	WalkAwayStuds = 10,        -- wander this far and the panel closes
+}
+
+----------------------------------------------------------------
+-- THE SHIFT SCORE (owner ruling, Aug 2026: HIDDEN by design). Every
+-- useful moment quietly earns points through the same credit calls
+-- that write careers - NOTHING is shown during the shift, so the only
+-- winning strategy is being useful. At shift end the awards ceremony
+-- reveals one title per player (warm fallbacks guarantee everyone
+-- holds something - never a mock), then the MVP with receipt lines
+-- (evidence, never the point math). Values identical on every
+-- difficulty; the point table never leaves the server.
+----------------------------------------------------------------
+Config.Score = {
+	--// Parity target: a busy shift in ANY emergent role should land in
+	--// the same band. One 2-dish party ~ 30 kitchen pts ~ 31 floor pts.
+	PointsPer = {
+		Seats = 4,              -- seating a queued party (score-only stat)
+		Greetings = 4,          -- the timed warm welcome
+		OrdersTaken = 4,        -- finishing the take-order dialogue (score-only)
+		Recommendations = 10,   -- the dialogue skill play
+		DishesServed = 7,       -- per dish carried to its table
+		PaymentsCollected = 5,  -- beating the melt timer
+		PerfectCooks = 15,      -- the full fetch->cook->collect chain
+		GoodCooks = 8,          -- the yellow->green save (score-only)
+		OvercookedCooks = 2,    -- near-zero so bad dishes can't be farmed (score-only)
+		EventChannels = 20,     -- any emergency fixed - rare, worth ~a table,
+		                        -- low enough that nobody drops a pan to race for it
+		KitchenCrimes = -20,    -- water on a grease fire
+	},
+
+	--// Title registry in claim-priority order. Keys sum into the
+	--// category; the best untitled player with a count > 0 claims it.
+	Titles = {
+		{ Name = "Top Chef",      Emoji = "🍳", Keys = { "PerfectCooks", "GoodCooks" } },
+		{ Name = "Speedy Server", Emoji = "🏃", Keys = { "DishesServed" } },
+		{ Name = "Floor Captain", Emoji = "🛎️", Keys = { "Seats", "Greetings" } },
+		{ Name = "Money Magnet",  Emoji = "💰", Keys = { "PaymentsCollected" } },
+		{ Name = "Fix-It Hero",   Emoji = "🔧", Keys = { "EventChannels" } },
+		{ Name = "Smooth Talker", Emoji = "😎", Keys = { "OrdersTaken", "Recommendations" } },
+	},
+	--// Nobody leaves empty-handed - warm, never mocking
+	FallbackTitles = {
+		{ Name = "Team Spirit", Emoji = "🌟" },
+		{ Name = "Good Vibes",  Emoji = "🎈" },
+		{ Name = "Rising Star", Emoji = "🧢" },
+		{ Name = "Lucky Charm", Emoji = "🍀" },
+		{ Name = "Crew Member", Emoji = "🧡" },
+		{ Name = "The Backbone", Emoji = "💪" },
+	},
+
+	--// MVP receipts: friendly evidence lines (%d = the count)
+	ReceiptText = {
+		PerfectCooks = "%d perfect dishes",
+		GoodCooks = "%d good saves",
+		DishesServed = "%d dishes served",
+		Seats = "%d parties seated",
+		Greetings = "%d warm welcomes",
+		OrdersTaken = "%d orders taken",
+		Recommendations = "%d smooth recommends",
+		PaymentsCollected = "%d payments collected",
+		EventChannels = "%d emergencies fixed",
+	},
+	MaxReceipts = 3,            -- evidence lines under the crown
+
+	--// Ceremony pacing (client-side theatre, before the report card)
+	CardRevealSeconds = 0.9,    -- gap between title-card pop-ins
+	TitlesHoldSeconds = 2.5,    -- admire the crew before the MVP screen
+	MVPHoldSeconds = 4,         -- crown screen before the report card
+	SoloBanner = "SHIFT HERO",  -- the crown's banner when playing alone
+}
+
+----------------------------------------------------------------
+-- MANAGER BRUNO (the commentator - ManagerService + ManagerClient).
+-- A 2D portrait card bottom-right that pipes in one-liners at story
+-- moments. With every number hidden (score, clock, target, served),
+-- Bruno IS the game's soft warning system: phase turns, closing and
+-- crises get called in VIBES, never digits. PortraitImage = "" shows
+-- the name placeholder until Bruno's PNG arrives. Cutscenes (start /
+-- end / fail) are a later build on the same rig.
+----------------------------------------------------------------
+Config.Manager = {
+	Name = "MANAGER BRUNO",
+	PortraitImage = "",           -- rbxassetid://... when the 2D face arrives
+
+	MinSecondsBetweenLines = 6,   -- global cooldown; urgent lines ignore it
+	LineHoldBaseSeconds = 2.5,    -- bubble lingers this long...
+	LineHoldPerChar = 0.045,      -- ...plus this per character of the line
+	TypeSeconds = 0.6,            -- typewriter reveal duration
+	WalkoutGrumbleCooldown = 25,  -- at most one walkout grumble per window
+	RepWorryFraction = 0.5,       -- rep below this = worried lines
+	RepPanicFraction = 0.25,      -- rep below this = panic lines
+	RepRecoverFraction = 0.6,     -- back above this = relief (hysteresis)
+
+	Lines = {
+		ShiftStart = {
+			"Doors are open! Make me proud out there!",
+			"Deep breaths, team. Here they come!",
+			"A brand new shift! Keep 'em smiling!",
+		},
+		PhaseBusy = {
+			"It's filling up... look alive, team!",
+			"Word's getting out about us - stay sharp!",
+			"More hungry faces incoming!",
+		},
+		PhaseRush = {
+			"HERE COMES THE DINNER RUSH!!",
+			"This is it, people! RUSH TIME!",
+			"Hold onto your aprons - it's RUSH hour!",
+		},
+		Closing = {
+			"Last call! Finish those tables and collect!",
+			"Doors are shut! Land every last dish!",
+		},
+		ToiletStart = {
+			"The toilet's erupting! Grab the plunger, QUICK!",
+			"Not the bathroom again... somebody plunge it!",
+		},
+		ToiletFlood = {
+			"IT'S FLOODING! My beautiful floors!!",
+			"The bathroom is a LAKE! Fix it, fix it!",
+		},
+		ToiletDone = {
+			"Phew. We never speak of the bathroom again.",
+			"Toilet's calm. My heart is not.",
+		},
+		FireStart = {
+			"FIRE IN THE KITCHEN! Get the extinguisher!",
+			"THE KITCHEN'S ABLAZE! And NO water, you hear me?!",
+		},
+		FireDone = {
+			"Fire's out... someone check my eyebrows.",
+			"Crisis over. Back to cooking - CAREFULLY!",
+		},
+		OutageStart = {
+			"The power's out! Someone hit the breaker!",
+			"Who forgot the electric bill?! The BREAKER, go!",
+		},
+		OutageDone = {
+			"Lights! Beautiful lights! Back to work!",
+			"Power's back. I can see the mess again...",
+		},
+		RepWorry = {
+			"The customers are grumbling... turn it around!",
+			"I'm seeing frowns out there. FEED them!",
+		},
+		RepPanic = {
+			"We're one bad table from CLOSING DOWN!",
+			"My diner is DYING! Save it, please!",
+		},
+		RepRecovered = {
+			"That's more like it! They love us again!",
+			"Smiles everywhere - keep it going!",
+		},
+		Walkout = {
+			"We just lost a table! Move faster!",
+			"They walked out! My heart breaks...",
+		},
+	},
 }
 
 ----------------------------------------------------------------

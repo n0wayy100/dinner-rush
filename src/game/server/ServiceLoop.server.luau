@@ -67,9 +67,19 @@ do
 	end
 end
 
---// Career + ultimate charge in ONE call: every counted moment is also a
---// charge moment. ChargeService owns the key->charge mapping; a missing
---// bindable means no charge, never an error.
+--// Score-only moments (no career write): the HIDDEN shift score still
+--// counts them. ScoreService owns the point values; a missing bus is a
+--// no-op, and nothing about the score is ever shown mid-shift.
+local function scoreOnly(player, key, amount)
+	local bus = game:GetService("ServerStorage"):FindFirstChild("AddScore")
+	if bus then
+		bus:Fire(player, key, amount)
+	end
+end
+
+--// Career + ultimate charge + hidden score in ONE call: every counted
+--// moment feeds all three. ChargeService owns the key->charge mapping,
+--// ScoreService the key->points; a missing bindable is a no-op.
 local function creditStat(player, key, amount)
 	ProfileAPI.AddStat(player, key, amount)
 	local charge = game:GetService("ServerStorage"):FindFirstChild("AddCharge")
@@ -78,6 +88,7 @@ local function creditStat(player, key, amount)
 			charge:Invoke(player, key, amount)
 		end)
 	end
+	scoreOnly(player, key, amount)
 end
 
 -- DEBUG knobs (set to nil to use real Config values)
@@ -588,12 +599,11 @@ local function refreshScoreboard()
 	elseif shift.State == "PREP" then
 		scoreboard.Text = ("Shift starts in %d...  (%s)"):format(math.ceil(shift.PrepRemaining or 0), diff.Label)
 	elseif shift.State == "CLOSING" then
-		scoreboard.Text = ("REP %d   |   LAST TABLES   |   Served %d/%d")
-			:format(shift.Reputation, shift.Satisfied, diff.Rewards.TargetParties)
+		--// Owner ruling: no served count during play - it reveals at the end
+		scoreboard.Text = ("REP %d   |   LAST TABLES"):format(shift.Reputation)
 	elseif shift.State == "RUNNING" then
-		scoreboard.Text = ("REP %d   |   %s   |   %s   |   Served %d/%d")
-			:format(shift.Reputation, fmtClock(shift.Length - shift.Elapsed), shift.Phase,
-				shift.Satisfied, diff.Rewards.TargetParties)
+		scoreboard.Text = ("REP %d   |   %s   |   %s")
+			:format(shift.Reputation, fmtClock(shift.Length - shift.Elapsed), shift.Phase)
 	else
 		scoreboard.Text = shift.EndText or "Shift over"
 	end
@@ -1770,6 +1780,11 @@ local function resolveDialogue(dlg, pickedKey, notifyClient)
 		end
 	end
 
+	--// The order is officially in - the hidden score counts the trip
+	if dlg.Player and dlg.Player.Parent then
+		scoreOnly(dlg.Player, "OrdersTaken", 1)
+	end
+
 	nextOrderNumber += 1
 	party.OrderNumber = nextOrderNumber --// the board's ticket number
 
@@ -2132,6 +2147,7 @@ local function attachQueuePrompts(party)
 				refreshTablePrompt(tableId)
 			end)
 		end)
+		scoreOnly(player, "Seats", 1) --// the hidden score counts the host work
 		print(("[Service] %s seated Party %d at Table %d"):format(player.Name, party.Id, tableId))
 	end)
 end
@@ -2237,10 +2253,9 @@ end
 local function endShift(success, reason)
 	if shift.State == "ENDED" then return end
 	shift.State = "ENDED"
-	local hit = shift.Satisfied >= diff.Rewards.TargetParties
+	--// The count reveals here, plain - the grade stamp does the judging
 	shift.EndText = success
-		and ("SHIFT COMPLETE - Served %d/%d %s"):format(shift.Satisfied,
-			diff.Rewards.TargetParties, hit and "PASS" or "MISS")
+		and ("SHIFT COMPLETE - Served %d parties!"):format(shift.Satisfied)
 		or ("SHIFT FAILED - %s"):format(reason or "")
 	print("[Service] ============================================")
 	print("[Service] " .. shift.EndText)
@@ -2392,6 +2407,16 @@ local function endShift(success, reason)
 				Seconds = math.floor(shift.Elapsed),
 				When = os.time(),
 			})
+		end
+
+		--// THE AWARDS: the hidden score is revealed only now. ScoreService
+		--// owns titles + MVP; a missing bridge just skips the ceremony.
+		local awardsBridge = game:GetService("ServerStorage"):FindFirstChild("GetShiftAwards")
+		if awardsBridge then
+			local ok, awards = pcall(function() return awardsBridge:Invoke() end)
+			if ok and type(awards) == "table" then
+				payload.Awards = awards
+			end
 		end
 
 		shiftReportRemote:FireAllClients("Show", payload)
