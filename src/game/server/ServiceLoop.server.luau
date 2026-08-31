@@ -2069,7 +2069,7 @@ local function attachQueuePrompts(party)
 	local seat = Instance.new("ProximityPrompt")
 	seat.ActionText = "Seat party"
 	seat.ObjectText = ("Party of %d"):format(party.Size)
-	seat.HoldDuration = 0.5
+	seat.HoldDuration = 0 --// E means press, everywhere (owner ruling Aug 2026)
 	seat.MaxActivationDistance = Config.Interaction.PromptRangeStuds
 	seat.RequiresLineOfSight = Config.Interaction.PromptRequiresLineOfSight
 	seat.Parent = party.Pawn
@@ -2078,7 +2078,8 @@ local function attachQueuePrompts(party)
 	local greet = Instance.new("ProximityPrompt")
 	greet.ActionText = "Greet"
 	greet.ObjectText = "A warm welcome buys time"
-	greet.HoldDuration = 0.4
+	greet.HoldDuration = 0 --// a hello is instant (owner call - no sticky holds
+	                       --// on front-of-house pleasantries)
 	greet.KeyboardKeyCode = Enum.KeyCode.F
 	greet.UIOffset = Vector2.new(0, 60)
 	greet.MaxActivationDistance = Config.Interaction.PromptRangeStuds

@@ -135,12 +135,18 @@ Config.OrderWeights = {
 ----------------------------------------------------------------
 Config.Kitchen = {
 	MaxCarriedItems = 2,          -- the design's two-item inventory rule
-	PickupHoldSeconds = 0.4,      -- fridge / dry shelf prompt
-	StationLoadHoldSeconds = 0,   -- starting a cook: TAP, not hold
-	CollectHoldSeconds = 0.4,     -- taking the result off the station
-	BurntCleanupSeconds = 1.0,    -- clearing a ruined pan
-	BinHoldSeconds = 0.5,         -- hold at the TrashBin; deliberately NOT a tap,
-	                              -- so nobody bins a good dish by mistapping
+
+	--// OWNER RULING (Aug 2026): E means PRESS, everywhere. Every
+	--// default-key prompt is a tap - the only holds left in the game are
+	--// EASY's frozen fix channels, the 3s pitcher fill, and the F/G
+	--// prompts (water pour / water trap / payment collect).
+	PickupHoldSeconds = 0,        -- fridge / dry shelf prompt
+	StationLoadHoldSeconds = 0,   -- starting a cook
+	CollectHoldSeconds = 0,       -- taking the result off the station
+	                              -- (NOTE: Chef's CollectHoldMult passive now
+	                              -- has nothing to scale - re-spec pending)
+	BurntCleanupSeconds = 0,      -- clearing a ruined pan
+	BinHoldSeconds = 0,           -- the TrashBin taps too, per the ruling
 
 	--// One cook per station. Several burners = several CookStation anchors
 	--// side by side, each with its own prompt and its own small bar.
@@ -246,11 +252,10 @@ Config.Customers = {
 	WaterPourRepeatBonus = 10,        -- diminishing, same table
 	WaterStationHoldSeconds = 3,
 
-	--// Table prompt hold times. Taking an order is a TAP - it happens
-	--// constantly and a hold makes the front of house feel sticky. Serving
-	--// keeps a short hold so a mistap does not fire the wrong dish.
+	--// Table prompts: TAPS, per the E-means-press ruling (the server
+	--// still validates the dish, so a mistap serve is denied, not wasted)
 	TakeOrderHoldSeconds = 0,
-	ServeHoldSeconds = 0.5,
+	ServeHoldSeconds = 0,
 	PerDishServeBonus = 5,            -- multi-dish orders: grace per dish landed
 	PaySeconds = 5,
 	SeatingWalkIsFree = true,         -- door bar dies on INITIATE; walk untimed
@@ -285,7 +290,7 @@ Config.Supplier = {
 
 	UnitsPerCrate = 5,                -- one crate restocks this many
 	MaxCratesPerIngredient = 3,       -- per order, so a single order caps at 15
-	CollectHoldSeconds = 0.6,         -- holding E on a crate
+	CollectHoldSeconds = 0,           -- E on a crate (press, per the ruling)
 	TruckLingerSeconds = 45,          -- truck leaves; uncollected crates go with it
 
 	--// Money is OFF for the MVP. Coins are per-player leaderstats, so charging
