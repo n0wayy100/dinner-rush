@@ -454,7 +454,7 @@ local function refreshToiletPrompt()
 	if diff.Interactions and diff.Interactions.PlungeMinigame then
 		toilet.Prompt.HoldDuration = 0 --// gated: a TAP opens the tapping panel
 	else
-		toilet.Prompt.HoldDuration = channelSecondsFor(diff) --// EASY (frozen)
+		toilet.Prompt.HoldDuration = channelSecondsFor(diff) --// ungated fallback
 	end
 end
 
@@ -545,7 +545,7 @@ end
 
 ----------------------------------------------------------------
 -- THE PLUNGE TAP (gated by Difficulty.Interactions.PlungeMinigame -
--- EASY keeps the frozen channel hold). Spam tap/click fills a bar that
+-- ON for every difficulty). Spam tap/click fills a bar that
 -- leaks while you rest. The server counts its OWN taps - rate-capped
 -- against autoclickers, plunger-in-hand and proximity re-checked every
 -- tap - and a full bar exits through stopToilet's normal success path.
@@ -1396,7 +1396,7 @@ local function refreshOutageUi()
 				outage.Prompt.ActionText = "Fix the wires"
 				outage.Prompt.HoldDuration = 0
 			else
-				--// EASY (frozen): the original channel hold, untouched
+				--// ungated fallback: the original channel hold
 				outage.Prompt.ActionText = "Restore power"
 				local seconds = OUTAGE.FixChannelSeconds[
 					Config.IsValidDifficulty(shiftInfo().Difficulty) and shiftInfo().Difficulty or "NORMAL"]
@@ -1769,9 +1769,10 @@ local function syncFixLoop(key, active, soundName, part)
 end
 
 RunService.Heartbeat:Connect(function(dt)
-	--// Positional: you hear the work where the work is happening
+	--// Positional: you hear the work where the work is happening.
+	--// (No breaker loop - owner ruling: the wire fix sounds per wire
+	--// CONNECTION, client-side in WireFixClient.)
 	syncFixLoop("Toilet", plungeSession ~= nil, "ToiletFix", toilet.Part)
-	syncFixLoop("Breaker", wirePuzzle ~= nil, "BreakerFix", outage.Part)
 	syncFixLoop("Fire", fire.Dousing ~= nil, "FireExtinguish",
 		fire.Dousing and fire.Dousing.Target and fire.Dousing.Target.Part or nil)
 

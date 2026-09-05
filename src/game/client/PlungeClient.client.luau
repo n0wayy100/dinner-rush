@@ -2,8 +2,8 @@
 	Dinner Rush - PlungeClient
 	StarterPlayer.StarterPlayerScripts.Client.PlungeClient  (LocalScript)
 
-	The plunge tapping bar (gated difficulties only - EASY keeps the
-	frozen hold-E plunge). SPAM TAP - left-click on desktop, tap on
+	The plunge tapping bar (ON for every difficulty since the Sep 2026
+	un-freeze). SPAM TAP - left-click on desktop, tap on
 	touch, A on gamepad - to fill the bar. It leaks while you rest, so
 	keep the rhythm up until it's full.
 

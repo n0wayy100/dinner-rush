@@ -37,6 +37,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
 
 local Config = require(ReplicatedStorage.Shared.Config)
+local DishModels = require(ServerStorage:WaitForChild("Shared"):WaitForChild("DishModels"))
 
 local SLOT_TAG = "PassSlot"
 
@@ -139,7 +140,15 @@ local function setShown(slot, shown)
 		end
 	end
 	if slot.Food then
-		slot.Food.Transparency = shown and 0 or 1
+		--// A dressed portion keeps its base invisible; the meal parts
+		--// under it follow the plate's hide/show
+		local dressed = slot.Food:GetAttribute("Dressed")
+		slot.Food.Transparency = (not shown or dressed) and 1 or 0
+		for _, child in ipairs(slot.Food:GetDescendants()) do
+			if child:IsA("BasePart") then
+				child.Transparency = shown and 0 or 1
+			end
+		end
 	end
 	slot.Prompt.Enabled = shown
 end
@@ -202,6 +211,21 @@ local function attachFood(slot, dishName)
 
 	food.Anchored = true
 	food.CFrame = slot.Part.CFrame * slot.FoodOffset
+
+	--// Composed cartoon meal (DishModels): rebuilt UPRIGHT at the same
+	--// spot (the 90-degree flat turn only suits the bare cylinder),
+	--// dropped per-dish so every model sits flush on the plate, dressed,
+	--// and the cylinder becomes an invisible base. Children of Food, so
+	--// clone/destroy/hide all carry the whole meal.
+	food.CFrame = CFrame.new(food.Position
+		- Vector3.new(0, DishModels.plateDrop(dishName), 0))
+	if DishModels.dress(food, dishName) then
+		food.Transparency = 1
+		food:SetAttribute("Dressed", true)
+	else
+		food.CFrame = slot.Part.CFrame * slot.FoodOffset --// bare cylinder lies flat
+	end
+
 	food.Parent = slot.Root
 	slot.Food = food
 end
@@ -289,6 +313,58 @@ local function goCarried(slot, player)
 	setShown(slot, false)
 	refreshPrompt(slot)
 	publishState(slot)
+end
+
+----------------------------------------------------------------
+-- THE HELPER'S PASS VERBS (HelperService). The Helper takes the WHOLE
+-- plate like a waiter would: the slot goes CARRIED with no holder (the
+-- reclaim sweep only matches real leavers), the plate lands on the
+-- table through the normal serve, and frees on payment collection.
+-- HelperReturnDish sends it home when a delivery dies mid-trip.
+----------------------------------------------------------------
+do
+	local snapshot = Instance.new("BindableFunction")
+	snapshot.Name = "HelperPassSnapshot"
+	snapshot.OnInvoke = function()
+		local plated = {}
+		for slotId, slot in pairs(slots) do
+			if slot.State == "PLATED" then
+				table.insert(plated, {
+					SlotId = slotId,
+					Dish = slot.Dish,
+					Quality = slot.Quality,
+					Position = slot.Part and slot.Part.Position,
+				})
+			end
+		end
+		return plated
+	end
+	snapshot.Parent = ServerStorage
+
+	local take = Instance.new("BindableFunction")
+	take.Name = "HelperTakeDish"
+	take.OnInvoke = function(slotId)
+		local slot = slots[slotId]
+		if not slot or slot.State ~= "PLATED" then return nil end
+		local dish, quality = slot.Dish, slot.Quality
+		goCarried(slot, nil) --// plate travels with the Helper, holderless
+		print(("[Pass] the Helper took %s (plate and all) from slot %s")
+			:format(tostring(dish), tostring(slotId)))
+		return dish, quality
+	end
+	take.Parent = ServerStorage
+
+	local giveBack = Instance.new("BindableFunction")
+	giveBack.Name = "HelperReturnDish"
+	giveBack.OnInvoke = function(slotId)
+		local slot = slots[slotId]
+		if slot and slot.State == "CARRIED" and slot.HeldBy == nil then
+			goEmpty(slot)
+			return true
+		end
+		return false
+	end
+	giveBack.Parent = ServerStorage
 end
 
 ----------------------------------------------------------------
@@ -396,11 +472,21 @@ local function buildPlateTool(slot, dishName, quality)
 		return nil
 	end
 
-	--// Food rides the clone, positioned before anything is unanchored
+	--// Food rides the clone, positioned before anything is unanchored.
+	--// Same dressing as the counter portion: composed meal upright,
+	--// invisible base; bare cylinder flat if no builder exists.
 	local food = makeFood(dishName)
 	if food then
 		food.Anchored = true
 		food.CFrame = plate.CFrame * slot.FoodOffset
+		local upright = CFrame.new(food.Position
+			- Vector3.new(0, DishModels.plateDrop(dishName), 0))
+		food.CFrame = upright
+		if DishModels.dress(food, dishName) then
+			food.Transparency = 1
+		else
+			food.CFrame = plate.CFrame * slot.FoodOffset
+		end
 		food.Parent = clone
 	end
 

@@ -3,7 +3,8 @@
 	StarterPlayer.StarterPlayerScripts.Client.WireFixClient  (LocalScript)
 
 	The breaker wire-matching panel (gated to the minigame difficulties -
-	EASY keeps its hold and never loads this UI).
+	ON for every difficulty since the Sep 2026 un-freeze; EASY deals
+	the gentlest wire count).
 
 	INPUT, Among-Us style: PRESS a wire stub and DRAG - the wire follows
 	your finger/cursor - then RELEASE on the matching socket to connect.
@@ -27,6 +28,28 @@ local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Co
 local wireRemote = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("WireFixRemote")
 
 local WIREFIX = Config.WireFix
+
+--// A little zap each time a wire seats (owner ruling: the fix sounds
+--// on the INTERACTION, not a loop for the whole puzzle). Local-only.
+local SoundService = game:GetService("SoundService")
+local Debris = game:GetService("Debris")
+
+local function playConnectZap()
+	local sfx = Config.Sfx
+	if not (sfx and sfx.Enabled) then return end
+	local entry = sfx.Sounds.WireConnect
+	if not entry or entry.Id == "" then return end
+
+	local sound = Instance.new("Sound")
+	sound.SoundId = ("rbxassetid://%s"):format(tostring(entry.Id))
+	sound.Volume = (entry.Volume or 1) * (sfx.MasterVolume or 1)
+	sound.Parent = SoundService
+	sound:Play()
+	sound.Ended:Once(function()
+		sound:Destroy()
+	end)
+	Debris:AddItem(sound, 10)
+end
 
 local CREAM = Color3.fromRGB(255, 246, 233)
 local CHOC = Color3.fromRGB(59, 43, 32)
@@ -257,6 +280,8 @@ local function tryConnect(leftIndex, slot)
 	local line = makeLine(leftIndex)
 	layLine(line, stubOut(leftIndex), socketIn(slot))
 	lines[leftIndex] = line
+
+	playConnectZap() --// the satisfying part
 
 	if connectedCount() >= current.Wires then
 		wireRemote:FireServer("Submit", current.Token, answer)

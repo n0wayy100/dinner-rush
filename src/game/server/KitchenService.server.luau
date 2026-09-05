@@ -26,6 +26,7 @@ local RunService = game:GetService("RunService")
 local ServerStorage = game:GetService("ServerStorage")
 
 local Sfx = require(ServerStorage:WaitForChild("Shared"):WaitForChild("Sfx"))
+local DishModels = require(ServerStorage:WaitForChild("Shared"):WaitForChild("DishModels"))
 local Players = game:GetService("Players")
 
 local sharedFolder = ReplicatedStorage:WaitForChild("Shared", 10)
@@ -238,6 +239,13 @@ local function makeTool(name, icon, color, attributes)
 	handle.TopSurface = Enum.SurfaceType.Smooth
 	handle.BottomSurface = Enum.SurfaceType.Smooth
 	handle.Parent = tool
+
+	--// Composed cartoon food (DishModels): once a builder dresses the
+	--// tool, the plain block becomes an invisible grip. Default grip -
+	--// a GripPos nudge was tried and pulled food INTO the chest.
+	if DishModels.decorate(tool, attributes.Dish or attributes.Ingredient) then
+		handle.Transparency = 1
+	end
 
 	return tool
 end
@@ -585,16 +593,114 @@ local function refreshStationPrompt(station)
 	end
 end
 
+--// ONE sizzle per method, however many pans run (owner ruling, Sep
+--// 2026): the loop starts with the first cook of a method and ends
+--// when the LAST pan of that method stops - three burgers at once is
+--// one grill sound, not three stacked. Ref-counted; parented at
+--// whichever station started it (the kitchen is compact, close enough).
+local cookLoops = {} --// [method] = { Handle, Count }
+
+local function cookSoundStart(station)
+	if station.SfxOn then return end
+	station.SfxOn = true
+
+	local entry = cookLoops[station.Method]
+	if not entry then
+		entry = { Handle = nil, Count = 0 }
+		cookLoops[station.Method] = entry
+	end
+	entry.Count += 1
+	if not (entry.Handle and entry.Handle:IsPlaying()) then
+		entry.Handle = Sfx.Loop(
+			station.Method == "Fry" and "CookFry" or "CookGrill", station.Part)
+	end
+end
+
+local function cookSoundStop(station)
+	if not station.SfxOn then return end
+	station.SfxOn = nil
+
+	local entry = cookLoops[station.Method]
+	if not entry then return end
+	entry.Count = math.max(entry.Count - 1, 0)
+	if entry.Count == 0 and entry.Handle then
+		entry.Handle:Stop()
+		entry.Handle = nil
+	end
+end
+
+--// THE FOOD ON THE PAN (owner request, Sep 2026): the raw model sits
+--// on the station while it cooks, swaps to the finished dish at the
+--// PERFECT turn, and chars black if it burns. Same DishModels builders
+--// as hands and plates; the base is an invisible anchored core.
+local function clearStationFood(station)
+	if station.FoodDisplay then
+		station.FoodDisplay:Destroy()
+		station.FoodDisplay = nil
+	end
+end
+
+local function setStationFood(station, itemName, burnt)
+	clearStationFood(station)
+	if not itemName then return end
+
+	local base = Instance.new("Part")
+	base.Name = "CookingFood"
+	base.Size = Vector3.new(0.6, 0.4, 0.6)
+	base.Transparency = 1
+	base.Anchored = true
+	base.CanCollide = false
+	base.CanQuery = false
+	base.CanTouch = false
+	--// Bottom-aligned: every model's underside lands exactly on the
+	--// measured lift for THIS station's method, whatever its shape
+	local lift = Config.Kitchen.StationFoodLiftStuds[station.Method] or 0
+	base.CFrame = CFrame.new(station.Part.Position
+		+ Vector3.new(0, lift
+			+ DishModels.BottomDepth - DishModels.plateDrop(itemName), 0))
+
+	if not DishModels.dress(base, itemName) then
+		base:Destroy() --// no builder for this item: show nothing
+		return
+	end
+
+	if burnt then
+		for _, child in ipairs(base:GetChildren()) do
+			if child:IsA("BasePart") then
+				child.Color = Color3.fromRGB(45, 40, 38) --// charcoal ruin
+			end
+		end
+	end
+
+	base.Parent = workspace
+	station.FoodDisplay = base
+end
+
+--// The RAW model cooks on the pan the whole way (owner ruling: no
+--// assembled dish sitting on a grill - the finished product only
+--// exists once collected); burning chars it black.
+local function refreshStationFood(station)
+	if station.State == "COOKING" or station.State == "PERFECT"
+		or station.State == "OVERCOOKED" then
+		if not station.FoodDisplay then
+			setStationFood(station, station.RawName)
+		end
+	elseif station.State == "BURNT" then
+		setStationFood(station, station.RawName, true)
+	else
+		clearStationFood(station)
+	end
+end
+
 local function clearStation(station)
 	--// Every route out of cooking lands here - collected, binned, burnt,
 	--// wiped by a grease fire - so one stop covers all of them.
-	if station.Sfx then
-		station.Sfx:Stop()
-		station.Sfx = nil
-	end
+	cookSoundStop(station)
+	clearStationFood(station)
 
 	station.State = "IDLE"
 	station.Dish = nil
+	station.RawName = nil
 	station.Elapsed = 0
 	refreshStationUi(station)
 	refreshStationPrompt(station)
@@ -608,10 +714,11 @@ local function startCook(station, player, tool, dishName, recipe)
 		return
 	end
 
+	local rawName = tool:GetAttribute("Ingredient") --// read before it dies
 	tool:Destroy() --// the raw ingredient is consumed
 
 	--// Gated difficulties cook in one flat time - the minigame is the
-	--// skill there; EASY keeps the frozen per-method timers
+	--// skill there; an ungated difficulty would keep the full timers
 	local cookTime = timing.CookTime
 	if cookMinigameGated() then
 		cookTime = TIMING.MinigameCookSeconds
@@ -619,18 +726,18 @@ local function startCook(station, player, tool, dishName, recipe)
 
 	station.State = "COOKING"
 	station.Dish = dishName
+	station.RawName = rawName
 	station.Elapsed = 0
 	station.CookTime = cookTime
 	station.PerfectUntil = cookTime + timing.PerfectWindow
 	station.OvercookedUntil = station.PerfectUntil + timing.OvercookAfter
 	station.BurntAt = station.OvercookedUntil + timing.BurntAfter
 
-	--// Sizzle at the station, not in the player's ear: it is positional, so
-	--// the dining room hears the kitchen working without being deafened.
-	--// Method comes from the tag attribute, so a new map needs no code change.
-	if station.Sfx then station.Sfx:Stop() end
-	station.Sfx = Sfx.Loop(station.Method == "Fry" and "CookFry" or "CookGrill", station.Part)
+	--// Sizzle at the station, not in the player's ear: positional, and
+	--// shared per method - see cookSoundStart's ref-counting above.
+	cookSoundStart(station)
 
+	refreshStationFood(station) --// the raw lands on the pan, visibly
 	refreshStationUi(station)
 	refreshStationPrompt(station)
 	print(("[Kitchen] %s started %s on the %s"):format(player.Name, dishName, station.Method))
@@ -677,7 +784,7 @@ end
 
 ----------------------------------------------------------------
 -- THE COOK TIMING GAME (gated by Difficulty.Interactions.CookMinigame -
--- EASY keeps the frozen window-collect and never sees this).
+-- an ungated difficulty would keep window-collect and never see this).
 -- Replaces the COLLECT step only: an arrow ping-pongs across a bar, the
 -- GREEN zone lands somewhere new every swing, and the SERVER keeps its
 -- own clock - a client claim outside StopToleranceSeconds of the server's arrow
@@ -1009,7 +1116,7 @@ local function setupStation(instance)
 			beginCookSession(station, player) --// gated: the arrow decides quality
 
 		else
-			collect(station, player) --// EASY: the frozen window-collect
+			collect(station, player) --// ungated fallback: window-collect
 		end
 	end)
 
@@ -1048,6 +1155,7 @@ RunService.Heartbeat:Connect(function(dt)
 			refreshStationUi(station)
 			if station.State ~= previous then
 				refreshStationPrompt(station)
+				refreshStationFood(station) --// raw -> cooked -> charcoal
 			end
 		end
 	end
@@ -1073,18 +1181,13 @@ task.spawn(function()
 				--// The pans are frozen, so the sizzle stops with them. A
 				--// blackout that still sounds like a working kitchen reads
 				--// as a bug.
-				if station.Sfx then
-					station.Sfx:Stop()
-					station.Sfx = nil
-				end
+				cookSoundStop(station)
 			else
 				refreshStationPrompt(station)
 
 				--// Anything mid-cook picks its sizzle back up
-				if station.State == "COOKING" and not station.Sfx then
-					station.Sfx = Sfx.Loop(
-						station.Method == "Fry" and "CookFry" or "CookGrill",
-						station.Part)
+				if station.State == "COOKING" then
+					cookSoundStart(station)
 				end
 			end
 		end

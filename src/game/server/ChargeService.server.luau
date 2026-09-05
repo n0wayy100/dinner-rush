@@ -15,7 +15,10 @@
 	Q / touch / gamepad Y): validated end-to-end here - class equipped,
 	charge full, shift live - then dispatched:
 
-	  Chef     FLASH FRY!   held raw ingredient becomes its Perfect dish
+	  Chef     FLASH FRY!   EVERY carried raw becomes its Perfect dish;
+	                        dish variants resolve to what open tickets
+	                        want (neediest first), else by
+	                        Config.Ultimates.FlashFryMethodOrder
 	  Waiter   THIRD HAND!  CarryLimit attribute +1 for the rest of the shift
 	  Fixer    SPEED DIAL!  ServerStorage.ResolveActiveEvent (EventSystem's
 	                        own stop* success paths - never re-implemented)
@@ -118,7 +121,86 @@ local function makeDishTool(recipe, dishName)
 	handle.BottomSurface = Enum.SurfaceType.Smooth
 	handle.Parent = tool
 
+	--// Composed cartoon food, same as KitchenService's collect path
+	local ok, DishModels = pcall(function()
+		return require(ServerStorage:WaitForChild("Shared"):WaitForChild("DishModels"))
+	end)
+	if ok and DishModels and DishModels.decorate(tool, dishName) then
+		handle.Transparency = 1
+	end
+
 	return tool
+end
+
+--// Every recipe an ingredient can become, sorted by FlashFryMethodOrder
+--// (then name) so variant resolution is DETERMINISTIC - pairs() order
+--// must never decide which steak the chef gets
+local function recipesFor(ingredient)
+	local rank = {}
+	for index, method in ipairs(ULT.FlashFryMethodOrder) do
+		rank[method] = index
+	end
+	local out = {}
+	for name, recipe in pairs(Config.Recipes) do
+		if recipe.Ingredient == ingredient then
+			table.insert(out, { Name = name, Recipe = recipe })
+		end
+	end
+	table.sort(out, function(a, b)
+		local ra = rank[a.Recipe.Method] or math.huge
+		local rb = rank[b.Recipe.Method] or math.huge
+		if ra ~= rb then return ra < rb end
+		return a.Name < b.Name
+	end)
+	return out
+end
+
+--// What the floor is waiting on right now: dish -> how many tickets
+--// still want it, and the hungriest one's patience fraction
+local function openWants()
+	local bridge = ServerStorage:FindFirstChild("GetOpenOrders")
+	if not bridge then return {} end
+	local ok, orders = pcall(function() return bridge:Invoke() end)
+	if not ok or type(orders) ~= "table" then return {} end
+
+	local wants = {}
+	for _, order in ipairs(orders) do
+		if not order.Walkout then
+			for _, dishName in ipairs(order.Dishes or {}) do
+				local want = wants[dishName]
+				if not want then
+					want = { Count = 0, Neediest = 1 }
+					wants[dishName] = want
+				end
+				want.Count += 1
+				want.Neediest = math.min(want.Neediest, order.Patience or 1)
+			end
+		end
+	end
+	return wants
+end
+
+--// One raw -> one dish. A lone recipe just cooks; variants go to the
+--// neediest open ticket asking for one, else the preference order.
+--// Claiming decrements the want so two steaks can feed two tickets.
+local function pickDish(candidates, wants)
+	local pick = nil
+	if #candidates > 1 then
+		local bestNeed
+		for _, candidate in ipairs(candidates) do
+			local want = wants[candidate.Name]
+			if want and want.Count > 0
+				and (not pick or want.Neediest < bestNeed) then
+				pick, bestNeed = candidate, want.Neediest
+			end
+		end
+	end
+	pick = pick or candidates[1]
+	local want = wants[pick.Name]
+	if want and want.Count > 0 then
+		want.Count -= 1
+	end
+	return pick
 end
 
 local function flashFry(player)
@@ -127,34 +209,40 @@ local function flashFry(player)
 		return false, "No character!"
 	end
 
-	--// The HELD raw - equipped, in hand, right now
-	local held = nil
-	for _, child in ipairs(character:GetChildren()) do
-		if child:IsA("Tool") and child:GetAttribute("Ingredient") then
-			held = child
-			break
+	--// EVERY carried raw - the equipped one and the pocketed one both
+	local raws = {}
+	local containers = { character, player:FindFirstChildOfClass("Backpack") }
+	for _, container in ipairs(containers) do
+		if container then
+			for _, child in ipairs(container:GetChildren()) do
+				if child:IsA("Tool") and child:GetAttribute("Ingredient") then
+					table.insert(raws, child)
+				end
+			end
 		end
 	end
-	if not held then
-		return false, "Hold a raw ingredient first!"
+	if #raws == 0 then
+		return false, "Grab a raw ingredient first!"
 	end
 
-	local ingredient = held:GetAttribute("Ingredient")
-	local dishName, recipe = nil, nil
-	for name, r in pairs(Config.Recipes) do
-		if r.Ingredient == ingredient then
-			dishName, recipe = name, r
-			break
+	local wants = openWants()
+	local cookedNames = {}
+	for _, held in ipairs(raws) do
+		local candidates = recipesFor(held:GetAttribute("Ingredient"))
+		if #candidates > 0 then
+			local pick = pickDish(candidates, wants)
+			local home = held.Parent
+			held:Destroy()
+			makeDishTool(pick.Recipe, pick.Name).Parent = home
+			table.insert(cookedNames, pick.Recipe.Display)
 		end
 	end
-	if not recipe then
+	if #cookedNames == 0 then
 		return false, "That can't be cooked!"
 	end
 
-	held:Destroy()
-	makeDishTool(recipe, dishName).Parent = character
-	print(("[Charge] FLASH FRY! %s turned %s into a Perfect %s"):format(
-		player.Name, ingredient, recipe.Display))
+	print(("[Charge] FLASH FRY! %s instantly cooked: Perfect %s"):format(
+		player.Name, table.concat(cookedNames, ", Perfect ")))
 	return true
 end
 

@@ -43,11 +43,13 @@ local RIG_NAME = "CustomerRig"
 
 --// Paste a looping walk animation id here to animate the legs. Left empty the
 --// rigs glide, which is fine for testing.
-local WALK_ANIMATION_ID = ""
+local WALK_ANIMATION_ID --// assigned from Config.Gestures.Walk below -
+                        --// the rigs finally stop gliding (Sep 2026)
 
 local sharedFolder = ReplicatedStorage:WaitForChild("Shared", 10)
 assert(sharedFolder, "[Service] ReplicatedStorage.Shared not found")
 local Config = require(sharedFolder:WaitForChild("Config", 10))
+WALK_ANIMATION_ID = Config.Gestures.Walk or ""
 
 --// Persistence contract (ServerStorage.Shared): career counters + the
 --// shift-end deposit. Degrade over dying - a missing module must never
@@ -711,6 +713,12 @@ local function walkMemberTo(member, targetPos, onDone)
 		goal = CFrame.new(flat) * (root.CFrame - root.CFrame.Position)
 	end
 
+	--// Standing up: any walk ends the sit pose
+	if member.SitTrack then
+		member.SitTrack:Stop(0.2)
+		member.SitTrack = nil
+	end
+
 	--// Dashers sprint: a per-member speed override (set by beginDash)
 	local tween = TweenService:Create(root,
 		TweenInfo.new(math.max(distance / (member.MoveSpeed or WALK_SPEED), 0.05),
@@ -820,6 +828,73 @@ local function seatPositions(tablePart, count)
 		seats[index] = base + pattern[((index - 1) % #pattern) + 1]
 	end
 	return seats
+end
+
+--// CHAIRS (tag: ChairSeat - the owner tags each chair's SEAT SURFACE).
+--// Chairs within ChairSearchStuds of a table's anchor belong to that
+--// table, nearest first. With a chair, the member SITS on it (snap +
+--// the looped catalog sit pose); without one, the standing spot above
+--// still works - a chairless map loses nothing.
+local function seatSpots(tablePart, count)
+	local chairs = {}
+	for _, instance in ipairs(CollectionService:GetTagged("ChairSeat")) do
+		local part = instance:IsA("BasePart") and instance
+			or (instance:IsA("Model")
+				and (instance.PrimaryPart or instance:FindFirstChildWhichIsA("BasePart", true)))
+		if part and part:IsDescendantOf(workspace) then
+			local distance = (part.Position - tablePart.Position).Magnitude
+			if distance <= Config.Customers.ChairSearchStuds then
+				table.insert(chairs, { Part = part, Distance = distance })
+			end
+		end
+	end
+	table.sort(chairs, function(a, b) return a.Distance < b.Distance end)
+
+	local standing = seatPositions(tablePart, count)
+	local spots = {}
+	for index = 1, count do
+		local chair = chairs[index]
+		if chair then
+			local seat = chair.Part
+			local hip = seat.Position
+				+ Vector3.new(0, seat.Size.Y * 0.5 + Config.Customers.SitHipStuds, 0)
+			local toward = Vector3.new(tablePart.Position.X, hip.Y, tablePart.Position.Z)
+			spots[index] = {
+				Walk = seat.Position,
+				Sit = CFrame.lookAt(hip, toward), --// planted, facing the table
+			}
+		else
+			spots[index] = { Walk = standing[index] }
+		end
+	end
+	return spots
+end
+
+--// Parks a member ON a chair: snap onto the seat and hold the catalog
+--// sit pose. Movement priority, so Action gestures (point, cheer) still
+--// play over it; the next walk stands them up (walkMemberTo clears it).
+local function sitMember(member, seatCFrame)
+	if member.Root then
+		member.Root.CFrame = seatCFrame
+	end
+
+	local id = Config.Gestures.Sit
+	if not id or id == "" then return end
+	local humanoid = member.Humanoid
+	local animator = humanoid and humanoid:FindFirstChildOfClass("Animator")
+	if not animator then return end
+
+	local animation = Instance.new("Animation")
+	animation.AnimationId = id
+	local ok, track = pcall(function()
+		return animator:LoadAnimation(animation)
+	end)
+	if ok and track then
+		track.Priority = Enum.AnimationPriority.Movement
+		track.Looped = true
+		track:Play(0.2)
+		member.SitTrack = track
+	end
 end
 
 --// Waypoint parts -> the positions to walk through
@@ -1050,7 +1125,11 @@ local function showTicket(party)
 		gui.Name = "Ticket"
 		gui.Size = UDim2.fromOffset(200, 44)
 		gui.StudsOffsetWorldSpace = Vector3.new(0, 7, 0)
-		gui.AlwaysOnTop = true
+		--// Owner ruling (Sep 2026): the wanted-dish icons are DINING ROOM
+		--// knowledge - walls occlude them (no AlwaysOnTop) and they only
+		--// draw up close. The kitchen reads the OrderBoard instead.
+		gui.AlwaysOnTop = false
+		gui.MaxDistance = Config.Customers.TicketVisibleStuds
 		gui.Parent = party.Root
 		party.TicketGui = gui
 
@@ -1306,6 +1385,7 @@ local function publishCriticReview(party, forcedStars)
 	stars = math.clamp(stars, 1, 5)
 
 	local swing = CRITIC.RepByStars[stars] or 0
+	swing = math.floor(swing * (CRITIC.RepMult[DIFFICULTY] or 1) + 0.5)
 	if swing ~= 0 then
 		repChange(swing, ("critic review: %d star"):format(stars))
 	end
@@ -1494,6 +1574,40 @@ local function buildCylinderMember(party, memberIndex, atPosition)
 	pawn.Material = Enum.Material.SmoothPlastic
 
 	return { Model = pawn, Root = pawn }
+end
+
+--// GESTURES: Roblox catalog animations played on customer rigs at
+--// story moments (Config.Gestures - played, never authored). Server-
+--// side, so every player sees the wave. Fire-and-forget: gestures are
+--// rare, tracks are cleaned after they finish, rigs die with parties.
+local function playGesture(party, name, leaderOnly)
+	local id = Config.Gestures[name]
+	if not id or id == "" then return end
+
+	for index, member in ipairs(party.Members or {}) do
+		local humanoid = member.Humanoid
+		local animator = humanoid and humanoid:FindFirstChildOfClass("Animator")
+		if animator then
+			local animation = Instance.new("Animation")
+			animation.AnimationId = id
+			local ok, track = pcall(function()
+				return animator:LoadAnimation(animation)
+			end)
+			if ok and track then
+				track.Priority = Enum.AnimationPriority.Action
+				track:Play(0.1)
+				task.delay(4, function()
+					pcall(function()
+						track:Stop(0.3)
+						track:Destroy()
+					end)
+				end)
+			end
+		end
+		if leaderOnly and index == 1 then
+			break
+		end
+	end
 end
 
 --// VIP STAR (owner request, Sep 2026): a gold star floating over every
@@ -1703,8 +1817,10 @@ local function collectPayment(tableId, collector)
 	local value = paymentValue(payment)
 
 	--// CHARMER PASSIVE: the collector mints a little extra on top of what
-	--// the party owed (attribute set by ClassService, default 1)
-	local moneyMult = collector:GetAttribute("MoneyMult") or 1
+	--// the party owed (attribute set by ClassService, default 1).
+	--// `collector` is nil when the Helper NPC grabs it - no multiplier,
+	--// no careers, no hidden score: NPC work earns nobody anything.
+	local moneyMult = collector and (collector:GetAttribute("MoneyMult") or 1) or 1
 	if moneyMult ~= 1 then
 		value = math.floor(value * moneyMult)
 	end
@@ -1712,12 +1828,14 @@ local function collectPayment(tableId, collector)
 	destroyPayment(tableId)
 	addToTill(value, ("payment from table %d"):format(tableId))
 	shift.EarnedTotal += value --// shift-report bookkeeping
-	creditStat(collector, "PaymentsCollected", 1) --// the Charmer's career
+	if collector then
+		creditStat(collector, "PaymentsCollected", 1) --// the Charmer's career
+	end
 
 	--// THE PLATE RULE: a plate is only free once its table has paid up.
 	returnPlates(tableId, "payment collected")
 	print(("[Service] %s banked %d coins (Table %d)"):format(
-		collector.Name, value, tableId))
+		collector and collector.Name or "The Helper", value, tableId))
 end
 
 local PAY_COLOR = {
@@ -2212,6 +2330,25 @@ local function resolveDialogue(dlg, pickedKey, notifyClient)
 		pickedKey and " (waiter's recommendation)" or ""))
 end
 
+--// THE HELPER'S order-taking: no dialogue, no recommend - the party
+--// orders exactly what they were always going to order. The same exit
+--// a timed-out dialogue takes, minus the panel. Never steals a table a
+--// player is mid-conversation with.
+local function takeOrderDirect(party)
+	if party.State ~= STATE.SEATED or not serviceOpen() then return false end
+	if party.Dialogue then return false end
+
+	nextOrderNumber += 1
+	party.OrderNumber = nextOrderNumber
+	setPartyState(party, STATE.WAITING_FOOD)
+	showTicket(party)
+	refreshTablePrompt(party.TableId)
+	playGesture(party, "Point", true)
+	print(("[Service] Order #%d for Table %d (the Helper): %s")
+		:format(party.OrderNumber, party.TableId or 0, ticketText(party)))
+	return true
+end
+
 --// Pure close, NO completion - for walkouts. The panel disappears and the
 --// party's fate is whatever the caller is already doing to them.
 cancelDialogue = function(party)
@@ -2269,6 +2406,7 @@ local function beginDialogue(player, party, tableId)
 		table.sort(payload.Dishes, function(a, b) return a.Display < b.Display end)
 	end
 
+	playGesture(party, "Point", true) --// the speaker points their order out
 	dialogueRemote:FireClient(player, "Begin", payload)
 
 	--// Walked off / died / left: the party orders what they were always
@@ -2297,6 +2435,85 @@ dialogueRemote.OnServerEvent:Connect(function(player, action, token, pickedKey)
 
 	resolveDialogue(dlg, pickedKey, false)
 end)
+
+--// THE ONE SERVE FLOW, shared by the table prompt (a player's plated
+--// dish) and the Helper NPC (dish data straight off the pass). `server`
+--// is nil for the NPC: no careers, no charge, no hidden score.
+local function serveDishToParty(party, tableId, dishName, quality, plateSlot, server)
+	--// Quality decides both the tip multiplier and the reputation
+	if quality == "Perfect" then
+		party.PerfectDishes = (party.PerfectDishes or 0) + 1
+		shift.PerfectCooks += 1 --// shift-report bookkeeping
+		repChange(Config.Reputation.PerfectDish, "perfect dish")
+	elseif quality == "Good" then
+		party.GoodDishes = (party.GoodDishes or 0) + 1
+	elseif quality == "Overcooked" then
+		party.OvercookedDishes = (party.OvercookedDishes or 0) + 1
+		if Config.Kitchen.OvercookedRep ~= 0 then
+			repChange(Config.Kitchen.OvercookedRep, "overcooked dish")
+		end
+	end
+
+	--// The plate stays with the table until the payment is collected -
+	--// the Helper's plates included (its pass-take goes CARRIED
+	--// holderless, so the slot lands here like any waiter's).
+	if plateSlot then
+		local held = platesByTable[tableId]
+		if not held then
+			held = {}
+			platesByTable[tableId] = held
+		end
+		table.insert(held, plateSlot)
+
+		local place = passBridge("PassPlaceOnTable")
+		local where = platePlacement(tableId, #held)
+		if place and where then
+			place:Invoke(plateSlot, where)
+		elseif place then
+			returnPlates(tableId, "no placement")
+		end
+	end
+
+	--// Remove that one dish from the ticket
+	local index = table.find(party.Ticket, dishName)
+	if index then
+		table.remove(party.Ticket, index)
+	end
+	showTicket(party)
+
+	party.DishesRemaining -= 1
+	if server then
+		creditStat(server, "DishesServed", 1) --// the Waiter's career
+	end
+	playGesture(party, "Cheer") --// food! the table celebrates
+	if party.DishesRemaining > 0 then
+		extendBar(party, Config.Customers.PerDishServeBonus, "dish landed")
+		refreshTablePrompt(tableId)
+	else
+		-- LAST dish: the seated bar dies here, per spec
+		if party.IsCritic then
+			party.CriticServeFraction = math.clamp(
+				(party.BarRemaining or 0) / math.max(party.BarTotal or 1, 1), 0, 1)
+		end
+		if server then
+			creditStat(server, "CustomersServed", party.Size)
+		end
+		removeBar(party)
+		setPartyState(party, STATE.SERVED)
+		refreshTablePrompt(tableId)
+		task.delay(diff.EatingSeconds, function()
+			if party.State ~= STATE.SERVED then return end
+			if not serviceOpen() then
+				setPartyState(party, STATE.LEAVING)
+				tableOccupant[tableId] = nil
+				refreshTablePrompt(tableId)
+				departTo(party, exitPos)
+				return
+			end
+			onPartyFinishedEating(party, tableId)
+		end)
+	end
+end
 
 local function setupTable(tableId, tablePart)
 	local prompt = Instance.new("ProximityPrompt")
@@ -2376,87 +2593,11 @@ local function setupTable(tableId, tablePart)
 				return
 			end
 
-			--// Quality rides on the Tool from KitchenService and decides both
-			--// the tip multiplier and the reputation on this dish
+			--// Quality rides on the Tool from KitchenService; everything
+			--// after the Tool dies runs through the ONE serve flow above
 			local quality = dish:GetAttribute("Quality")
-			if quality == "Perfect" then
-				party.PerfectDishes = (party.PerfectDishes or 0) + 1
-				shift.PerfectCooks += 1 --// shift-report bookkeeping
-				--// (career + charge for the perfect credit at the COLLECT
-				--// moment in KitchenService now - not here at the serve)
-				repChange(Config.Reputation.PerfectDish, "perfect dish")
-			elseif quality == "Good" then
-				--// The cook minigame's middle tier: solid pay, no rep swing
-				party.GoodDishes = (party.GoodDishes or 0) + 1
-			elseif quality == "Overcooked" then
-				party.OvercookedDishes = (party.OvercookedDishes or 0) + 1
-				if Config.Kitchen.OvercookedRep ~= 0 then
-					repChange(Config.Kitchen.OvercookedRep, "overcooked dish")
-				end
-			end
-
 			dish:Destroy()
-
-			--// The plate stays with the table until the payment is collected.
-			--// Seat order follows serve order: there is no per-customer ticket,
-			--// so dish 1 lands in front of seat 1.
-			if plateSlot then
-				local held = platesByTable[tableId]
-				if not held then
-					held = {}
-					platesByTable[tableId] = held
-				end
-				table.insert(held, plateSlot)
-
-				local place = passBridge("PassPlaceOnTable")
-				local where = platePlacement(tableId, #held)
-				if place and where then
-					place:Invoke(plateSlot, where)
-				elseif place then
-					--// No table part to aim at: send it straight home rather
-					--// than leaving a plate stranded in hiding.
-					returnPlates(tableId, "no placement")
-				end
-			end
-
-			--// Remove that one dish from the ticket
-			local index = table.find(party.Ticket, dishName)
-			if index then
-				table.remove(party.Ticket, index)
-			end
-			showTicket(party)
-
-			party.DishesRemaining -= 1
-			creditStat(player, "DishesServed", 1) --// the Waiter's career
-			if party.DishesRemaining > 0 then
-				extendBar(party, Config.Customers.PerDishServeBonus, "dish landed")
-				refreshTablePrompt(tableId)
-			else
-				-- LAST dish: the seated bar dies here, per spec
-				--// The critic's service-speed verdict is the patience he
-				--// still had when the last plate landed - captured before
-				--// the bar dies
-				if party.IsCritic then
-					party.CriticServeFraction = math.clamp(
-						(party.BarRemaining or 0) / math.max(party.BarTotal or 1, 1), 0, 1)
-				end
-				--// The closer credits the whole table's headcount
-				creditStat(player, "CustomersServed", party.Size)
-				removeBar(party)
-				setPartyState(party, STATE.SERVED)
-				refreshTablePrompt(tableId)
-				task.delay(diff.EatingSeconds, function()
-					if party.State ~= STATE.SERVED then return end
-					if not serviceOpen() then
-						setPartyState(party, STATE.LEAVING)
-						tableOccupant[tableId] = nil
-						refreshTablePrompt(tableId)
-						departTo(party, exitPos)
-						return
-					end
-					onPartyFinishedEating(party, tableId)
-				end)
-			end
+			serveDishToParty(party, tableId, dishName, quality, plateSlot, player)
 
 		end
 		--// Collecting payment is its own prompt now (see the payment
@@ -2489,6 +2630,65 @@ local function findFreeTable()
 	return nil
 end
 
+--// THE ONE SEATING FLOW, shared by the queue prompt and the Helper.
+--// Returns false when no table is clear. `seater` is nil for the NPC.
+local function seatParty(party, seater)
+	if party.State ~= STATE.QUEUED then return false end
+	local tableId = findFreeTable()
+	if not tableId then return false end
+
+	-- DOOR BAR DIES HERE: seating initiated (the walk is free, per spec)
+	removeBar(party)
+	if party.SeatPrompt then
+		party.SeatPrompt:Destroy()
+		party.SeatPrompt = nil
+	end
+	if party.GreetPrompt and party.GreetPrompt.Parent then
+		party.GreetPrompt:Destroy()
+	end
+	spotOccupant[party.Spot] = nil
+	party.Spot = nil
+	tableOccupant[tableId] = party
+	party.TableId = tableId
+
+	local tablePart = tableById[tableId]
+	party.ExitFrom = tablePart --// remembered for the ExitVia route later
+
+	--// One seat per member: a tagged chair when the map has one, the
+	--// computed standing spot when it does not.
+	local seats = seatSpots(tablePart, #party.Members)
+
+	--// Route around this map's walls before arriving at the chairs
+	local points = routePoints(parseVia(tablePart:GetAttribute("EntryVia")))
+	print(("[Service] Party %d (%d) walking to Table %d via %d waypoint(s)")
+		:format(party.Id, #party.Members, tableId, #points))
+
+	--// Walk the shared route together, then each peels off to their chair
+	walkPath(party, points, function()
+		walkParty(party, function(index)
+			local spot = seats[index] or seats[1]
+			return spot.Walk
+		end, function()
+		-- SEATED BAR STARTS HERE: bodies in chairs
+			for index, member in ipairs(party.Members or {}) do
+				local spot = seats[index] or seats[1]
+				if spot.Sit then
+					sitMember(member, spot.Sit)
+				end
+			end
+			setPartyState(party, STATE.SEATED)
+			startSeatedBar(party)
+			refreshTablePrompt(tableId)
+		end)
+	end)
+	if seater then
+		scoreOnly(seater, "Seats", 1) --// the hidden score counts the host work
+	end
+	print(("[Service] %s seated Party %d at Table %d")
+		:format(seater and seater.Name or "The Helper", party.Id, tableId))
+	return true
+end
+
 local function attachQueuePrompts(party)
 	local seat = Instance.new("ProximityPrompt")
 	seat.ActionText = "Seat party"
@@ -2509,6 +2709,7 @@ local function attachQueuePrompts(party)
 	greet.MaxActivationDistance = Config.Interaction.PromptRangeStuds
 	greet.RequiresLineOfSight = Config.Interaction.PromptRequiresLineOfSight
 	greet.Parent = party.Pawn
+	party.GreetPrompt = greet --// so seatParty can retire it too
 
 	greet.Triggered:Connect(function(player)
 		--// Gap 2 closed: the greeter is no longer anonymous - their career
@@ -2518,62 +2719,110 @@ local function attachQueuePrompts(party)
 		greet:Destroy()
 		extendBar(party, diff.GreetingBonus, "greeting")
 		creditStat(player, "Greetings", 1)
+		playGesture(party, "Wave") --// the whole party waves back
 	end)
 
 	seat.Triggered:Connect(function(player)
+		if seatParty(party, player) then return end
 		if party.State ~= STATE.QUEUED then return end
-		local tableId = findFreeTable()
-		if not tableId then
-			--// Teach the rule: if a table is empty but has money on it,
-			--// collecting is what unlocks the seat
-			local moneyBlocked = false
-			for tid in pairs(tableById) do
-				if tableOccupant[tid] == nil and payments[tid] ~= nil then
-					moneyBlocked = true
-					break
-				end
+
+		--// Teach the rule: if a table is empty but has money on it,
+		--// collecting is what unlocks the seat
+		local moneyBlocked = false
+		for tid in pairs(tableById) do
+			if tableOccupant[tid] == nil and payments[tid] ~= nil then
+				moneyBlocked = true
+				break
 			end
-			seat.ObjectText = moneyBlocked and "Collect the payment first!" or "No free tables!"
-			task.delay(1.5, function()
-				if seat.Parent then seat.ObjectText = ("Party of %d"):format(party.Size) end
-			end)
-			return
 		end
-
-		-- DOOR BAR DIES HERE: seating initiated (the walk is free, per spec)
-		removeBar(party)
-		seat:Destroy(); party.SeatPrompt = nil
-		if greet.Parent then greet:Destroy() end
-		spotOccupant[party.Spot] = nil
-		party.Spot = nil
-		tableOccupant[tableId] = party
-		party.TableId = tableId
-
-		local tablePart = tableById[tableId]
-		party.ExitFrom = tablePart --// remembered for the ExitVia route later
-
-		--// One seat per member, worked out from the table anchor's facing:
-		--// member 1 near side, member 2 opposite. No extra seat parts needed.
-		local seats = seatPositions(tablePart, #party.Members)
-
-		--// Route around this map's walls before arriving at the chairs
-		local points = routePoints(parseVia(tablePart:GetAttribute("EntryVia")))
-		print(("[Service] Party %d (%d) walking to Table %d via %d waypoint(s)")
-			:format(party.Id, #party.Members, tableId, #points))
-
-		--// Walk the shared route together, then each peels off to their chair
-		walkPath(party, points, function()
-			walkParty(party, function(index)
-				return seats[index] or seats[1]
-			end, function()
-			-- SEATED BAR STARTS HERE: bodies in chairs
-				setPartyState(party, STATE.SEATED)
-				startSeatedBar(party)
-				refreshTablePrompt(tableId)
-			end)
+		seat.ObjectText = moneyBlocked and "Collect the payment first!" or "No free tables!"
+		task.delay(1.5, function()
+			if seat.Parent then seat.ObjectText = ("Party of %d"):format(party.Size) end
 		end)
-		scoreOnly(player, "Seats", 1) --// the hidden score counts the host work
-		print(("[Service] %s seated Party %d at Table %d"):format(player.Name, party.Id, tableId))
+	end)
+end
+
+----------------------------------------------------------------
+-- THE HELPER'S VERBS. HelperService drives an NPC coworker through the
+-- exact same validated flows a player uses - never around them. All of
+-- these credit NOBODY (no careers, charge or hidden score).
+----------------------------------------------------------------
+do
+	local function makeBridge(name, handler)
+		local bridge = Instance.new("BindableFunction")
+		bridge.Name = name
+		bridge.OnInvoke = handler
+		bridge.Parent = game:GetService("ServerStorage")
+	end
+
+	--// One compact world-state read for the Helper's brain
+	makeBridge("HelperSnapshot", function()
+		local out = {
+			Open = serviceOpen(),
+			FreeTable = findFreeTable() ~= nil,
+			Queued = {}, NeedOrder = {}, Waiting = {}, Payments = {},
+		}
+		local function barFraction(party)
+			return math.clamp(
+				(party.BarRemaining or 0) / math.max(party.BarTotal or 1, 1), 0, 1)
+		end
+		for _, party in pairs(parties) do
+			if party.State == STATE.QUEUED then
+				table.insert(out.Queued, {
+					Id = party.Id,
+					DoorFraction = barFraction(party),
+					Position = party.Root and party.Root.Position,
+				})
+			elseif party.State == STATE.SEATED
+				and not party.Dialogue and not party.DashWarning then
+				table.insert(out.NeedOrder, {
+					Id = party.Id,
+					TableId = party.TableId,
+					Position = party.TableId and tableById[party.TableId]
+						and tableById[party.TableId].Position,
+				})
+			elseif party.State == STATE.WAITING_FOOD then
+				table.insert(out.Waiting, {
+					Id = party.Id,
+					TableId = party.TableId,
+					Dishes = table.clone(party.Ticket or {}),
+					Patience = barFraction(party), --// desperate tables first
+					Position = party.TableId and tableById[party.TableId]
+						and tableById[party.TableId].Position,
+				})
+			end
+		end
+		for tableId in pairs(payments) do
+			table.insert(out.Payments, {
+				TableId = tableId,
+				Position = tableById[tableId] and tableById[tableId].Position,
+			})
+		end
+		return out
+	end)
+
+	makeBridge("HelperSeat", function(partyId)
+		local party = parties[partyId]
+		return party ~= nil and seatParty(party, nil)
+	end)
+
+	makeBridge("HelperTakeOrder", function(partyId)
+		local party = parties[partyId]
+		return party ~= nil and takeOrderDirect(party)
+	end)
+
+	makeBridge("HelperServe", function(tableId, dishName, quality, plateSlot)
+		local party = tableOccupant[tableId]
+		if not party or party.State ~= STATE.WAITING_FOOD then return false end
+		if not table.find(party.Ticket or {}, dishName) then return false end
+		serveDishToParty(party, tableId, dishName, quality, plateSlot, nil)
+		return true
+	end)
+
+	makeBridge("HelperCollect", function(tableId)
+		if not payments[tableId] then return false end
+		collectPayment(tableId, nil)
+		return true
 	end)
 end
 
@@ -2882,6 +3131,38 @@ local function endShift(success, reason)
 
 	publishShift()
 	refreshScoreboard()
+
+	--// THE RIDE HOME. A fixed clock from shift end, long enough for the
+	--// ceremony and the report (Config.Shift.ReturnToLobbySeconds).
+	--// TeleportAsync never runs in Studio, so playtests just print.
+	task.delay(Config.Shift.ReturnToLobbySeconds, function()
+		local everyone = Players:GetPlayers()
+		if #everyone == 0 then return end
+
+		if game:GetService("RunService"):IsStudio() then
+			print("[Service] (Studio) would teleport everyone back to the lobby now")
+			return
+		end
+
+		local function ride(passengers)
+			return pcall(function()
+				game:GetService("TeleportService")
+					:TeleportAsync(Config.Places.LobbyPlaceId, passengers)
+			end)
+		end
+
+		print(("[Service] returning %d player(s) to the lobby"):format(#everyone))
+		local ok, err = ride(everyone)
+		if not ok then
+			warn("[Service] return teleport failed, retrying once: " .. tostring(err))
+			task.delay(5, function()
+				local remaining = Players:GetPlayers()
+				if #remaining > 0 then
+					ride(remaining)
+				end
+			end)
+		end
+	end)
 end
 
 --// SHIFT-END BRIDGE: an event that constitutes catastrophic failure (the

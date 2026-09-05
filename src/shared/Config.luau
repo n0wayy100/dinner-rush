@@ -7,9 +7,12 @@
 	catalog, Easy/Normal/Hard, Map Details v2, Rates and Bars (Aug 2026).
 
 	Rules:
-	  * THE EASY FREEZE: EASY is the frozen baseline (the game as it felt
-	    Aug 2026). Do not retune EASY values; new mechanics ship EASY-neutral
-	    (weight 0 / flag false / mult 1) and ramp on NORMAL/HARD upward.
+	  * EASY IS GENTLE, NOT FROZEN (owner ruling Sep 2026, supersedes THE
+	    EASY FREEZE): mechanics and minigames ship on EVERY difficulty -
+	    they are the fun, not the pressure. Gentleness lives in NUMBERS
+	    only: demand (spawn/patience/targets), event weights, consequence
+	    severity. The per-difficulty Interactions gates REMAIN as
+	    architecture for a future mechanic that truly earns an exclusive.
 	  * Cooking windows NEVER scale with difficulty (demand scales, not dexterity).
 	  * All timers run on the SERVER; clients only render replicated values.
 
@@ -34,6 +37,13 @@ Config.Shift = {
 	--// customers arrive. This is a safety cap so a stuck party cannot hold the
 	--// shift open forever.
 	ClosingMaxSeconds = 150,
+
+	--// The ride home: seconds from shift END until everyone teleports
+	--// back to the lobby. Sized to cover the awards ceremony (~15s,
+	--// skippable) + the report card (12s auto-dismiss) + a breather -
+	--// the owner's "10-15s after they've seen everything".
+	ReturnToLobbySeconds = 35,
+
 	Phases = {                        -- shift-time boundaries (seconds)
 		CalmEndsAt = 120,             -- 0:00-2:00 tutorial-in-motion
 		BuildingEndsAt = 300,         -- 2:00-5:00 pressure ramps
@@ -138,8 +148,14 @@ Config.Kitchen = {
 
 	--// OWNER RULING (Aug 2026): E means PRESS, everywhere. Every
 	--// default-key prompt is a tap - the only holds left in the game are
-	--// EASY's frozen fix channels, the 3s pitcher fill, and the F/G
-	--// prompts (water pour / water trap / payment collect).
+	--// the 3s pitcher fill and the F/G prompts (water pour / water trap /
+	--// payment collect). The old channel-hold fix paths still exist in
+	--// code but no difficulty uses them since the Sep 2026 un-freeze.
+	--// The cooking food's BOTTOM relative to each station's anchor -
+	--// RAYCAST-MEASURED per method (the anchors sit at different heights
+	--// over their cook surfaces in this map). Re-measure after moving
+	--// appliances: the one-liner lives in the session notes.
+	StationFoodLiftStuds = { Grill = -0.49, Fry = 0.55 },
 	PickupHoldSeconds = 0,        -- fridge / dry shelf prompt
 	StationLoadHoldSeconds = 0,   -- starting a cook
 	CollectHoldSeconds = 0,       -- taking the result off the station
@@ -252,6 +268,15 @@ Config.Customers = {
 	WaterPourRepeatBonus = 10,        -- diminishing, same table
 	WaterStationHoldSeconds = 3,
 
+	ChairSearchStuds = 9,             -- ChairSeat-tagged parts this close to a
+	                                  -- table anchor are that table's chairs
+	SitHipStuds = 1.1,                -- root height above the seat surface when
+	                                  -- parked on a chair (tune to the chairs)
+
+	TicketVisibleStuds = 30,          -- wanted-dish icons draw only this close
+	                                  -- (walls occlude them too - the kitchen
+	                                  -- reads the OrderBoard, not heads)
+
 	--// Table prompts: TAPS, per the E-means-press ruling (the server
 	--// still validates the dish, so a mistap serve is denied, not wasted)
 	TakeOrderHoldSeconds = 0,
@@ -334,10 +359,9 @@ Config.Reputation = {
 Config.Difficulty = {
 
 	EASY = {
-		--// FROZEN (THE EASY FREEZE, Aug 2026): these values are the locked
-		--// baseline - EASY must forever feel like the game felt today.
-		--// Tune NORMAL/HARD instead; new mechanics arrive here as neutral
-		--// (weight 0 / false / 1) only.
+		--// GENTLE, NOT FROZEN (Sep 2026): EASY gets every mechanic - its
+		--// kindness is in these NUMBERS (slow spawns, long patience, soft
+		--// consequences), never in withholding the fun parts.
 		Label = "Cozy Shift",
 		Patience = 1.2,               -- multiplies both bars
 		SpawnRate = 0.8,              -- interval = base / SpawnRate
@@ -382,11 +406,13 @@ Config.Difficulty = {
 			                          -- predated the extinguisher fetch, unwinnable)
 		},
 		Reputation = { SatisfiedParty = 3, VIPSatisfied = 5 },
-		--// THE EASY FREEZE: interactions stay simple here, forever.
+		--// The minigames are the FUN - every difficulty gets them (owner
+		--// ruling Sep 2026; the old freeze kept EASY on hold-E chores)
 		Interactions = {
-			BreakerMinigame = false,  -- hold-E, as the game shipped
-			CookMinigame = false,     -- window-collect, as the game shipped
-			PlungeMinigame = false,   -- hold-E plunge, as the game shipped
+			BreakerMinigame = true,
+			BreakerWires = 3,         -- the gentlest wire count
+			CookMinigame = true,
+			PlungeMinigame = true,
 		},
 		Rewards = {
 			CoinMult = 0.8, CompletionBonus = 100,
@@ -1000,7 +1026,7 @@ Config.PlayerStats = {
 
 ----------------------------------------------------------------
 -- WIRE FIX (the breaker minigame - see EventSystem + WireFixClient).
--- The first gated interaction under the EASY FREEZE: EASY holds E, the
+-- Every difficulty matches wires now (EASY deals 3, the gentlest); the
 -- gated difficulties match wires. The SERVER deals the shuffle and checks
 -- the answer; the client only renders and reports taps. The puzzle is
 -- unfailable by design (only matching colours connect) - the fun is the
@@ -1025,7 +1051,7 @@ Config.WireFix = {
 
 ----------------------------------------------------------------
 -- COOK TIMING (the cooking minigame - see KitchenService + CookTimingClient)
--- Gated by Difficulty.Interactions.CookMinigame (EASY keeps the frozen
+-- Gated by Difficulty.Interactions.CookMinigame (ON for everyone since
 -- window-collect). Replaces the COLLECT step only: the cook timer, the
 -- station flow and the burn threat are untouched. An arrow sweeps a bar;
 -- the GREEN zone sits at a RANDOM position each swing (owner call):
@@ -1048,7 +1074,7 @@ Config.CookTiming = {
 	--// Where the minigame runs, EVERY station cooks in the same flat time
 	--// (owner ruling: the arrow is the skill, the wait is uniform - and
 	--// the late game is hard enough already). Follows the GATE, not the
-	--// difficulty (THE LAW); EASY keeps its frozen per-method timers.
+	--// difficulty (THE LAW); an ungated difficulty would keep full timers.
 	MinigameCookSeconds = 5,      -- flat cook time on gated difficulties
 	GreenWidth = 0.09,            -- fraction of the bar; NEVER per-difficulty
 	YellowWidth = 0.11,           -- each side of the green
@@ -1061,7 +1087,7 @@ Config.CookTiming = {
 
 ----------------------------------------------------------------
 -- THE PLUNGE TAP (Difficulty.Interactions.PlungeMinigame - EASY keeps
--- the frozen hold-E plunge). Spam tap / left-click to fill the bar;
+-- ON for every difficulty). Spam tap / left-click to fill the bar;
 -- it leaks while you rest. The SERVER counts its own taps (rate-capped
 -- against autoclickers) and succeeds through stopToilet's normal path.
 -- Same numbers on every gated difficulty (THE LAW).
@@ -1082,10 +1108,11 @@ Config.PlungeTap = {
 -- hold) to stop them: the bill pays itself instantly with a catch
 -- bonus and the whole party gets LAUNCHED. An escape loses the money
 -- (and rep, on HARD - Difficulty.Consequences.DashUncaughtRep).
--- EASY never rolls a dash: THE EASY FREEZE.
 ----------------------------------------------------------------
 Config.Dash = {
-	Chance = { EASY = 0, NORMAL = 0.08, HARD = 0.15 }, -- per party, at meal end
+	Chance = { EASY = 0.04, NORMAL = 0.08, HARD = 0.15 }, -- per party, at meal end
+	                            -- (EASY at a whisper: the chase is fun, and
+	                            -- an escape there costs no rep - money only)
 	VIPCanDash = { EASY = false, NORMAL = false, HARD = true }, -- double bills run too
 	WarnSeconds = 5,            -- the ❗ window: they sit there LOOKING shifty
 	                            -- first - punch them at the table before they bolt
@@ -1105,10 +1132,10 @@ Config.Dash = {
 -- for the patience left when the last dish lands + up to 2 for
 -- quality (all Perfect = 2, none Overcooked = 1, any Overcooked = 0).
 -- A walkout is an automatic 1 star. The rep swing is the biggest
--- single hit/boost in the game. EASY never sees a critic (THE FREEZE).
+-- single hit/boost in the game (halved on EASY via RepMult).
 ----------------------------------------------------------------
 Config.Critic = {
-	ShiftChance = { EASY = 0, NORMAL = 0.35, HARD = 0.5 }, -- rolled at shift start
+	ShiftChance = { EASY = 0.2, NORMAL = 0.35, HARD = 0.5 }, -- rolled at shift start
 	EarliestFraction = 0.2,     -- never during the opening calm...
 	LatestFraction = 0.75,      -- ...or too late to finish the meal
 	MinDishes = 2,              -- one person, orders like a table
@@ -1117,7 +1144,8 @@ Config.Critic = {
 	                            -- professionals take their time
 	PatienceTwoStars = 0.6,     -- bar fraction left at the last dish for +2
 	PatienceOneStar = 0.3,      -- ...for +1
-	RepByStars = { -12, -6, 0, 6, 12 }, -- [stars] -> the swing
+	RepByStars = { -12, -6, 0, 6, 12 }, -- [stars] -> the swing, scaled by...
+	RepMult = { EASY = 0.5, NORMAL = 1, HARD = 1 }, -- EASY reviews sting, not wound
 	StarsHoldSeconds = 5,       -- the verdict floats overhead this long
 }
 
@@ -1343,6 +1371,12 @@ Config.Ultimates = {
 	SweetTalkRefillFraction = 0.5,   -- half the table's patience bar back
 	ThirdHandExtraSlots = 1,         -- carry 2 -> 3 for the rest of the shift
 
+	--// FLASH FRY cooks EVERY carried raw at once. When an ingredient has
+	--// dish VARIANTS (future: RawSteak -> grilled OR pan-fried), the
+	--// ultimate cooks what an open ticket wants, neediest table first;
+	--// with nobody asking, the first method listed here wins.
+	FlashFryMethodOrder = { "Grill", "Fry" },
+
 	--// Bar feel (client)
 	BarTweenSeconds = 0.2,
 	ReadyPulseSeconds = 0.8,
@@ -1479,6 +1513,79 @@ Config.Pass = {
 -- Leave an Id empty and that sound is simply silent. Nothing breaks, and the
 -- log says once which one is missing.
 ----------------------------------------------------------------
+----------------------------------------------------------------
+-- THE HELPER (HelperService): an NPC coworker who runs the FLOOR when
+-- the shift starts short-handed - seats parties, takes plain orders,
+-- ferries plated dishes from the pass, collects payments. Deliberately
+-- WEAKER than a player: ambles, one task at a time, never cooks, never
+-- fixes events, never greets/recommends/punches, and credits nobody
+-- (no careers, charge or hidden score). Player-count mercy, not
+-- difficulty mercy - runs on every difficulty.
+----------------------------------------------------------------
+Config.Helper = {
+	MaxPlayersForHelper = 2,      -- helper spawns when the shift starts
+	                              -- with this many players or fewer
+	WalkSpeed = 13,               -- an amble; players can always outrun it
+	ThinkSeconds = 0.6,           -- pause between task decisions
+	Name = "HELPER",              -- the overhead tag
+
+	--// PACING (owner + Claude ruling): the polite pause exists only when
+	--// everything is calm - past the Calm phase, or with a queue, or a
+	--// draining door bar, he hustles.
+	SeatAtDoorFraction = 0.85,    -- in Calm, seat once the door bar dips here
+	SeatQueueRush = 2,            -- ...or the moment this many wait in line
+
+	--// CARRYING: like a player, two hands. He gathers a table's whole
+	--// order before walking when patience allows...
+	MaxCarry = 2,
+	DeliverAnywayFraction = 0.4,  -- ...but below this patience he stops
+	                              -- waiting for the kitchen and delivers
+	                              -- whatever he holds
+
+	--// The suit: paste any shirt/pants TEMPLATE ids the group may use
+	--// (clothing is image data - script-free, safe). Empty = a smart
+	--// charcoal-suit body-colour fallback.
+	ShirtTemplate = "",
+	PantsTemplate = "",
+}
+
+----------------------------------------------------------------
+-- EVENT ARROW (EventArrowClient): an edge-of-screen pointer toward
+-- whatever the current crisis needs - the TOOL mount first when the
+-- fix needs a tool you aren't holding, then the emergency itself, and
+-- any dine-and-dasher mid-bolt. Hidden while the target is on screen
+-- (its own billboards take over there).
+----------------------------------------------------------------
+Config.EventArrow = {
+	EdgeMarginPx = 56,            -- how far the arrow floats from the edge
+	RefreshSeconds = 0.2,         -- how often targets are re-picked
+}
+
+----------------------------------------------------------------
+-- GESTURES (Roblox's own catalog emote animations - PLAYED on customer
+-- rigs at story moments, never authored: the hired-animator ruling
+-- covers custom poses, not prefab Roblox assets). Classic R15 emote
+-- ids, Roblox-owned so they play in any experience. Empty = off.
+-- If one stays silent in a test, the id needs re-checking in Studio.
+----------------------------------------------------------------
+Config.Gestures = {
+	Wave = "rbxassetid://507770239",   -- greeted at the door: the party waves back
+	Point = "rbxassetid://507770453",  -- ordering: the speaker points it out
+	Cheer = "rbxassetid://507770677",  -- a dish lands: the table celebrates
+	Sit = "rbxassetid://2506281703",   -- held (looped) while parked on a chair
+	Walk = "rbxassetid://507777826",   -- the catalog R15 walk cycle - looped by
+	                                   -- customers AND the Helper while moving
+}
+
+----------------------------------------------------------------
+-- PLACES (the two-place experience, both under Magistrate Studios).
+-- Shared Config on purpose: either place can address the other.
+----------------------------------------------------------------
+Config.Places = {
+	LobbyPlaceId = 132877152120112,
+	GamePlaceId = 97952115394249,
+}
+
 Config.Sfx = {
 	Enabled = true,
 
@@ -1497,13 +1604,15 @@ Config.Sfx = {
 		--// KITCHEN -------------------------------------------------------
 		--// Tight radius on purpose: the kitchen should sound busy from the
 		--// pass and only murmur from the dining room.
+		--// Owner ruling (Sep 2026): kitchen-only - audible near the
+		--// stations, gone by the dining room
 		CookFry = {
 			Id = "75511010485145", Volume = 0.5, Loop = true,
-			MinStuds = 8, MaxStuds = 35,
+			MinStuds = 8, MaxStuds = 25,
 		},
 		CookGrill = {
 			Id = "77924122314675", Volume = 0.5, Loop = true,
-			MinStuds = 8, MaxStuds = 35,
+			MinStuds = 8, MaxStuds = 25,
 		},
 
 		--// EMERGENCIES ---------------------------------------------------
@@ -1511,7 +1620,8 @@ Config.Sfx = {
 		--// nobody can miss them - so they are global.
 		ToiletAlert = { Id = "", Volume = 0.7, Global = true },
 		FireAlert   = { Id = "133849873643710", Volume = 0.8, Global = true },
-		PowerAlert  = { Id = "", Volume = 0.7, Global = true },
+		PowerAlert  = { Id = "", Volume = 1, Global = true }, -- owner: louder.
+		                              -- NOTE: Id still empty = silent until set!
 
 		--// The FIXES are positional: you hear them where the work is.
 		ToiletFix = {
@@ -1519,9 +1629,14 @@ Config.Sfx = {
 			MinStuds = 6, MaxStuds = 30,
 		},
 		BreakerFix = {
+			--// UNWIRED since the owner ruling (Sep 2026): the wire fix
+			--// sounds per CONNECTION (WireConnect below), not per session
 			Id = "87055568032543", Volume = 0.6, Loop = true,
 			MinStuds = 6, MaxStuds = 30,
 		},
+		--// Client-local one-shot: a little zap each time a wire seats
+		--// (played by WireFixClient directly, not the server module)
+		WireConnect = { Id = "87055568032543", Volume = 0.6 },
 		FireExtinguish = {
 			Id = "84243999556475", Volume = 0.7, Loop = true,
 			MinStuds = 8, MaxStuds = 40,
