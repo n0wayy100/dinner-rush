@@ -1462,6 +1462,102 @@ Config.Pass = {
 }
 
 ----------------------------------------------------------------
+-- SOUND EFFECTS
+--
+-- Server-played, so everyone hears the same thing at the same moment.
+--
+-- HOW 3D SOUND WORKS HERE: a Sound parented to a BasePart is positional
+-- automatically. MinStuds is the radius of full volume; past MaxStuds it is
+-- silent, tapering between the two. So a fryer with MinStuds 8 / MaxStuds 35
+-- is loud at the station, faint across the dining room, and gone outside.
+-- Global = true skips all that and plays flat for everyone, wherever they are.
+--
+-- MAP-AGNOSTIC BY DESIGN: nothing here names an instance. Every sound is
+-- attached to whatever the calling system already found by TAG, so a new map
+-- only needs its tags placed - no code changes, no paths to update.
+--
+-- Leave an Id empty and that sound is simply silent. Nothing breaks, and the
+-- log says once which one is missing.
+----------------------------------------------------------------
+Config.Sfx = {
+	Enabled = true,
+
+	--// Scales every sound below, for balancing against the music in one place
+	MasterVolume = 1,
+
+	--// Used by any sound that does not override them
+	DefaultMinStuds = 10,
+	DefaultMaxStuds = 60,
+
+	--// Per-sound. Volume is 0..1 before MasterVolume.
+	--//   Loop   = true   plays until the system stops it
+	--//   Global = true   heard everywhere at flat volume, ignores distance
+	Sounds = {
+
+		--// KITCHEN -------------------------------------------------------
+		--// Tight radius on purpose: the kitchen should sound busy from the
+		--// pass and only murmur from the dining room.
+		CookFry = {
+			Id = "75511010485145", Volume = 0.5, Loop = true,
+			MinStuds = 8, MaxStuds = 35,
+		},
+		CookGrill = {
+			Id = "77924122314675", Volume = 0.5, Loop = true,
+			MinStuds = 8, MaxStuds = 35,
+		},
+
+		--// EMERGENCIES ---------------------------------------------------
+		--// Alerts carry across the whole restaurant - the point is that
+		--// nobody can miss them - so they are global.
+		ToiletAlert = { Id = "", Volume = 0.7, Global = true },
+		FireAlert   = { Id = "133849873643710", Volume = 0.8, Global = true },
+		PowerAlert  = { Id = "", Volume = 0.7, Global = true },
+
+		--// The FIXES are positional: you hear them where the work is.
+		ToiletFix = {
+			Id = "", Volume = 0.6, Loop = true,
+			MinStuds = 6, MaxStuds = 30,
+		},
+		BreakerFix = {
+			Id = "87055568032543", Volume = 0.6, Loop = true,
+			MinStuds = 6, MaxStuds = 30,
+		},
+		FireExtinguish = {
+			Id = "84243999556475", Volume = 0.7, Loop = true,
+			MinStuds = 8, MaxStuds = 40,
+		},
+
+		--// Relief beat when the lights come back. Global - everyone was in
+		--// the dark together.
+		PowerRestored = { Id = "", Volume = 0.7, Global = true },
+
+		--// CUSTOMERS -----------------------------------------------------
+		--// At the customer, so you can tell WHICH table just gave up.
+		CustomerAngry = {
+			Id = "119046821634222", Volume = 0.7,
+			MinStuds = 10, MaxStuds = 55,
+		},
+
+		--// SUPPLIER ------------------------------------------------------
+		--// The order confirmation plays at the board you just used; the
+		--// arrival plays at the truck so it pulls your attention outside.
+		SupplyOrdered = {
+			Id = "", Volume = 0.6,
+			MinStuds = 8, MaxStuds = 35,
+		},
+		TruckArrived = {
+			Id = "110342333875026", Volume = 0.8,
+			MinStuds = 15, MaxStuds = 90,
+		},
+
+		--// SHIFT ---------------------------------------------------------
+		--// Everyone hears these together, wherever they happen to be.
+		ShiftStart = { Id = "", Volume = 0.8, Global = true },
+		ShiftEnd   = { Id = "", Volume = 0.8, Global = true },
+	},
+}
+
+----------------------------------------------------------------
 -- MUSIC
 --
 -- Client-side by design: every player owns their own music so they can mute

@@ -24,6 +24,8 @@ local CollectionService = game:GetService("CollectionService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local ServerStorage = game:GetService("ServerStorage")
+
+local Sfx = require(ServerStorage:WaitForChild("Shared"):WaitForChild("Sfx"))
 local Players = game:GetService("Players")
 
 local sharedFolder = ReplicatedStorage:WaitForChild("Shared", 10)
@@ -584,6 +586,13 @@ local function refreshStationPrompt(station)
 end
 
 local function clearStation(station)
+	--// Every route out of cooking lands here - collected, binned, burnt,
+	--// wiped by a grease fire - so one stop covers all of them.
+	if station.Sfx then
+		station.Sfx:Stop()
+		station.Sfx = nil
+	end
+
 	station.State = "IDLE"
 	station.Dish = nil
 	station.Elapsed = 0
@@ -615,6 +624,12 @@ local function startCook(station, player, tool, dishName, recipe)
 	station.PerfectUntil = cookTime + timing.PerfectWindow
 	station.OvercookedUntil = station.PerfectUntil + timing.OvercookAfter
 	station.BurntAt = station.OvercookedUntil + timing.BurntAfter
+
+	--// Sizzle at the station, not in the player's ear: it is positional, so
+	--// the dining room hears the kitchen working without being deafened.
+	--// Method comes from the tag attribute, so a new map needs no code change.
+	if station.Sfx then station.Sfx:Stop() end
+	station.Sfx = Sfx.Loop(station.Method == "Fry" and "CookFry" or "CookGrill", station.Part)
 
 	refreshStationUi(station)
 	refreshStationPrompt(station)
@@ -1054,8 +1069,23 @@ task.spawn(function()
 				station.Prompt.ObjectText = station.State == "IDLE"
 					and ("%s station"):format(station.Method)
 					or stationPromptText(station)
+
+				--// The pans are frozen, so the sizzle stops with them. A
+				--// blackout that still sounds like a working kitchen reads
+				--// as a bug.
+				if station.Sfx then
+					station.Sfx:Stop()
+					station.Sfx = nil
+				end
 			else
 				refreshStationPrompt(station)
+
+				--// Anything mid-cook picks its sizzle back up
+				if station.State == "COOKING" and not station.Sfx then
+					station.Sfx = Sfx.Loop(
+						station.Method == "Fry" and "CookFry" or "CookGrill",
+						station.Part)
+				end
 			end
 		end
 		print(("[Kitchen] power %s - %d station(s) %s"):format(

@@ -31,6 +31,8 @@ local CollectionService = game:GetService("CollectionService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 local ServerStorage = game:GetService("ServerStorage")
+
+local Sfx = require(ServerStorage:WaitForChild("Shared"):WaitForChild("Sfx"))
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
 
@@ -1337,6 +1339,9 @@ local function publishCriticReview(party, forcedStars)
 end
 
 local function doorWalkout(party)
+	--// At the customer, not global: you should be able to tell WHICH party
+	--// just gave up on you.
+	Sfx.Play("CustomerAngry", party.Pawn)
 	shift.DoorWalkouts += 1
 	repChange(diff.Consequences.DoorWalkoutRep, "door walkout")
 	if party.IsCritic then
@@ -1350,6 +1355,7 @@ local function doorWalkout(party)
 end
 
 local function seatedWalkout(party)
+	Sfx.Play("CustomerAngry", party.Pawn)
 	cancelDialogue(party) --// a mid-dialogue walkout closes the waiter's panel
 	shift.SeatedWalkouts += 1
 	repChange(diff.Consequences.SeatedWalkoutRep, "seated walkout")
@@ -2703,6 +2709,8 @@ end
 local function endShift(success, reason)
 	if shift.State == "ENDED" then return end
 	shift.State = "ENDED"
+
+	Sfx.Play("ShiftEnd")
 	--// The count reveals here, plain - the grade stamp does the judging
 	shift.EndText = success
 		and ("SHIFT COMPLETE - Served %d parties!"):format(shift.Satisfied)
@@ -3063,6 +3071,8 @@ task.spawn(function()
 	print(("[Service] Prep: shift starts in %ds"):format(shift.PrepRemaining))
 	task.wait(shift.PrepRemaining)
 
+	--// Global: the whole team starts together
+	Sfx.Play("ShiftStart")
 	shift.State = "RUNNING"
 	shift.Elapsed = 0
 	shift.Till = Config.Money.ShiftStartingTill --// every shift opens at zero
