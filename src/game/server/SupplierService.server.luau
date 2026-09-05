@@ -27,6 +27,8 @@
 local CollectionService = game:GetService("CollectionService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
+
+local Sfx = require(ServerStorage:WaitForChild("Shared"):WaitForChild("Sfx"))
 local RunService = game:GetService("RunService")
 
 local sharedFolder = ReplicatedStorage:WaitForChild("Shared", 10)
@@ -257,7 +259,11 @@ local function arrive()
 	container.Parent = workspace
 	delivery.Truck = container
 
-	spawnTruck(container)
+	local truck = spawnTruck(container)
+
+	--// Wide radius on purpose: this should reach the kitchen and tell someone
+	--// to go outside and unload.
+	Sfx.Play("TruckArrived", truck)
 
 	--// One crate per ingredient ordered, holding all of that ingredient's units
 	local ordered = {}
@@ -364,6 +370,11 @@ supplierRemote.OnServerEvent:Connect(function(player, action, payload)
 	delivery.Status = "ORDERED"
 	delivery.ArrivesIn = diff.SupplierDeliverySeconds
 	publish()
+
+	--// At the board, so it reads as confirmation of what YOU just did rather
+	--// than an announcement to the whole restaurant. Found by TAG, so a new
+	--// map only has to tag its own board.
+	Sfx.Play("SupplyOrdered", firstTaggedPart("SupplierBoard"))
 
 	print(("[Supplier] %s ordered %s - arriving in %ds"):format(
 		player.Name, delivery.Summary, math.ceil(delivery.ArrivesIn)))

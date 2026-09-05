@@ -29,6 +29,8 @@
 local CollectionService = game:GetService("CollectionService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
+
+local Sfx = require(ServerStorage:WaitForChild("Shared"):WaitForChild("Sfx"))
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
 
@@ -462,6 +464,9 @@ local beginPlungeSession --// forward declared (same section)
 
 local function startToilet()
 	local diff = difficultyBlock()
+
+	--// Global: an emergency nobody hears is an emergency nobody fixes
+	Sfx.Play("ToiletAlert")
 
 	toilet.Active = true
 	toilet.Phase = "ERUPTING"
@@ -1244,6 +1249,8 @@ local function startFire()
 		return
 	end
 
+	Sfx.Play("FireAlert")
+
 	fire.Active = true
 	fire.DrainAccum = 0
 	fire.AlertOverride = nil
@@ -1406,6 +1413,8 @@ local beginWirePuzzle --// forward declared (same section)
 local function startOutage()
 	if outage.Active or not outage.Part then return end
 
+	Sfx.Play("PowerAlert")
+
 	outage.Active = true
 	outage.DrainAccum = 0
 	snapshotAndDarken()
@@ -1425,6 +1434,11 @@ local function startOutage()
 end
 
 function stopOutage(fixedBy)
+	--// Global relief beat: everyone was in the dark together
+	if outage.Active then
+		Sfx.Play("PowerRestored")
+	end
+
 	if not outage.Active then return end
 
 	outage.Active = false
@@ -1735,7 +1749,32 @@ do
 	bridge.Parent = ServerStorage
 end
 
+--// FIX AUDIO. Each emergency has its own mini-game - tapping to plunge,
+--// rewiring a breaker, spraying a fire - and each has several ways in and
+--// several ways out (finished, walked away, died, event cancelled). Hooking
+--// every one of those would leave a loop playing after a fix eventually.
+--//
+--// So this follows the SESSION instead. One place, and a loop can never
+--// outlive the thing it belongs to.
+local fixLoops = {}
+
+local function syncFixLoop(key, active, soundName, part)
+	local live = fixLoops[key]
+	if active and part and not live then
+		fixLoops[key] = Sfx.Loop(soundName, part)
+	elseif (not active or not part) and live then
+		live:Stop()
+		fixLoops[key] = nil
+	end
+end
+
 RunService.Heartbeat:Connect(function(dt)
+	--// Positional: you hear the work where the work is happening
+	syncFixLoop("Toilet", plungeSession ~= nil, "ToiletFix", toilet.Part)
+	syncFixLoop("Breaker", wirePuzzle ~= nil, "BreakerFix", outage.Part)
+	syncFixLoop("Fire", fire.Dousing ~= nil, "FireExtinguish",
+		fire.Dousing and fire.Dousing.Target and fire.Dousing.Target.Part or nil)
+
 	local info = shiftInfo()
 
 	--// Fresh shift, fresh report counters
