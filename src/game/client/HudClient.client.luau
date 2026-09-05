@@ -23,6 +23,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 
 local REFRESH_INTERVAL = 0.1 --// matches the server's publish rate
 
@@ -485,6 +486,106 @@ local function updateRepMeter(state, rep, repMax)
 	repFill.BackgroundColor3 = fraction > 0.5 and BASIL
 		or fraction > 0.25 and MUSTARD
 		or TOMATO
+end
+
+----------------------------------------------------------------
+-- THE CRITIC'S REVIEW BANNER (owner request, Sep 2026): the verdict
+-- pops in just below the shift bar, one star at a time, holds, then
+-- shrinks away. Driven by ShiftState.CriticStars (0 = shift reset).
+----------------------------------------------------------------
+local criticGui, criticStarLabels, criticScales
+do
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "CriticReview_UI"
+	gui.ResetOnSpawn = false
+	gui.IgnoreGuiInset = true
+	gui.DisplayOrder = 21
+	gui.Enabled = false
+	gui.Parent = playerGui
+
+	local row = Instance.new("Frame")
+	row.AnchorPoint = Vector2.new(0.5, 0)
+	row.Position = UDim2.fromScale(0.5, 0.118) --// tucked under the bar's chip
+	row.Size = UDim2.fromScale(0.24, 0.055)
+	row.BackgroundTransparency = 1
+	row.Parent = gui
+
+	local layout = Instance.new("UIListLayout")
+	layout.FillDirection = Enum.FillDirection.Horizontal
+	layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	layout.VerticalAlignment = Enum.VerticalAlignment.Center
+	layout.Padding = UDim.new(0.01, 0)
+	layout.Parent = row
+
+	criticStarLabels, criticScales = {}, {}
+	for index = 1, 5 do
+		local star = Instance.new("TextLabel")
+		star.LayoutOrder = index
+		star.Size = UDim2.fromScale(0.19, 1)
+		star.BackgroundTransparency = 1
+		star.Font = Enum.Font.FredokaOne
+		star.TextScaled = true
+		star.TextColor3 = MUSTARD
+		star.TextStrokeColor3 = CHOC
+		star.TextStrokeTransparency = 0.4
+		star.Text = "☆"
+		star.Parent = row
+
+		local scale = Instance.new("UIScale")
+		scale.Scale = 0
+		scale.Parent = star
+
+		criticStarLabels[index] = star
+		criticScales[index] = scale
+	end
+
+	criticGui = gui
+end
+
+local criticShowing = 0
+
+local function playCriticReview(stars)
+	criticShowing += 1
+	local mySeq = criticShowing
+
+	for index = 1, 5 do
+		criticStarLabels[index].Text = index <= stars and "⭐" or "☆"
+		criticScales[index].Scale = 0
+	end
+	criticGui.Enabled = true
+
+	--// One star at a time, each with a little bounce
+	for index = 1, 5 do
+		task.delay(0.18 * index, function()
+			if criticShowing ~= mySeq then return end
+			TweenService:Create(criticScales[index],
+				TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+				{ Scale = 1 }):Play()
+		end)
+	end
+
+	task.delay((Config.Critic.StarsHoldSeconds or 5) + 1, function()
+		if criticShowing ~= mySeq then return end
+		for index = 1, 5 do
+			TweenService:Create(criticScales[index],
+				TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+				{ Scale = 0 }):Play()
+		end
+		task.delay(0.3, function()
+			if criticShowing == mySeq then
+				criticGui.Enabled = false
+			end
+		end)
+	end)
+end
+
+if ShiftState then
+	ShiftState:GetAttributeChangedSignal("CriticStars"):Connect(function()
+		local stars = ShiftState:GetAttribute("CriticStars") or 0
+		if stars > 0 then
+			playCriticReview(stars)
+		end
+	end)
 end
 
 local lastState

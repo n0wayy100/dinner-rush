@@ -96,6 +96,14 @@ end
 -- DEBUG knobs (set to nil to use real Config values)
 local DEBUG_PREP_SECONDS = 8        -- real: Config.Shift.PrepTimeSeconds (45)
 local DEBUG_SHIFT_SECONDS = nil     -- e.g. 180 for a 3-minute test shift
+local DEBUG_FORCE_FIRST_DASH = false -- first party to finish eating ALWAYS dashes,
+                                     -- once per server - set false for real play
+local DEBUG_FORCE_FIRST_VIP = false  -- first party to SPAWN is always a VIP, once
+                                     -- per server - set false for real play
+local debugFirstVIPDone = false
+local DEBUG_FORCE_FIRST_CRITIC = false -- first party to SPAWN is the critic, once
+                                       -- per server - set false for real play
+local debugFirstCriticDone = false
 local VIP_TIP_MULT = 2.0
 local BASE_COINS_PER_PARTY = 15
 local WALK_SPEED = 12               -- NPC amble (untimed by design)
@@ -617,8 +625,10 @@ end
 local STATE = {
 	QUEUED = "QUEUED", SEATED = "SEATED", WAITING_FOOD = "WAITING FOOD",
 	SERVED = "EATING", PAYING = "PAYING", LEAVING = "LEAVING", WALKOUT = "STORMED OUT",
+	DASHING = "DINE AND DASH!!",
 }
 local STATE_COLOR = {
+	[STATE.DASHING] = Color3.fromRGB(229, 72, 77), --// tomato: catch them!
 	[STATE.QUEUED] = Color3.fromRGB(245, 184, 65),
 	[STATE.SEATED] = Color3.fromRGB(120, 170, 220),
 	[STATE.WAITING_FOOD] = Color3.fromRGB(229, 72, 77),
@@ -628,6 +638,7 @@ local STATE_COLOR = {
 	[STATE.WALKOUT] = Color3.fromRGB(80, 80, 80),
 }
 local VIP_GOLD = Color3.fromRGB(255, 200, 60)
+local CRITIC = Config.Critic --// used from the patience bars down to spawn
 
 local parties = {}
 local nextPartyId = 0
@@ -700,9 +711,12 @@ local function walkMemberTo(member, targetPos, onDone)
 		goal = CFrame.new(flat) * (root.CFrame - root.CFrame.Position)
 	end
 
+	--// Dashers sprint: a per-member speed override (set by beginDash)
 	local tween = TweenService:Create(root,
-		TweenInfo.new(math.max(distance / WALK_SPEED, 0.05), Enum.EasingStyle.Linear),
+		TweenInfo.new(math.max(distance / (member.MoveSpeed or WALK_SPEED), 0.05),
+			Enum.EasingStyle.Linear),
 		{ CFrame = goal })
+	member.WalkTween = tween --// the punch cancels this mid-stride
 
 	if member.WalkTrack then
 		member.WalkTrack:Play()
@@ -820,13 +834,14 @@ end
 local function setPartyState(party, newState)
 	party.State = newState
 	if party.Label then
-		local vip = party.IsVIP and "* " or ""
-		party.Label.Text = ("%sParty of %d - %s"):format(vip, party.Size, newState)
+		local prefix = party.IsCritic and "🧐 " or (party.IsVIP and "* " or "")
+		party.Label.Text = ("%sParty of %d - %s"):format(prefix, party.Size, newState)
 	end
 	--// State colour: a Highlight on rigs, the part's own colour on the
 	--// placeholder cylinder. VIPs stay gold until they leave.
 	local color = STATE_COLOR[newState]
-	if party.IsVIP and newState ~= STATE.WALKOUT and newState ~= STATE.LEAVING then
+	if party.IsVIP and newState ~= STATE.WALKOUT and newState ~= STATE.LEAVING
+		and newState ~= STATE.DASHING then --// a dashing VIP flashes red like anyone
 		color = VIP_GOLD
 	end
 
@@ -1160,6 +1175,9 @@ end
 local function startDoorBar(party)
 	local base = party.IsVIP and Config.Customers.VIPDoorPatienceSeconds
 		or Config.Customers.DoorPatienceSeconds
+	if party.IsCritic then
+		base *= CRITIC.PatienceMult --// professionals take their time
+	end
 	party.BarTotal = base * diff.Patience
 	party.BarRemaining = party.BarTotal
 	party.BarKind = "door"
@@ -1170,6 +1188,9 @@ end
 local function startSeatedBar(party)
 	local base = party.IsVIP and Config.Customers.VIPSeatedPatienceSeconds
 		or Config.Customers.SeatedPatienceSeconds
+	if party.IsCritic then
+		base *= CRITIC.PatienceMult --// professionals take their time
+	end
 	party.BarTotal = base * diff.Patience
 	party.BarRemaining = party.BarTotal
 	party.BarKind = "seated"
@@ -1216,6 +1237,7 @@ end
 ----------------------------------------------------------------
 local refreshTablePrompt -- forward declared
 local cancelDialogue -- forward declared (order-dialogue section, below the table code)
+local dashEscaped -- forward declared (dine-and-dash section; departTo settles escapes)
 
 --// Customers still in the queue are already outside, so they leave directly.
 --// Seated ones walk their table's ExitVia route back out through the door.
@@ -1235,6 +1257,10 @@ local function departTo(party, target)
 	table.insert(points, target)
 
 	walkPath(party, points, function()
+		--// A dasher who reaches the door made it out with the money
+		if party.Dashing and not party.DashResolved and dashEscaped then
+			dashEscaped(party)
+		end
 		for _, member in ipairs(party.Members or {}) do
 			if member.WalkTrack then
 				member.WalkTrack:Stop()
@@ -1250,12 +1276,77 @@ end
 
 local exitPos = pointAbove(queueSpots[#queueSpots], 2)
 
+----------------------------------------------------------------
+-- THE FOOD CRITIC's verdict (Config.Critic). Stars: 1 base + up to 2
+-- for patience left when the last dish landed + up to 2 for cooking
+-- (all Perfect = 2, none Overcooked = 1, any Overcooked = 0 - owner
+-- ruling: no greet star, patience and cooking carry the weight).
+-- A walkout forces 1 star. Bruno reads ShiftState.CriticStars.
+----------------------------------------------------------------
+local function publishCriticReview(party, forcedStars)
+	if party.CriticReviewed then return end
+	party.CriticReviewed = true
+
+	local stars = forcedStars
+	if not stars then
+		stars = 1
+		local fraction = party.CriticServeFraction or 0
+		if fraction >= CRITIC.PatienceTwoStars then
+			stars += 2
+		elseif fraction >= CRITIC.PatienceOneStar then
+			stars += 1
+		end
+		local overcooked = party.OvercookedDishes or 0
+		if overcooked == 0 then
+			local allPerfect = (party.GoodDishes or 0) == 0
+				and (party.PerfectDishes or 0) > 0
+			stars += allPerfect and 2 or 1
+		end
+	end
+	stars = math.clamp(stars, 1, 5)
+
+	local swing = CRITIC.RepByStars[stars] or 0
+	if swing ~= 0 then
+		repChange(swing, ("critic review: %d star"):format(stars))
+	end
+	ShiftState:SetAttribute("CriticStars", stars) --// Bruno's cue
+
+	--// The verdict floats over the critic on the way out
+	if party.Root then
+		local gui = Instance.new("BillboardGui")
+		gui.Name = "CriticStars"
+		gui.Size = UDim2.fromScale(6, 1.6)
+		gui.StudsOffset = Vector3.new(0, 3, 0)
+		gui.AlwaysOnTop = true
+		gui.Parent = party.Root
+
+		local label = Instance.new("TextLabel")
+		label.Size = UDim2.fromScale(1, 1)
+		label.BackgroundTransparency = 1
+		label.Font = Enum.Font.FredokaOne
+		label.TextScaled = true
+		label.Text = string.rep("⭐", stars) .. string.rep("☆", 5 - stars)
+		label.Parent = gui
+
+		task.delay(CRITIC.StarsHoldSeconds, function()
+			if gui.Parent then
+				gui:Destroy()
+			end
+		end)
+	end
+
+	print(("[Service] CRITIC REVIEW: %d/5 stars (rep %+d)"):format(stars, swing))
+end
+
 local function doorWalkout(party)
 	--// At the customer, not global: you should be able to tell WHICH party
 	--// just gave up on you.
 	Sfx.Play("CustomerAngry", party.Pawn)
 	shift.DoorWalkouts += 1
 	repChange(diff.Consequences.DoorWalkoutRep, "door walkout")
+	if party.IsCritic then
+		publishCriticReview(party, 1) --// couldn't even get a table
+	end
 	removeBar(party)
 	if party.Spot then spotOccupant[party.Spot] = nil; party.Spot = nil end
 	if party.SeatPrompt then party.SeatPrompt:Destroy(); party.SeatPrompt = nil end
@@ -1268,6 +1359,9 @@ local function seatedWalkout(party)
 	cancelDialogue(party) --// a mid-dialogue walkout closes the waiter's panel
 	shift.SeatedWalkouts += 1
 	repChange(diff.Consequences.SeatedWalkoutRep, "seated walkout")
+	if party.IsCritic then
+		publishCriticReview(party, 1) --// storming out IS the review
+	end
 	removeBar(party)
 	local tid = party.TableId
 	if tid then
@@ -1402,6 +1496,51 @@ local function buildCylinderMember(party, memberIndex, atPosition)
 	return { Model = pawn, Root = pawn }
 end
 
+--// VIP STAR (owner request, Sep 2026): a gold star floating over every
+--// VIP member's head, so the high-stakes table reads from across the
+--// room. Studs-sized (not pixel) so it never balloons at distance;
+--// dies with the rig, no cleanup needed.
+local function attachVIPStar(member)
+	local anchor = (member.Model and member.Model:FindFirstChild("Head")) or member.Root
+	if not anchor then return end
+
+	local gui = Instance.new("BillboardGui")
+	gui.Name = "VIPStar"
+	gui.Size = UDim2.fromScale(1.5, 1.5)
+	gui.StudsOffset = Vector3.new(0, 1.2, 0)
+	gui.MaxDistance = 120
+	gui.Parent = anchor
+
+	local star = Instance.new("TextLabel")
+	star.Size = UDim2.fromScale(1, 1)
+	star.BackgroundTransparency = 1
+	star.Font = Enum.Font.FredokaOne
+	star.TextScaled = true
+	star.Text = "⭐"
+	star.Parent = gui
+end
+
+--// The critic wears the monocle stare, same overhead treatment as the star
+local function attachCriticMark(member)
+	local anchor = (member.Model and member.Model:FindFirstChild("Head")) or member.Root
+	if not anchor then return end
+
+	local gui = Instance.new("BillboardGui")
+	gui.Name = "CriticMark"
+	gui.Size = UDim2.fromScale(1.5, 1.5)
+	gui.StudsOffset = Vector3.new(0, 1.2, 0)
+	gui.MaxDistance = 150
+	gui.Parent = anchor
+
+	local mark = Instance.new("TextLabel")
+	mark.Size = UDim2.fromScale(1, 1)
+	mark.BackgroundTransparency = 1
+	mark.Font = Enum.Font.FredokaOne
+	mark.TextScaled = true
+	mark.Text = "🧐"
+	mark.Parent = gui
+end
+
 local function spawnPartyPawn(party, atPosition)
 	party.Members = {}
 
@@ -1411,6 +1550,18 @@ local function spawnPartyPawn(party, atPosition)
 			or buildCylinderMember(party, index, spot)
 
 		table.insert(party.Members, member)
+	end
+
+	if party.IsVIP then
+		for _, member in ipairs(party.Members) do
+			attachVIPStar(member)
+		end
+	end
+
+	if party.IsCritic then
+		for _, member in ipairs(party.Members) do
+			attachCriticMark(member)
+		end
 	end
 
 	--// Member 1 is the party's face: prompts, billboards, the tag and every
@@ -1575,9 +1726,9 @@ local PAY_COLOR = {
 	FLOOR = Color3.fromRGB(229, 72, 77),    -- tomato: floored, about to vanish
 }
 
-local function createPayment(party, tableId)
-	--// Exactly the money the old instant flow would have paid - same
-	--// math, just deferred to the collect point.
+--// The bill a party owes - the same math whether it lands on the table
+--// as a payment or gets recovered from a dine-and-dasher by fist
+local function partyBill(party)
 	local perfect = party.PerfectDishes or 0
 	local good = party.GoodDishes or 0
 	local overcooked = party.OvercookedDishes or 0
@@ -1586,8 +1737,16 @@ local function createPayment(party, tableId)
 		+ (good * Config.Kitchen.GoodPayMult)
 		+ (overcooked * Config.Kitchen.OvercookedPayMult)) / served
 
-	local payout = math.floor(BASE_COINS_PER_PARTY * party.Size * diff.Rewards.CoinMult
+	--// BillUnits: the critic is one person who eats (and pays) for three
+	return math.floor(BASE_COINS_PER_PARTY * (party.BillUnits or party.Size)
+		* diff.Rewards.CoinMult
 		* (party.IsVIP and VIP_TIP_MULT or 1) * qualityMult)
+end
+
+local function createPayment(party, tableId)
+	--// Exactly the money the old instant flow would have paid - same
+	--// math, just deferred to the collect point.
+	local payout = partyBill(party)
 
 	--// The split: BASE is the plain-order guarantee, TIP is everything above
 	local base = math.floor(BASE_COINS_PER_PARTY * party.Size * diff.Rewards.CoinMult
@@ -1699,12 +1858,263 @@ local function updatePayments()
 	end
 end
 
+----------------------------------------------------------------
+-- DINE AND DASH (Config.Dash - EASY never rolls one, THE FREEZE).
+-- Rolled per party at meal end: the bill never hits the table, the
+-- party BOLTS for the door at RunSpeed. Any empty-handed player lands
+-- a punch (PunchRemote - click/tap/gamepad X, server-validated range,
+-- cooldown and hands) to recover the bill plus a bonus and LAUNCH the
+-- whole party skyward. Reaching the door = money gone (rep too, on
+-- HARD). Bruno reads the counters off ShiftState attributes.
+----------------------------------------------------------------
+local DASH = Config.Dash
+local debugFirstDashDone = false --// DEBUG_FORCE_FIRST_DASH's one-shot latch
+
+local function destroyPartyNow(party)
+	for _, member in ipairs(party.Members or {}) do
+		if member.WalkTrack then member.WalkTrack:Stop() end
+		if member.Model then member.Model:Destroy() end
+	end
+	party.Members = nil
+	parties[party.Id] = nil
+end
+
+--// The comedy arc: up and away from the puncher, tumbling, in two
+--// tween beats. Pure object motion - no character animation involved.
+local function launchMember(member, fromPosition)
+	local root = member.Root
+	if not root then return end
+	if member.WalkTween then member.WalkTween:Cancel() end
+	if member.WalkTrack then member.WalkTrack:Stop() end
+
+	local away = root.Position - fromPosition
+	away = Vector3.new(away.X, 0, away.Z)
+	away = away.Magnitude > 0.1 and away.Unit or Vector3.new(0, 0, 1)
+
+	local mid = root.Position + away * (DASH.LaunchStuds * 0.5)
+		+ Vector3.new(0, DASH.LaunchStuds * 0.45, 0)
+	local finish = root.Position + away * DASH.LaunchStuds + Vector3.new(0, 1, 0)
+
+	local up = TweenService:Create(root,
+		TweenInfo.new(DASH.LaunchSeconds * 0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		{ CFrame = CFrame.new(mid) * CFrame.Angles(math.rad(160), math.rad(40), 0) })
+	up.Completed:Once(function()
+		if not root.Parent then return end
+		TweenService:Create(root,
+			TweenInfo.new(DASH.LaunchSeconds * 0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+			{ CFrame = CFrame.new(finish) * CFrame.Angles(math.rad(320), math.rad(80), 0) }):Play()
+	end)
+	up:Play()
+end
+
+dashEscaped = function(party)
+	if party.DashResolved then return end
+	party.DashResolved = true
+
+	local hit = diff.Consequences.DashUncaughtRep or 0
+	if hit ~= 0 then
+		repChange(hit, "dine and dash escaped")
+	end
+	shift.DashesEscaped = (shift.DashesEscaped or 0) + 1
+	ShiftState:SetAttribute("DashesEscaped", shift.DashesEscaped)
+	print(("[Service] Party %d ESCAPED without paying - $%d lost"):format(
+		party.Id, party.DashBill or 0))
+end
+
+local function dashCaught(party, puncher)
+	if party.DashResolved then return end
+	party.DashResolved = true
+
+	--// Caught at the table (warning phase): free the seats they were
+	--// about to skip out on; a mid-run catch already freed them
+	if party.TableId and tableOccupant[party.TableId] == party then
+		tableOccupant[party.TableId] = nil
+		refreshTablePrompt(party.TableId)
+	end
+	removeBar(party)
+
+	local value = math.floor((party.DashBill or 0) * DASH.CatchBonusMult)
+	addToTill(value, "dine-and-dash caught")
+	shift.EarnedTotal += value
+	scoreOnly(puncher, "DashesCaught", 1) --// the hidden score's hero moment
+
+	shift.DashesCaught = (shift.DashesCaught or 0) + 1
+	ShiftState:SetAttribute("DashesCaught", shift.DashesCaught)
+
+	if party.Label then
+		party.Label.Text = ("CAUGHT! +$%d"):format(value)
+	end
+
+	--// The 💥 rides the leader; it dies with the party moments later
+	if party.Root then
+		local pow = Instance.new("BillboardGui")
+		pow.Name = "Pow"
+		pow.Size = UDim2.fromScale(4, 4)
+		pow.StudsOffset = Vector3.new(0, 2, 0)
+		pow.AlwaysOnTop = true
+		pow.Parent = party.Root
+
+		local label = Instance.new("TextLabel")
+		label.Size = UDim2.fromScale(1, 1)
+		label.BackgroundTransparency = 1
+		label.Font = Enum.Font.FredokaOne
+		label.TextScaled = true
+		label.Text = "💥"
+		label.Parent = pow
+	end
+
+	local punchRoot = puncher.Character
+		and puncher.Character:FindFirstChild("HumanoidRootPart")
+	local fromPosition = punchRoot and punchRoot.Position
+		or (party.Root and party.Root.Position - Vector3.new(0, 0, 1))
+		or Vector3.zero
+	for _, member in ipairs(party.Members or {}) do
+		launchMember(member, fromPosition)
+	end
+
+	print(("[Service] %s PUNCHED the dashers - $%d recovered"):format(puncher.Name, value))
+	task.delay(DASH.LaunchSeconds + 0.5, function()
+		destroyPartyNow(party)
+	end)
+end
+
+--// The tell: a red ❗ over every member's head while they sit there
+--// working up the nerve. Rides the rig, dies with it.
+local function attachDashMark(member)
+	local anchor = (member.Model and member.Model:FindFirstChild("Head")) or member.Root
+	if not anchor then return end
+
+	local gui = Instance.new("BillboardGui")
+	gui.Name = "DashMark"
+	gui.Size = UDim2.fromScale(1.6, 1.6)
+	gui.StudsOffset = Vector3.new(0, 2, 0) --// above a VIP's star, if any
+	gui.MaxDistance = 150
+	gui.Parent = anchor
+
+	local mark = Instance.new("TextLabel")
+	mark.Size = UDim2.fromScale(1, 1)
+	mark.BackgroundTransparency = 1
+	mark.Font = Enum.Font.FredokaOne
+	mark.TextScaled = true
+	mark.TextColor3 = Color3.fromRGB(229, 72, 77)
+	mark.TextStrokeColor3 = Color3.fromRGB(59, 43, 32)
+	mark.TextStrokeTransparency = 0
+	mark.Text = "❗"
+	mark.Parent = gui
+end
+
+local function beginDash(party, tableId)
+	party.DashWarning = false
+	party.Dashing = true
+	removeBar(party)
+
+	for _, member in ipairs(party.Members or {}) do
+		member.MoveSpeed = DASH.RunSpeed
+	end
+
+	setPartyState(party, STATE.DASHING)
+	tableOccupant[tableId] = nil
+	refreshTablePrompt(tableId)
+
+	print(("[Service] Party %d is DASHING - $%d on the line!"):format(party.Id, party.DashBill))
+	departTo(party, exitPos)
+end
+
+--// Phase one: the ❗ window. They stay seated, marked and punchable;
+--// the bolt only comes if nobody reaches them in time.
+local function beginDashWarning(party, tableId)
+	party.DashWarning = true
+	party.DashBill = partyBill(party)
+	returnPlates(tableId, "dine and dash") --// plates come home either way
+
+	for _, member in ipairs(party.Members or {}) do
+		attachDashMark(member)
+	end
+
+	shift.DashesStarted = (shift.DashesStarted or 0) + 1
+	ShiftState:SetAttribute("DashAlert", shift.DashesStarted) --// Bruno's cue
+
+	print(("[Service] Party %d at Table %d is looking SHIFTY - %ds to reach them ($%d)")
+		:format(party.Id, tableId, DASH.WarnSeconds, party.DashBill))
+
+	task.delay(DASH.WarnSeconds, function()
+		if party.DashResolved or not parties[party.Id] then return end
+		beginDash(party, tableId)
+	end)
+end
+
+--// The punch: intent only - the server re-checks everything
+do
+	local punchFolder = ReplicatedStorage:FindFirstChild("Remotes")
+	if not punchFolder then
+		punchFolder = Instance.new("Folder")
+		punchFolder.Name = "Remotes"
+		punchFolder.Parent = ReplicatedStorage
+	end
+	local punchRemote = punchFolder:FindFirstChild("PunchRemote")
+	if not punchRemote then
+		punchRemote = Instance.new("RemoteEvent")
+		punchRemote.Name = "PunchRemote"
+		punchRemote.Parent = punchFolder
+	end
+
+	local lastPunchAt = {}
+	Players.PlayerRemoving:Connect(function(player)
+		lastPunchAt[player] = nil
+	end)
+
+	punchRemote.OnServerEvent:Connect(function(player)
+		local now = os.clock()
+		if now - (lastPunchAt[player] or 0) < DASH.PunchCooldownSeconds then return end
+		lastPunchAt[player] = now
+
+		local character = player.Character
+		local root = character and character:FindFirstChild("HumanoidRootPart")
+		if not root then return end
+		if character:FindFirstChildOfClass("Tool") then return end --// empty hands only
+
+		for _, party in pairs(parties) do
+			--// Punchable from the moment the ❗ appears, through the run
+			if (party.Dashing or party.DashWarning) and not party.DashResolved then
+				for _, member in ipairs(party.Members or {}) do
+					if member.Root
+						and (member.Root.Position - root.Position).Magnitude
+							<= DASH.PunchRangeStuds then
+						dashCaught(party, player)
+						return
+					end
+				end
+			end
+		end
+	end)
+end
+
 --// Eating done: the party is satisfied HERE (rep, served count) and
 --// leaves on schedule; only the money waits behind on the table.
 local function onPartyFinishedEating(party, tableId)
 	shift.Satisfied += 1
 	local repGain = party.IsVIP and diff.Reputation.VIPSatisfied or diff.Reputation.SatisfiedParty
 	repChange(repGain, party.IsVIP and "VIP satisfied" or "party satisfied")
+
+	--// THE REVIEW: the critic's verdict lands the moment he finishes
+	if party.IsCritic then
+		publishCriticReview(party, nil)
+	end
+
+	--// DINE AND DASH: rolled here, at the moment the bill comes due.
+	--// EASY's chance is 0 (frozen); VIPs only run where allowed; the
+	--// critic always pays - imagine the scandal.
+	local dashChance = party.IsCritic and 0 or (DASH.Chance[DIFFICULTY] or 0)
+	local vipOk = not party.IsVIP or DASH.VIPCanDash[DIFFICULTY]
+	local forced = DEBUG_FORCE_FIRST_DASH and not debugFirstDashDone
+		and not party.IsCritic
+	if forced or (dashChance > 0 and vipOk and math.random() < dashChance) then
+		debugFirstDashDone = true
+		print(("[Service] Table %d finished eating - and they're looking SHIFTY%s")
+			:format(tableId, forced and " (DEBUG: forced first dash)" or ""))
+		beginDashWarning(party, tableId)
+		return
+	end
 
 	createPayment(party, tableId)
 	print(("[Service] Table %d finished eating%s. Served %d/%d")
@@ -1832,6 +2242,7 @@ local function beginDialogue(player, party, tableId)
 		Timeout = Config.Dialogue.TimeoutSeconds,
 		CloseAfter = Config.Dialogue.CloseAfterSeconds,
 		DishText = ticketText(party),
+		Speaker = party.Root, --// native chat bubbles pop over the leader
 		Lines = {
 			Greet = pickLine(Config.Dialogue.WaiterGreetings),
 			SmallTalkQ = pickVoiced(Config.Dialogue.WaiterSmallTalk, plural),
@@ -2022,6 +2433,13 @@ local function setupTable(tableId, tablePart)
 				refreshTablePrompt(tableId)
 			else
 				-- LAST dish: the seated bar dies here, per spec
+				--// The critic's service-speed verdict is the patience he
+				--// still had when the last plate landed - captured before
+				--// the bar dies
+				if party.IsCritic then
+					party.CriticServeFraction = math.clamp(
+						(party.BarRemaining or 0) / math.max(party.BarTotal or 1, 1), 0, 1)
+				end
 				--// The closer credits the whole table's headcount
 				creditStat(player, "CustomersServed", party.Size)
 				removeBar(party)
@@ -2180,22 +2598,53 @@ local function spawnParty()
 	if not spot then return end
 
 	nextPartyId += 1
+	local forcedVIP = DEBUG_FORCE_FIRST_VIP and not debugFirstVIPDone
+	if forcedVIP then
+		debugFirstVIPDone = true
+	end
+
+	--// THE CRITIC claims the first spawn past his planned moment (set at
+	--// shift start). One person, never a VIP, never dashes.
+	local isCritic = false
+	if DEBUG_FORCE_FIRST_CRITIC and not debugFirstCriticDone then
+		isCritic = true
+		debugFirstCriticDone = true
+		shift.CriticDone = true --// tonight's planned critic (if any) stands down
+	elseif shift.CriticAt and not shift.CriticDone and shift.Length > 0
+		and (shift.Elapsed / shift.Length) >= shift.CriticAt then
+		isCritic = true
+		shift.CriticDone = true
+	end
+
 	local party = {
 		Id = nextPartyId,
-		Size = rollPartySize(),
-		IsVIP = math.random() < diff.VIPChance,
+		Size = isCritic and 1 or rollPartySize(),
+		IsCritic = isCritic,
+		IsVIP = not isCritic and (forcedVIP or math.random() < diff.VIPChance),
 		State = STATE.QUEUED,
 		Spot = spot,
 		Greeted = false,
 		DishesRemaining = 0,
 	}
-	party.DishesRemaining = party.Size
 
-	--// One dish per customer, rolled from Config.OrderWeights. The ticket is
-	--// what the kitchen has to produce; it shrinks as dishes land.
+	--// One dish per customer - except the critic, who orders like a
+	--// table of three and pays like one (BillUnits drives the bill)
+	local dishCount = party.Size
+	if isCritic then
+		dishCount = math.random(CRITIC.MinDishes, CRITIC.MaxDishes)
+		party.BillUnits = dishCount
+	end
+	party.DishesRemaining = dishCount
 	party.Ticket = {}
-	for _ = 1, party.Size do
+	for _ = 1, dishCount do
 		table.insert(party.Ticket, Config.RollDish())
+	end
+
+	if isCritic then
+		shift.CriticAlert = (shift.CriticAlert or 0) + 1
+		ShiftState:SetAttribute("CriticAlert", shift.CriticAlert) --// Bruno's cue
+		print(("[Service] THE FOOD CRITIC has arrived - %d dishes ordered")
+			:format(dishCount))
 	end
 	parties[party.Id] = party
 	spotOccupant[spot] = party
@@ -2627,6 +3076,19 @@ task.spawn(function()
 	shift.State = "RUNNING"
 	shift.Elapsed = 0
 	shift.Till = Config.Money.ShiftStartingTill --// every shift opens at zero
+
+	--// Plan tonight's critic (at most one; EASY never - THE FREEZE)
+	shift.CriticDone = false
+	shift.CriticAt = nil
+	ShiftState:SetAttribute("CriticStars", 0)
+	local criticChance = CRITIC.ShiftChance[DIFFICULTY] or 0
+	if math.random() < criticChance then
+		shift.CriticAt = CRITIC.EarliestFraction
+			+ math.random() * (CRITIC.LatestFraction - CRITIC.EarliestFraction)
+		print(("[Service] a critic will visit around %d%% of tonight's shift")
+			:format(shift.CriticAt * 100))
+	end
+
 	publishShift()
 	print(("[Service] === SHIFT START - %s, %ds, target %d parties ===")
 		:format(diff.Label, shift.Length, diff.Rewards.TargetParties))

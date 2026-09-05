@@ -2,31 +2,25 @@
 	Dinner Rush - DialogueClient
 	StarterPlayer.StarterPlayerScripts.Client.DialogueClient  (LocalScript)
 
-	The take-order conversation panel. Built entirely in code.
-
-	STYLE NOTE: owner's call - this panel is plain black-and-white (white
-	panel, black text, Gotham) instead of the cream/FredokaOne house style.
-	Deliberate deviation for this UI only.
+	The take-order conversation, styled fully after Work at a Pizza
+	Place (owner request, Sep 2026):
+	  - speech is NATIVE Roblox chat bubbles (TextChatService
+	    :DisplayBubble): the customer's lines pop over THEIR head, your
+	    picked line pops over YOUR head, exactly like the reference
+	  - your reply choices are clean white cards at the bottom-left -
+	    thin grey border, soft dark text, auto-height, simple font
+	No panel, no custom bubbles, no speaker chips.
 
 	Render only: the SERVER rolled the flow, picked every phrase (in the
-	right voice - "I" for a party of one, "we" for two or more), and holds
-	the timeout. This script draws what it was sent and reports which
-	button the player tapped. Nothing here decides anything.
+	right voice - "I" for a party of one, "we" for two or more), and
+	holds the timeout. This script draws the choices and reports which
+	one was tapped. Nothing here decides anything.
 
-	DialogueRemote protocol:
-	  server -> client  ("Begin", payload)   open the panel
+	DialogueRemote protocol (unchanged; payload carries Speaker = the
+	party leader's root part, where their bubbles hang):
+	  server -> client  ("Begin", payload)   open the conversation
 	                    ("Cancel", token)    close it (timeout / walkout)
 	  client -> server  ("Complete", token, dishKeyOrNil)
-
-	Openers (two buttons, pick either):
-	  greet       straight to business: customer states order / asks for
-	              a recommendation
-	  small talk  "How is your day going?" -> the customer's mood line runs
-	              into their order ("It's been great! We'll have the
-	              Burger, please!") - same flow after that, just warmer
-
-	Then: direct = one confirm tap; recommend = one big button per dish
-	(icon + name), the closing beat plays, auto-dismiss.
 
 	{DISH} in a phrase is filled with payload.DishText (direct: the whole
 	ticket, e.g. "Burger + Fries") or the picked dish's display name.
@@ -34,140 +28,119 @@
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
+local TextChatService = game:GetService("TextChatService")
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 local dialogueRemote = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("DialogueRemote")
+local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
 
+--// Snappy bubbles (owner call). BubbleDuration is global, so player
+--// chat fades at the same pace - one rhythm everywhere.
+task.spawn(function()
+	local bubbleConfig = TextChatService:FindFirstChildOfClass("BubbleChatConfiguration")
+		or TextChatService:WaitForChild("BubbleChatConfiguration", 10)
+	if bubbleConfig then
+		bubbleConfig.BubbleDuration = Config.Dialogue.BubbleSeconds
+	end
+end)
+
+local FONT = Enum.Font.SourceSans --// plain and simple, like the reference
+local TEXT = Color3.fromRGB(45, 45, 45)
+local BORDER = Color3.fromRGB(185, 185, 185)
 local WHITE = Color3.fromRGB(255, 255, 255)
-local BLACK = Color3.fromRGB(0, 0, 0)
 
-local FONT = Enum.Font.GothamMedium
-local BEAT_SECONDS = 0.9 --// pause between the closing lines of the recommend flow
+local BEAT_SECONDS = 0.9  --// pause between the closing lines
+local REPLY_SECONDS = 0.6 --// the customer "thinks" before answering you
 
 local function fill(line, dishText)
 	return (line:gsub("{DISH}", dishText))
 end
 
+--// Native chat bubble over any character or part - the exact look the
+--// reference game uses. Local-only, which suits a private conversation.
+local function speak(adornee, text)
+	if not adornee then return end
+	pcall(function()
+		TextChatService:DisplayBubble(adornee, text)
+	end)
+end
+
+local function speakSelf(text)
+	local character = player.Character
+	if character then
+		speak(character, text)
+	end
+end
+
 ----------------------------------------------------------------
--- Panel: built once, hidden. Bottom-centre, above the hotbar; the stamina
--- bar lives bottom-LEFT (SprintClient), so this space is clear.
+-- The choice stack: bottom-left, white cards, built once
 ----------------------------------------------------------------
 local gui = Instance.new("ScreenGui")
 gui.Name = "Dialogue_UI"
 gui.ResetOnSpawn = false
 gui.Enabled = false
-gui.DisplayOrder = 22 --// above the stamina bar, below the event banner
+gui.DisplayOrder = 22
 gui.Parent = playerGui
 
-local panel = Instance.new("Frame")
-panel.Name = "Panel"
-panel.AnchorPoint = Vector2.new(0.5, 1)
-panel.Position = UDim2.fromScale(0.5, 0.84)
-panel.Size = UDim2.fromScale(0.48, 0.28)
-panel.BackgroundColor3 = WHITE
-panel.Parent = gui
-
-local corner = Instance.new("UICorner")
-corner.CornerRadius = UDim.new(0, 10)
-corner.Parent = panel
-
-local stroke = Instance.new("UIStroke")
-stroke.Thickness = 2
-stroke.Color = BLACK
-stroke.Parent = panel
-
---// Speaker chip: black tag = you, outlined white tag = the customer
-local chip = Instance.new("TextLabel")
-chip.Name = "Speaker"
-chip.AnchorPoint = Vector2.new(0, 0.5)
-chip.Position = UDim2.fromScale(0.05, 0)
-chip.Size = UDim2.fromScale(0.24, 0.16)
-chip.BackgroundColor3 = WHITE
-chip.Font = FONT
-chip.TextScaled = true
-chip.TextColor3 = BLACK
-chip.Text = "Customer"
-chip.Parent = panel
-
-local chipCorner = Instance.new("UICorner")
-chipCorner.CornerRadius = UDim.new(0, 6)
-chipCorner.Parent = chip
-
-local chipStroke = Instance.new("UIStroke")
-chipStroke.Thickness = 2
-chipStroke.Color = BLACK
-chipStroke.Parent = chip
-
-local chipPad = Instance.new("UIPadding")
-chipPad.PaddingLeft = UDim.new(0.08, 0)
-chipPad.PaddingRight = UDim.new(0.08, 0)
-chipPad.PaddingTop = UDim.new(0.12, 0)
-chipPad.PaddingBottom = UDim.new(0.12, 0)
-chipPad.Parent = chip
-
---// The spoken line
-local line = Instance.new("TextLabel")
-line.Name = "Line"
-line.AnchorPoint = Vector2.new(0.5, 0)
-line.Position = UDim2.fromScale(0.5, 0.12)
-line.Size = UDim2.fromScale(0.92, 0.3)
-line.BackgroundTransparency = 1
-line.Font = FONT
-line.TextScaled = true
-line.TextWrapped = true
-line.TextColor3 = BLACK
-line.Text = ""
-line.Parent = panel
-
---// Button area: everything tappable lives here
-local buttons = Instance.new("Frame")
-buttons.Name = "Buttons"
-buttons.AnchorPoint = Vector2.new(0.5, 1)
-buttons.Position = UDim2.fromScale(0.5, 0.96)
-buttons.Size = UDim2.fromScale(0.92, 0.5)
-buttons.BackgroundTransparency = 1
-buttons.Parent = panel
+local options = Instance.new("Frame")
+options.Name = "Options"
+options.AnchorPoint = Vector2.new(0, 1)
+options.Position = UDim2.fromScale(0.03, 0.87)
+options.Size = UDim2.fromScale(0.27, 0.55)
+options.BackgroundTransparency = 1
+options.Parent = gui
 
 local layout = Instance.new("UIListLayout")
 layout.FillDirection = Enum.FillDirection.Vertical
-layout.Padding = UDim.new(0.05, 0)
-layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+layout.Padding = UDim.new(0, 8)
+layout.HorizontalAlignment = Enum.HorizontalAlignment.Left
 layout.VerticalAlignment = Enum.VerticalAlignment.Bottom
-layout.Parent = buttons
+layout.SortOrder = Enum.SortOrder.LayoutOrder
+layout.Parent = options
 
-local function clearButtons()
-	for _, child in ipairs(buttons:GetChildren()) do
+local function clearOptions()
+	for _, child in ipairs(options:GetChildren()) do
 		if child:IsA("TextButton") then
 			child:Destroy()
 		end
 	end
 end
 
---// One white outlined button. Returns it; dish rows add their icon onto it.
-local function addButton(text, heightScale, onTap)
+--// One white card, reference-style: roomy, thin grey border, soft
+--// dark text, growing taller on its own when the line wraps
+local nextOrder = 0
+local function addOption(text, onTap)
+	nextOrder += 1
 	local button = Instance.new("TextButton")
-	button.Size = UDim2.fromScale(1, heightScale)
+	button.LayoutOrder = nextOrder
+	button.Size = UDim2.new(1, 0, 0, 0)
+	button.AutomaticSize = Enum.AutomaticSize.Y
 	button.BackgroundColor3 = WHITE
+	button.AutoButtonColor = true
 	button.Font = FONT
-	button.TextScaled = true
+	button.TextSize = 20
 	button.TextWrapped = true
-	button.TextColor3 = BLACK
+	button.TextXAlignment = Enum.TextXAlignment.Left
+	button.TextYAlignment = Enum.TextYAlignment.Center
+	button.TextColor3 = TEXT
 	button.Text = text
-	button.Parent = buttons
+	button.Parent = options
 
-	local bc = Instance.new("UICorner")
-	bc.CornerRadius = UDim.new(0, 6)
-	bc.Parent = button
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 4)
+	corner.Parent = button
 
-	local bs = Instance.new("UIStroke")
-	bs.Thickness = 2
-	bs.Color = BLACK
-	bs.Parent = button
+	local stroke = Instance.new("UIStroke")
+	stroke.Thickness = 1
+	stroke.Color = BORDER
+	stroke.Parent = button
 
 	local pad = Instance.new("UIPadding")
-	pad.PaddingLeft = UDim.new(0.03, 0)
-	pad.PaddingRight = UDim.new(0.03, 0)
+	pad.PaddingLeft = UDim.new(0, 12)
+	pad.PaddingRight = UDim.new(0, 12)
+	pad.PaddingTop = UDim.new(0, 12)
+	pad.PaddingBottom = UDim.new(0, 12)
 	pad.Parent = button
 
 	button.Activated:Connect(onTap)
@@ -175,85 +148,75 @@ local function addButton(text, heightScale, onTap)
 end
 
 ----------------------------------------------------------------
--- Flow driver. `seq` guards every delayed step: anything that changes the
--- panel bumps it, so a stale task.delay from a previous dialogue can never
--- write over the current one.
+-- Flow driver. `seq` guards every delayed step: anything that changes
+-- the conversation bumps it, so a stale task.delay from a previous
+-- dialogue can never write over the current one.
 ----------------------------------------------------------------
 local current = nil --// { Token, Payload }
 local seq = 0
 
-local function say(speaker, text)
-	chip.Text = speaker
-	chip.BackgroundColor3 = speaker == "You" and BLACK or WHITE
-	chip.TextColor3 = speaker == "You" and WHITE or BLACK
-	line.Text = text
-end
-
 local function closePanel()
 	seq += 1
 	current = nil
-	clearButtons()
+	clearOptions()
 	gui.Enabled = false
 end
 
---// Step two: the customer has spoken (customerText); now the order
---// happens. Direct = one confirm tap; recommend = one button per dish.
-local function showOrderStep(mySeq, payload, customerText)
+--// Step two: the customer has answered; now the order happens.
+--// Direct = one confirm tap; recommend = one card per dish.
+local function showOrderStep(mySeq, payload)
 	if seq ~= mySeq then return end
 	local lines = payload.Lines
 	local dishText = payload.DishText
 
-	clearButtons()
-	say("Customer", customerText)
+	clearOptions()
 
 	if payload.Flow == "direct" then
-		addButton(fill(lines.Confirm, dishText), 0.45, function()
+		addOption(fill(lines.Confirm, dishText), function()
 			if seq ~= mySeq then return end
 			dialogueRemote:FireServer("Complete", payload.Token, nil)
-			clearButtons()
-			say("You", fill(lines.Confirm, dishText))
+			clearOptions()
+			speakSelf(fill(lines.Confirm, dishText))
 			task.delay(payload.CloseAfter, function()
 				if seq == mySeq then closePanel() end
 			end)
 		end)
 	else
-		local rowHeight = math.clamp(1 / math.max(#payload.Dishes, 1) - 0.05, 0.2, 0.38)
 		for _, dish in ipairs(payload.Dishes) do
-			local button = addButton(dish.Display, rowHeight, function()
+			addOption(dish.Display, function()
 				if seq ~= mySeq then return end
 				dialogueRemote:FireServer("Complete", payload.Token, dish.Key)
 
-				--// The closing beat: your line, their delight, your confirm
-				clearButtons()
-				say("You", fill(dish.Line, dish.Display))
+				--// The closing beat: your pitch, their delight, your confirm
+				clearOptions()
+				speakSelf(fill(dish.Line, dish.Display))
 				task.delay(BEAT_SECONDS, function()
 					if seq ~= mySeq then return end
-					say("Customer", fill(lines.Accept, dish.Display))
+					speak(payload.Speaker, fill(lines.Accept, dish.Display))
 					task.delay(BEAT_SECONDS, function()
 						if seq ~= mySeq then return end
-						say("You", fill(lines.Confirm, dish.Display))
+						speakSelf(fill(lines.Confirm, dish.Display))
 						task.delay(payload.CloseAfter, function()
 							if seq == mySeq then closePanel() end
 						end)
 					end)
 				end)
 			end)
-
-			--// Icon on the right edge; skipped while the id is a placeholder
-			local hasIcon = dish.Icon and dish.Icon ~= "" and dish.Icon ~= "rbxassetid://0"
-			if hasIcon then
-				button.TextXAlignment = Enum.TextXAlignment.Left
-				local icon = Instance.new("ImageLabel")
-				icon.AnchorPoint = Vector2.new(1, 0.5)
-				icon.Position = UDim2.fromScale(0.98, 0.5)
-				icon.Size = UDim2.fromScale(0.14, 0.9)
-				icon.BackgroundTransparency = 1
-				icon.Image = dish.Icon
-				icon.ScaleType = Enum.ScaleType.Fit
-				icon.Parent = button
-			end
 		end
 	end
+end
+
+--// An opener was tapped: you say it over your head, the customer
+--// thinks for a beat, answers in their bubble, then the order cards show
+local function playOpener(mySeq, payload, myLine, customerText)
+	if seq ~= mySeq then return end
+	clearOptions()
+	speakSelf(myLine)
+	task.delay(REPLY_SECONDS, function()
+		if seq ~= mySeq then return end
+		speak(payload.Speaker, customerText)
+		showOrderStep(mySeq, payload)
+	end)
 end
 
 local function beginDialogue(payload)
@@ -262,21 +225,20 @@ local function beginDialogue(payload)
 	current = { Token = payload.Token, Payload = payload }
 
 	local lines = payload.Lines
-	local dishText = payload.DishText
-	local customerLine = fill(lines.Customer, dishText)
+	local customerLine = fill(lines.Customer, payload.DishText)
 
-	clearButtons()
-	say("Customer", "...")
+	clearOptions()
 	gui.Enabled = true
 
 	--// TAP 1, two ways to open: straight to business, or a little small
 	--// talk first. Small talk runs the customer's mood line into their
 	--// order: "It's been great! We'll have the Burger, please!"
-	addButton(lines.Greet, 0.42, function()
-		showOrderStep(mySeq, payload, customerLine)
+	addOption(lines.Greet, function()
+		playOpener(mySeq, payload, lines.Greet, customerLine)
 	end)
-	addButton(lines.SmallTalkQ, 0.42, function()
-		showOrderStep(mySeq, payload, lines.Mood .. " " .. customerLine)
+	addOption(lines.SmallTalkQ, function()
+		playOpener(mySeq, payload, lines.SmallTalkQ,
+			lines.Mood .. " " .. customerLine)
 	end)
 
 	--// Belt and braces: the server auto-resolves at Timeout and sends
@@ -298,8 +260,8 @@ dialogueRemote.OnClientEvent:Connect(function(action, a)
 	end
 end)
 
---// Death/respawn mid-conversation: drop the panel; the server's timeout
---// resolves the order on its own
+--// Death/respawn mid-conversation: drop the choices; the server's
+--// timeout resolves the order on its own
 player.CharacterAdded:Connect(function()
 	if current then closePanel() end
 end)

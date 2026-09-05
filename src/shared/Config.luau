@@ -678,6 +678,9 @@ Config.Dialogue = {
 	TimeoutSeconds = 15,          -- unfinished dialogue auto-resolves; party never stuck
 	RecommendPatienceBonus = 5,   -- seated-bar refresh for a great suggestion; 0 disables
 	CloseAfterSeconds = 1.0,      -- panel lingers this long after the closing line
+	BubbleSeconds = 4,            -- chat bubbles fade after this (owner: snappy).
+	                              -- NOTE: sets the GLOBAL bubble duration, so
+	                              -- player chat bubbles share the same pace
 
 	--// Customer-voiced pools come in Singular/Plural: a party of one says
 	--// "I", a party of two or more says "we". The server picks the voice
@@ -1073,6 +1076,52 @@ Config.PlungeTap = {
 }
 
 ----------------------------------------------------------------
+-- DINE AND DASH (per-party roll at meal end - NOT a scheduler event).
+-- The party bolts for the door instead of paying. Any EMPTY-HANDED
+-- player punches them (left-click / tap / gamepad X - no prompt, no
+-- hold) to stop them: the bill pays itself instantly with a catch
+-- bonus and the whole party gets LAUNCHED. An escape loses the money
+-- (and rep, on HARD - Difficulty.Consequences.DashUncaughtRep).
+-- EASY never rolls a dash: THE EASY FREEZE.
+----------------------------------------------------------------
+Config.Dash = {
+	Chance = { EASY = 0, NORMAL = 0.08, HARD = 0.15 }, -- per party, at meal end
+	VIPCanDash = { EASY = false, NORMAL = false, HARD = true }, -- double bills run too
+	WarnSeconds = 5,            -- the ❗ window: they sit there LOOKING shifty
+	                            -- first - punch them at the table before they bolt
+	RunSpeed = 22,              -- dashers sprint (the amble is 12)
+	CatchBonusMult = 1.25,      -- caught = the bill plus this (justice pays)
+	PunchRangeStuds = 8,        -- server-checked reach
+	PunchCooldownSeconds = 0.4, -- per player, so click spam does nothing
+	LaunchStuds = 24,           -- how far a punched party flies
+	LaunchSeconds = 0.8,        -- airtime of the comedy arc
+}
+
+----------------------------------------------------------------
+-- THE FOOD CRITIC (at most one per shift - a party of ONE with a
+-- restaurant-sized appetite, never a VIP, never dashes). Judges the
+-- NORMAL service pipeline, weighted where the owner ruled: PATIENCE
+-- and COOKING only (no greet star). Review = 1 base star + up to 2
+-- for the patience left when the last dish lands + up to 2 for
+-- quality (all Perfect = 2, none Overcooked = 1, any Overcooked = 0).
+-- A walkout is an automatic 1 star. The rep swing is the biggest
+-- single hit/boost in the game. EASY never sees a critic (THE FREEZE).
+----------------------------------------------------------------
+Config.Critic = {
+	ShiftChance = { EASY = 0, NORMAL = 0.35, HARD = 0.5 }, -- rolled at shift start
+	EarliestFraction = 0.2,     -- never during the opening calm...
+	LatestFraction = 0.75,      -- ...or too late to finish the meal
+	MinDishes = 2,              -- one person, orders like a table
+	MaxDishes = 2,              -- owner: 3 for one person is kinda awkward
+	PatienceMult = 1.25,        -- a bit more patient than regular customers -
+	                            -- professionals take their time
+	PatienceTwoStars = 0.6,     -- bar fraction left at the last dish for +2
+	PatienceOneStar = 0.3,      -- ...for +1
+	RepByStars = { -12, -6, 0, 6, 12 }, -- [stars] -> the swing
+	StarsHoldSeconds = 5,       -- the verdict floats overhead this long
+}
+
+----------------------------------------------------------------
 -- THE SHIFT SCORE (owner ruling, Aug 2026: HIDDEN by design). Every
 -- useful moment quietly earns points through the same credit calls
 -- that write careers - NOTHING is shown during the shift, so the only
@@ -1097,6 +1146,7 @@ Config.Score = {
 		OvercookedCooks = 2,    -- near-zero so bad dishes can't be farmed (score-only)
 		EventChannels = 20,     -- any emergency fixed - rare, worth ~a table,
 		                        -- low enough that nobody drops a pan to race for it
+		DashesCaught = 12,      -- punching a dine-and-dasher (rare, heroic)
 		KitchenCrimes = -20,    -- water on a grease fire
 	},
 
@@ -1109,6 +1159,7 @@ Config.Score = {
 		{ Name = "Money Magnet",  Emoji = "💰", Keys = { "PaymentsCollected" } },
 		{ Name = "Fix-It Hero",   Emoji = "🔧", Keys = { "EventChannels" } },
 		{ Name = "Smooth Talker", Emoji = "😎", Keys = { "OrdersTaken", "Recommendations" } },
+		{ Name = "Door Guard",    Emoji = "🚓", Keys = { "DashesCaught" } },
 	},
 	--// Nobody leaves empty-handed - warm, never mocking
 	FallbackTitles = {
@@ -1131,6 +1182,7 @@ Config.Score = {
 		Recommendations = "%d smooth recommends",
 		PaymentsCollected = "%d payments collected",
 		EventChannels = "%d emergencies fixed",
+		DashesCaught = "%d dashers punched",
 	},
 	MaxReceipts = 3,            -- evidence lines under the crown
 
@@ -1153,6 +1205,13 @@ Config.Score = {
 Config.Manager = {
 	Name = "MANAGER BRUNO",
 	PortraitImage = "",           -- rbxassetid://... when the 2D face arrives
+
+	--// OWNER RULING (Sep 2026): Bruno speaks ONLY at important stages -
+	--// at most this many lines per shift, NOT counting the shift-start
+	--// and closing calls (those are always allowed). Wired triggers:
+	--// phase turns, rep PANIC, emergency STARTS, flood, dash alert.
+	--// The other pools below are a phrase library, currently unwired.
+	MaxLinesPerShift = 6,
 
 	MinSecondsBetweenLines = 6,   -- global cooldown; urgent lines ignore it
 	LineHoldBaseSeconds = 2.5,    -- bubble lingers this long...
@@ -1226,6 +1285,34 @@ Config.Manager = {
 		Walkout = {
 			"We just lost a table! Move faster!",
 			"They walked out! My heart breaks...",
+		},
+		DashStart = {
+			"THEY'RE RUNNING WITHOUT PAYING! STOP THEM!",
+			"Dine and dash!! Somebody PUNCH them!",
+		},
+		DashCaught = {
+			"HA! Nobody skips a bill in MY diner!",
+			"Beautiful punch. Beautiful. I'm so proud.",
+		},
+		DashEscaped = {
+			"They got away... my beautiful money...",
+			"Gone! Without paying! I need to sit down.",
+		},
+		CriticArrive = {
+			"A FOOD CRITIC! Act natural! PERFECT dishes only!",
+			"That's a critic! One person, big appetite, bigger opinions!",
+		},
+		CriticHappy = {
+			"THE REVIEW IS IN! Frame it! FRAME IT!",
+			"Stars! Beautiful stars! I could cry!",
+		},
+		CriticOkay = {
+			"Three stars... we live to cook another day.",
+			"An average review. I have complicated feelings.",
+		},
+		CriticAngry = {
+			"A TERRIBLE review!! My grandmother's recipes...",
+			"The review is bad. Do NOT read the review.",
 		},
 	},
 }
