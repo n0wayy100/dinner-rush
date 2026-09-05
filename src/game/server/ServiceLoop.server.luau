@@ -2236,6 +2236,7 @@ local function beginDialogue(player, party, tableId)
 		Timeout = Config.Dialogue.TimeoutSeconds,
 		CloseAfter = Config.Dialogue.CloseAfterSeconds,
 		DishText = ticketText(party),
+		Speaker = party.Root, --// native chat bubbles pop over the leader
 		Lines = {
 			Greet = pickLine(Config.Dialogue.WaiterGreetings),
 			SmallTalkQ = pickVoiced(Config.Dialogue.WaiterSmallTalk, plural),

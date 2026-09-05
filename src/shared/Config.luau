@@ -678,6 +678,9 @@ Config.Dialogue = {
 	TimeoutSeconds = 15,          -- unfinished dialogue auto-resolves; party never stuck
 	RecommendPatienceBonus = 5,   -- seated-bar refresh for a great suggestion; 0 disables
 	CloseAfterSeconds = 1.0,      -- panel lingers this long after the closing line
+	BubbleSeconds = 4,            -- chat bubbles fade after this (owner: snappy).
+	                              -- NOTE: sets the GLOBAL bubble duration, so
+	                              -- player chat bubbles share the same pace
 
 	--// Customer-voiced pools come in Singular/Plural: a party of one says
 	--// "I", a party of two or more says "we". The server picks the voice
