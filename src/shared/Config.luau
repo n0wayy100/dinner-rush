@@ -1496,6 +1496,75 @@ Config.Pass = {
 }
 
 ----------------------------------------------------------------
+-- MAPS
+--
+-- One place, many restaurants. Id is the MODEL NAME inside
+-- ServerStorage.Maps - MatchServer clones it by that name, so a typo here is
+-- a shift with no restaurant.
+--
+-- The lobby renders this list and the lobby SERVER validates against it, so a
+-- modified client cannot ask for a map that does not exist.
+--
+-- Adding a map later: build the model, drop it in ServerStorage.Maps, add a
+-- row here. No code changes anywhere.
+----------------------------------------------------------------
+Config.Maps = {
+	{
+		Id = "Diner",                 -- model name in ServerStorage.Maps
+		Display = "Route 67 Diner",   -- used in logs and as the art placeholder
+		--// The bar IS this image. Empty shows a lettered placeholder instead,
+		--// so a map without art yet is still a correct-looking card.
+		ImageId = "rbxassetid://126553494895194",
+		Available = true,
+	},
+	{
+		Id = "Sushi",
+		Display = "Yamasaki Sushi",
+		ImageId = "",
+		--// Not built yet: shows as COMING SOON and cannot be picked. Flip to
+		--// true the day the model lands in ServerStorage.Maps.
+		Available = false,
+	},
+}
+
+--// The map a party gets when nothing valid was chosen. Must be an Available
+--// Id above, or the first shift of a fresh install has nowhere to happen.
+--// THE MAP BAR in the picker: WIDTH ON WIDTH DIVIDED BY HEIGHT of your art.
+--//
+--// The bar takes the panel's full width and derives its HEIGHT from this, so
+--// the image fills it exactly with no border showing and nothing cropped -
+--// and it stays exact if the panel is ever resized.
+--//
+--// Current art is 1024 x 205, so 1024/205. Keep new map art to the same
+--// shape and nothing here needs touching.
+Config.MapCardAspect = 1024 / 205
+
+Config.DefaultMapId = "Diner"
+
+--// Whether a given id is a real, playable map. The lobby server gates every
+--// party on this - never trust a MapId that arrived from a client.
+function Config.IsPlayableMap(mapId)
+	if type(mapId) ~= "string" then
+		return false
+	end
+	for _, map in ipairs(Config.Maps) do
+		if map.Id == mapId and map.Available then
+			return true
+		end
+	end
+	return false
+end
+
+function Config.MapById(mapId)
+	for _, map in ipairs(Config.Maps) do
+		if map.Id == mapId then
+			return map
+		end
+	end
+	return nil
+end
+
+----------------------------------------------------------------
 -- SOUND EFFECTS
 --
 -- Server-played, so everyone hears the same thing at the same moment.

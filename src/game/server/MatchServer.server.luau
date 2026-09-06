@@ -16,7 +16,9 @@ print("[MatchServer] script started")
 local DEFAULTS = {
 	MaxPlayers = 3,
 	Difficulty = "NORMAL",
-	MapId = "Diner",
+	--// Joining this place directly (Studio, or a stray link) skips the lobby
+	--// and so brings no map choice. One source of truth for that fallback.
+	MapId = Config.DefaultMapId,
 }
 
 --// Settled by whoever arrives first, then reused for everyone else in the
