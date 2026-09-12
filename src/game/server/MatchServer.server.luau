@@ -41,6 +41,15 @@ end
 local function LoadMap(MapId)
 	if MapLoaded then return end
 
+	if not Config.LoadMapOnStart then
+		warn("[MatchServer] ================================================")
+		warn("[MatchServer]  MAP LOADING IS OFF (Config.LoadMapOnStart)")
+		warn("[MatchServer]  Playing whatever is already in Workspace.")
+		warn("[MatchServer]  Set it back to true before publishing.")
+		warn("[MatchServer] ================================================")
+		return
+	end
+
 	local Maps = ServerStorage:FindFirstChild("Maps")
 	if not Maps then
 		warn("[MatchServer] ServerStorage.Maps does not exist yet - no map to load")

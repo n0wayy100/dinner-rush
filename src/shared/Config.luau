@@ -1539,6 +1539,14 @@ Config.Maps = {
 --// shape and nothing here needs touching.
 Config.MapCardAspect = 1024 / 205
 
+--// ===== DEV SWITCH - PUT THIS BACK TO true BEFORE PUBLISHING =====
+--// false stops the stored map being cloned in at match start, so a map being
+--// built directly in Workspace is not buried under a second copy of another
+--// one. Whatever is already in Workspace is what gets played.
+--// Every system still finds its objects by tag, so a half-built map works as
+--// far as its tags go and warns about the rest.
+Config.LoadMapOnStart = false
+
 Config.DefaultMapId = "Diner"
 
 --// Whether a given id is a real, playable map. The lobby server gates every
