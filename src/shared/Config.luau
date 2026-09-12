@@ -57,15 +57,20 @@ Config.Shift = {
 Config.Cooking = {
 	Frying   = { CookTime = 10, PerfectWindow = 5, OvercookAfter = 4, BurntAfter = 5 },
 	Grilling = { CookTime = 14, PerfectWindow = 6, OvercookAfter = 5, BurntAfter = 6 },
+	--// The ramen cooker (Yamasaki Sushi map). Frying's numbers on purpose:
+	--// a new METHOD is not a new difficulty, and hands feel the same at
+	--// every pot - THE LAW holds.
+	Boiling  = { CookTime = 10, PerfectWindow = 5, OvercookAfter = 4, BurntAfter = 5 },
 	-- Baking reserved for post-MVP update (20-30s, wide windows, fire-and-forget)
 }
 
---// CookStation parts carry a Method attribute of "Fry"/"Grill", while the
---// timing table above is keyed "Frying"/"Grilling". Map both ways so neither
---// spelling silently misses.
+--// CookStation parts carry a Method attribute of "Fry"/"Grill"/"Ramen",
+--// while the timing table above is keyed "Frying"/"Grilling"/"Boiling".
+--// Map both ways so neither spelling silently misses.
 Config.CookMethodAliases = {
 	Fry = "Frying", Frying = "Frying",
 	Grill = "Grilling", Grilling = "Grilling",
+	Ramen = "Boiling", Boiling = "Boiling",
 }
 
 function Config.CookingFor(method)
@@ -103,6 +108,24 @@ Config.Ingredients = {
 		Source = "DryShelf", Color = Color3.fromRGB(200, 175, 130),
 		Stock = 15,
 	},
+
+	--// YAMASAKI SUSHI (only stocked on maps whose Menu cooks them).
+	--// Icons pending the owner's uploads - "" ships ugly-but-working.
+	RawChicken = {
+		Display = "Raw Chicken", Icon = "",
+		Source = "Fridge", Color = Color3.fromRGB(235, 180, 160),
+		Stock = 18,
+	},
+	RawShrimp = {
+		Display = "Raw Shrimp", Icon = "",
+		Source = "Fridge", Color = Color3.fromRGB(238, 168, 158),
+		Stock = 15,
+	},
+	RawNoodles = {
+		Display = "Noodle Brick", Icon = "",
+		Source = "DryShelf", Color = Color3.fromRGB(238, 220, 150),
+		Stock = 12,
+	},
 }
 
 ----------------------------------------------------------------
@@ -131,9 +154,30 @@ Config.Recipes = {
 		Ingredient = "RawPotato", Method = "Fry", Timing = "Frying",
 		Color = Color3.fromRGB(240, 205, 110), PriceMult = 0.8,
 	},
+
+	--// THE YAMASAKI MENU. Karaage and tempura share the fryers; ramen has
+	--// its own cooker (Method "Ramen"). Price ladder mirrors the diner's:
+	--// cheap staple -> mid -> signature.
+	Karaage = {
+		Display = "Karaage", Icon = "",
+		Ingredient = "RawChicken", Method = "Fry", Timing = "Frying",
+		Color = Color3.fromRGB(205, 140, 60), PriceMult = 1.0,
+	},
+	TempuraShrimp = {
+		Display = "Tempura Shrimp", Icon = "",
+		Ingredient = "RawShrimp", Method = "Fry", Timing = "Frying",
+		Color = Color3.fromRGB(236, 188, 108), PriceMult = 1.2,
+	},
+	Ramen = {
+		Display = "Ramen", Icon = "",
+		Ingredient = "RawNoodles", Method = "Ramen", Timing = "Boiling",
+		Color = Color3.fromRGB(222, 190, 140), PriceMult = 1.4,
+	},
 }
 
---// What customers order, and how often
+--// What customers order, and how often - the FALLBACK menu, used only
+--// when the active map has no Menu of its own (see Config.Maps: each map
+--// row carries the menu its customers order from).
 Config.OrderWeights = {
 	Burger = 5,
 	Fries = 4,
@@ -155,7 +199,9 @@ Config.Kitchen = {
 	--// RAYCAST-MEASURED per method (the anchors sit at different heights
 	--// over their cook surfaces in this map). Re-measure after moving
 	--// appliances: the one-liner lives in the session notes.
-	StationFoodLiftStuds = { Grill = -0.49, Fry = 0.55 },
+	--// Ramen = 0 is a PLACEHOLDER: raycast-measure the Yamasaki cooker's
+	--// anchor once it's placed and put the real number here.
+	StationFoodLiftStuds = { Grill = -0.49, Fry = 0.55, Ramen = 0 },
 	PickupHoldSeconds = 0,        -- fridge / dry shelf prompt
 	StationLoadHoldSeconds = 0,   -- starting a cook
 	CollectHoldSeconds = 0,       -- taking the result off the station
@@ -207,23 +253,28 @@ function Config.RecipeFor(ingredient, method)
 	return nil
 end
 
---// Picks a dish name using OrderWeights
-function Config.RollDish()
-	local total = 0
-	for _, weight in pairs(Config.OrderWeights) do
+--// Picks a dish name from a weights table - the active map's Menu when
+--// the caller passes one, the global OrderWeights fallback otherwise.
+function Config.RollDish(weights)
+	weights = weights or Config.OrderWeights
+	local total, first = 0, nil
+	for name, weight in pairs(weights) do
+		first = first or name
 		total += weight
 	end
 
 	local roll = math.random() * total
 	local acc = 0
-	for name, weight in pairs(Config.OrderWeights) do
+	for name, weight in pairs(weights) do
 		acc += weight
 		if roll <= acc then
 			return name
 		end
 	end
 
-	return "Burger"
+	--// Float rounding can leave roll a hair past acc: any menu dish is
+	--// right, a HARDCODED one would put burgers on the sushi menu
+	return first or "Burger"
 end
 
 ----------------------------------------------------------------
@@ -1375,7 +1426,7 @@ Config.Ultimates = {
 	--// dish VARIANTS (future: RawSteak -> grilled OR pan-fried), the
 	--// ultimate cooks what an open ticket wants, neediest table first;
 	--// with nobody asking, the first method listed here wins.
-	FlashFryMethodOrder = { "Grill", "Fry" },
+	FlashFryMethodOrder = { "Grill", "Fry", "Ramen" },
 
 	--// Bar feel (client)
 	BarTweenSeconds = 0.2,
@@ -1516,6 +1567,11 @@ Config.Maps = {
 		--// so a map without art yet is still a correct-looking card.
 		ImageId = "rbxassetid://126553494895194",
 		Available = true,
+		--// THE MENU: what this restaurant's customers order (dish -> roll
+		--// weight), and through it which ingredients its kitchen stocks -
+		--// the recommend picker and the fridge/shelf menus follow this
+		--// list too. A map with no Menu falls back to Config.OrderWeights.
+		Menu = { Burger = 5, Fries = 4, GrilledSteak = 3 },
 	},
 	{
 		Id = "Sushi",
@@ -1524,6 +1580,13 @@ Config.Maps = {
 		--// Not built yet: shows as COMING SOON and cannot be picked. Flip to
 		--// true the day the model lands in ServerStorage.Maps.
 		Available = false,
+		--// Full Japanese - no diner carry-overs (owner ruling, Sep 2026).
+		Menu = { Karaage = 5, TempuraShrimp = 4, Ramen = 3 },
+		--// Seated guests DISSOLVE at the table instead of walking back
+		--// out (owner ruling: upstairs rooms, nobody hikes down). Also
+		--// disables dine-and-dash here - you cannot bolt for the door on
+		--// a map where leaving is a fade. Queue walkouts still walk.
+		LeaveByFade = true,
 	},
 }
 
@@ -1549,6 +1612,19 @@ Config.LoadMapOnStart = false
 
 Config.DefaultMapId = "Diner"
 
+--// STUDIO-ONLY map override: while building a map, point every Studio
+--// playtest at it - customers order ITS menu, the kitchen stocks ITS
+--// ingredients - without the lobby handoff or a per-test command line.
+--// "" falls back to DefaultMapId. Live servers ignore this completely:
+--// the lobby's teleport data always wins there.
+Config.StudioMapId = "Sushi"
+
+--// STUDIO-ONLY spawn burst: this many parties march in the moment the
+--// shift goes RUNNING, so route/seating tests need no command bar.
+--// The normal spawn trickle continues after the burst. 0 = off (normal
+--// opening). Ignored on live servers - set 0 anyway when map testing ends.
+Config.StudioSpawnBurst = 4
+
 --// Whether a given id is a real, playable map. The lobby server gates every
 --// party on this - never trust a MapId that arrived from a client.
 function Config.IsPlayableMap(mapId)
@@ -1570,6 +1646,15 @@ function Config.MapById(mapId)
 		end
 	end
 	return nil
+end
+
+--// The menu the active map's customers order from. Callers pass
+--// workspace:GetAttribute("MatchMapId") (published by MatchServer);
+--// unknown or unset ids get the global fallback, so a Studio session
+--// with no teleport data still serves the diner menu.
+function Config.MenuForMap(mapId)
+	local map = Config.MapById(mapId)
+	return (map and map.Menu) or Config.OrderWeights
 end
 
 ----------------------------------------------------------------
@@ -1685,6 +1770,12 @@ Config.Sfx = {
 		--// stations, gone by the dining room
 		CookFry = {
 			Id = "75511010485145", Volume = 0.5, Loop = true,
+			MinStuds = 8, MaxStuds = 25,
+		},
+		--// The ramen cooker's bubbling broth. Id pending the sound
+		--// person - "" is silent, same as every unset sound here.
+		CookRamen = {
+			Id = "", Volume = 0.5, Loop = true,
 			MinStuds = 8, MaxStuds = 25,
 		},
 		CookGrill = {

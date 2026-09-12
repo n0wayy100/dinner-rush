@@ -21,6 +21,13 @@ local DEFAULTS = {
 	MapId = Config.DefaultMapId,
 }
 
+--// Studio playtests target the map being built (Config.StudioMapId) so
+--// nobody has to re-type a MatchMapId override every single test. Real
+--// teleport data from the lobby still wins over this.
+if game:GetService("RunService"):IsStudio() and Config.StudioMapId ~= "" then
+	DEFAULTS.MapId = Config.StudioMapId
+end
+
 --// Settled by whoever arrives first, then reused for everyone else in the
 --// party so late arrivals cannot change the map out from under the match.
 local MatchSettings = nil

@@ -66,6 +66,38 @@ local RAW_STEAK = Color3.fromRGB(192, 54, 58)
 local FAT = Color3.fromRGB(240, 230, 218)
 local POTATO = Color3.fromRGB(172, 132, 82)
 
+--// Yamasaki Sushi menu
+local KARA = Color3.fromRGB(208, 138, 58)
+local KARA_DARK = Color3.fromRGB(172, 102, 42)
+local RAW_CHICKEN = Color3.fromRGB(235, 180, 160)
+local CHICKEN_SKIN = Color3.fromRGB(242, 205, 185)
+local RAW_SHRIMP = Color3.fromRGB(226, 182, 175)
+local SHRIMP_TAIL = Color3.fromRGB(236, 120, 112)
+local BATTER = Color3.fromRGB(236, 192, 120)
+local NOODLE = Color3.fromRGB(242, 224, 150)
+local NOODLE_DRY = Color3.fromRGB(230, 208, 132)
+local BOWL_RED = Color3.fromRGB(198, 64, 58)
+local BROTH = Color3.fromRGB(224, 192, 140)
+local NARUTO_PINK = Color3.fromRGB(240, 140, 160)
+local YOLK = Color3.fromRGB(247, 190, 70)
+local ONION = Color3.fromRGB(112, 190, 92)
+local CHOPSTICK = Color3.fromRGB(196, 150, 96)
+
+--// One curled shrimp lying down: three arched body segments + a fan
+--// tail. Shared by the raw and tempura builders - only the coat and
+--// girth change. `at` places and turns the whole shrimp.
+local function shrimp(handle, at, girth, body, tail)
+	local seg = Vector3.new(0.5, girth, girth)
+	deco(handle, Enum.PartType.Block, seg, body,
+		at * CFrame.new(-0.26, 0.06, 0) * CFrame.Angles(0, 0, math.rad(38)))
+	deco(handle, Enum.PartType.Block, seg, body,
+		at * CFrame.new(0, 0.16, 0))
+	deco(handle, Enum.PartType.Block, seg, body,
+		at * CFrame.new(0.26, 0.06, 0) * CFrame.Angles(0, 0, math.rad(-38)))
+	deco(handle, Enum.PartType.Block, Vector3.new(0.32, 0.3, 0.1), tail,
+		at * CFrame.new(-0.5, 0.2, 0) * CFrame.Angles(0, 0, math.rad(55)))
+end
+
 local BUILDERS = {
 	Burger = function(handle)
 		puck(handle, 0.32, 1.5, BUN, -0.45)                     -- bottom bun
@@ -119,6 +151,58 @@ local BUILDERS = {
 		end
 	end,
 
+	Karaage = function(handle)
+		--// Golden boneless chunks in a loose pile (no bones ANYWHERE -
+		--// the steak saga proved bone shapes read as the wrong food)
+		deco(handle, Enum.PartType.Ball,
+			Vector3.new(0.85, 0.85, 0.85), KARA, CFrame.new(-0.25, -0.18, 0.05))
+		deco(handle, Enum.PartType.Ball,
+			Vector3.new(0.75, 0.75, 0.75), KARA, CFrame.new(0.28, -0.22, -0.12))
+		deco(handle, Enum.PartType.Ball,
+			Vector3.new(0.7, 0.7, 0.7), KARA, CFrame.new(0.05, -0.26, 0.32))
+		--// craggy fried bits
+		deco(handle, Enum.PartType.Ball,
+			Vector3.new(0.34, 0.34, 0.34), KARA_DARK, CFrame.new(-0.12, 0.1, 0.02))
+		deco(handle, Enum.PartType.Ball,
+			Vector3.new(0.3, 0.3, 0.3), KARA_DARK, CFrame.new(0.38, 0.02, -0.02))
+	end,
+
+	TempuraShrimp = function(handle)
+		--// Two fat battered curls crossed on the plate, pink tails out
+		shrimp(handle, CFrame.new(-0.08, -0.38, 0.2)
+			* CFrame.Angles(0, math.rad(18), 0), 0.44, BATTER, SHRIMP_TAIL)
+		shrimp(handle, CFrame.new(0.12, -0.38, -0.26)
+			* CFrame.Angles(0, math.rad(-155), 0), 0.44, BATTER, SHRIMP_TAIL)
+	end,
+
+	Ramen = function(handle)
+		puck(handle, 0.6, 1.8, BOWL_RED, -0.3)                  -- the bowl
+		puck(handle, 0.08, 1.62, BROTH, 0.04)                   -- broth surface
+		local strands = { { -0.1, 0.05, 8 }, { 0.12, -0.12, -14 }, { -0.28, -0.3, 22 } }
+		for _, strand in ipairs(strands) do                     -- noodle waves
+			deco(handle, Enum.PartType.Block,
+				Vector3.new(0.6, 0.05, 0.16), NOODLE,
+				CFrame.new(strand[1], 0.1, strand[2])
+					* CFrame.Angles(0, math.rad(strand[3]), 0))
+		end
+		puck(handle, 0.07, 0.42, SESAME, 0.12, CFrame.new(0.42, 0, 0.28))   -- naruto
+		puck(handle, 0.08, 0.16, NARUTO_PINK, 0.125, CFrame.new(0.42, 0, 0.28))
+		deco(handle, Enum.PartType.Ball,                        -- egg half
+			Vector3.new(0.36, 0.22, 0.28), SESAME, CFrame.new(-0.45, 0.12, 0.2))
+		deco(handle, Enum.PartType.Ball,
+			Vector3.new(0.18, 0.12, 0.18), YOLK, CFrame.new(-0.45, 0.19, 0.2))
+		deco(handle, Enum.PartType.Block,                       -- green onion
+			Vector3.new(0.14, 0.05, 0.14), ONION, CFrame.new(0.08, 0.12, -0.38))
+		deco(handle, Enum.PartType.Block,
+			Vector3.new(0.12, 0.05, 0.12), ONION, CFrame.new(-0.18, 0.12, -0.45))
+		for index = 0, 1 do                                     -- chopsticks on the rim
+			deco(handle, Enum.PartType.Block,
+				Vector3.new(1.7, 0.07, 0.07), CHOPSTICK,
+				CFrame.new(0.15 + index * 0.14, 0.34, -0.42 + index * 0.13)
+					* CFrame.Angles(0, math.rad(18), 0))
+		end
+	end,
+
 	RawPatty = function(handle)
 		puck(handle, 0.3, 1.4, RAW_MEAT, -0.1)
 		puck(handle, 0.06, 1.45, Color3.fromRGB(178, 70, 70), 0.09) -- top sheen
@@ -146,6 +230,37 @@ local BUILDERS = {
 			Vector3.new(0.8, 0.8, 0.8), POTATO, CFrame.new(0.35, -0.02, 0.05))
 		deco(handle, Enum.PartType.Ball,
 			Vector3.new(0.8, 0.8, 0.8), POTATO, CFrame.new(-0.35, -0.05, -0.05))
+	end,
+
+	RawChicken = function(handle)
+		--// Pale boneless chunks - the before to Karaage's after
+		deco(handle, Enum.PartType.Ball,
+			Vector3.new(0.85, 0.85, 0.85), RAW_CHICKEN, CFrame.new(-0.22, -0.18, 0.02))
+		deco(handle, Enum.PartType.Ball,
+			Vector3.new(0.72, 0.72, 0.72), RAW_CHICKEN, CFrame.new(0.3, -0.24, 0.12))
+		deco(handle, Enum.PartType.Ball,
+			Vector3.new(0.62, 0.62, 0.62), RAW_CHICKEN, CFrame.new(0.08, -0.28, -0.3))
+		deco(handle, Enum.PartType.Ball,                        -- skin sheen
+			Vector3.new(0.4, 0.4, 0.4), CHICKEN_SKIN, CFrame.new(-0.1, 0.08, 0.1))
+	end,
+
+	RawShrimp = function(handle)
+		shrimp(handle, CFrame.new(-0.1, -0.45, 0.2)
+			* CFrame.Angles(0, math.rad(15), 0), 0.3, RAW_SHRIMP, SHRIMP_TAIL)
+		shrimp(handle, CFrame.new(0.15, -0.45, -0.25)
+			* CFrame.Angles(0, math.rad(-160), 0), 0.3, RAW_SHRIMP, SHRIMP_TAIL)
+	end,
+
+	RawNoodles = function(handle)
+		--// The instant-noodle brick, wavy strands suggested on top
+		deco(handle, Enum.PartType.Block,
+			Vector3.new(1.15, 0.48, 0.85), NOODLE, CFrame.new(0, -0.36, 0))
+		local waves = { { -0.22, 6 }, { 0, -8 }, { 0.22, 5 } }
+		for _, wave in ipairs(waves) do
+			deco(handle, Enum.PartType.Block,
+				Vector3.new(1.05, 0.06, 0.1), NOODLE_DRY,
+				CFrame.new(0, -0.09, wave[1]) * CFrame.Angles(0, math.rad(wave[2]), 0))
+		end
 	end,
 }
 

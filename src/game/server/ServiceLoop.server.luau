@@ -690,25 +690,22 @@ local function pointAbove(part, height)
 	return part.Position + Vector3.new(0, (part.Size.Y / 2) + height, 0)
 end
 
---// Moves one member's anchored root; on a rig the limbs follow through their
---// Motor6Ds, so animations keep playing. Height is held from the current
---// position - the spawn placed them on the floor and every destination is on
---// the same floor.
-local function walkMemberTo(member, targetPos, onDone)
+--// One linear tween of an anchored root to an explicit 3D point; limbs
+--// follow through their Motor6Ds so animations keep playing. Facing
+--// stays HORIZONTAL, so a climb never pitches the body into the slope.
+--// keepWalking = a mid-climb hop: leave the walk cycle running.
+local function glideTo(member, flat, onDone, keepWalking)
 	local root = member.Root
 	if not root or not root.Parent then
 		if onDone then onDone() end
 		return
 	end
-
 	local from = root.Position
-	local flat = Vector3.new(targetPos.X, from.Y, targetPos.Z)
 	local distance = (flat - from).Magnitude
-
-	--// Face the direction of travel, unless already there
+	local lookDir = Vector3.new(flat.X - from.X, 0, flat.Z - from.Z)
 	local goal
-	if distance > 0.1 then
-		goal = CFrame.lookAt(flat, flat + (flat - from).Unit)
+	if distance > 0.1 and lookDir.Magnitude > 0.1 then
+		goal = CFrame.lookAt(flat, flat + lookDir.Unit)
 	else
 		goal = CFrame.new(flat) * (root.CFrame - root.CFrame.Position)
 	end
@@ -726,17 +723,83 @@ local function walkMemberTo(member, targetPos, onDone)
 		{ CFrame = goal })
 	member.WalkTween = tween --// the punch cancels this mid-stride
 
-	if member.WalkTrack then
+	if member.WalkTrack and not member.WalkTrack.IsPlaying then
 		member.WalkTrack:Play()
 	end
 
 	tween.Completed:Once(function()
-		if member.WalkTrack then
+		if member.WalkTrack and not keepWalking then
 			member.WalkTrack:Stop()
 		end
 		if onDone then onDone() end
 	end)
 	tween:Play()
+end
+
+--// Moves one member. SAME-floor targets keep the pawn's current height
+--// (seat points ride at table height - honoring their Y would float
+--// people onto tabletops); a real floor change - a platform step, a
+--// staircase - climbs via sampled hops. The decision compares FLOOR
+--// heights (raycast under pawn and under target), never raw target Y.
+local FLOOR_CHANGE_STUDS = 0.75
+
+local function walkMemberTo(member, targetPos, onDone)
+	local root = member.Root
+	if not root or not root.Parent then
+		if onDone then onDone() end
+		return
+	end
+
+	local from = root.Position
+
+	--// CLIMBING: a cross-floor move (platform edge, staircase) rides the
+	--// actual surface in short hops - height re-sampled every few studs -
+	--// so pawns climb ON geometry of any shape instead of skewering
+	--// through it on one straight diagonal.
+	local rp = RaycastParams.new()
+	rp.RespectCanCollide = true --// markers, anchors and decor are not floors
+	local hereHit = workspace:Raycast(from, Vector3.new(0, -30, 0), rp)
+	local thereHit = workspace:Raycast(
+		targetPos + Vector3.new(0, 2.5, 0), Vector3.new(0, -35, 0), rp)
+	if hereHit and thereHit
+		and math.abs(thereHit.Position.Y - hereHit.Position.Y) > FLOOR_CHANGE_STUDS then
+		local lift = from.Y - hereHit.Position.Y
+		local endY = thereHit.Position.Y + lift
+		local flatDelta = Vector3.new(targetPos.X - from.X, 0, targetPos.Z - from.Z)
+		local hops = math.max(math.floor(flatDelta.Magnitude / 4), 1)
+		local hopIndex = 0
+		local function hop()
+			hopIndex += 1
+			if hopIndex > hops then
+				if onDone then onDone() end
+				return
+			end
+			local frac = hopIndex / hops
+			local expected = from.Y + (endY - from.Y) * frac
+			local at = Vector3.new(
+				from.X + flatDelta.X * frac, expected, from.Z + flatDelta.Z * frac)
+			--// Probe a NARROW window around the expected height: enough
+			--// to find the step underfoot, never the storey above (a
+			--// switchback's flights overlap vertically)
+			local hit = workspace:Raycast(at + Vector3.new(0, 2.5, 0), Vector3.new(0, -6, 0), rp)
+			local y = expected
+			if hit then
+				local surface = hit.Position.Y + lift
+				--// Trust the sample only when it is STEP-sized off the
+				--// line. Anything further is furniture - a railing, the
+				--// bar top - and stepping onto it turns customers into
+				--// cats walking across the counters.
+				if math.abs(surface - expected) <= 1.6 then
+					y = surface
+				end
+			end
+			glideTo(member, Vector3.new(at.X, y, at.Z), hop, hopIndex < hops)
+		end
+		hop()
+		return
+	end
+
+	glideTo(member, Vector3.new(targetPos.X, from.Y, targetPos.Z), onDone, false)
 end
 
 --// A party is several people walking together, so they need to not occupy the
@@ -1320,7 +1383,47 @@ local dashEscaped -- forward declared (dine-and-dash section; departTo settles e
 
 --// Customers still in the queue are already outside, so they leave directly.
 --// Seated ones walk their table's ExitVia route back out through the door.
+--// THE FADE EXIT (Config.Maps[].LeaveByFade): the party dissolves in
+--// place over a second - parts and faces tween out, billboards cut -
+--// then cleans up exactly like a completed walk-out would.
+local function fadeOutParty(party)
+	for _, member in ipairs(party.Members or {}) do
+		if member.Model then
+			for _, inst in ipairs(member.Model:GetDescendants()) do
+				if inst:IsA("BasePart") or inst:IsA("Decal") then
+					TweenService:Create(inst, TweenInfo.new(1.2),
+						{ Transparency = 1 }):Play()
+				elseif inst:IsA("BillboardGui") then
+					inst.Enabled = false
+				end
+			end
+		end
+	end
+	print(("[Service] Party %d fades away (LeaveByFade map)"):format(party.Id))
+	task.delay(1.4, function()
+		for _, member in ipairs(party.Members or {}) do
+			if member.WalkTrack then
+				member.WalkTrack:Stop()
+			end
+			if member.Model then
+				member.Model:Destroy()
+			end
+		end
+		party.Members = nil
+		parties[party.Id] = nil
+	end)
+end
+
 local function departTo(party, target)
+	--// On LeaveByFade maps a SEATED party never walks out - it fades at
+	--// the table. Queue walkouts (no ExitFrom - they never got seated)
+	--// still leave through the door they are already standing at.
+	local mapHere = Config.MapById(workspace:GetAttribute("MatchMapId"))
+	if mapHere and mapHere.LeaveByFade and party.ExitFrom and not party.Dashing then
+		fadeOutParty(party)
+		return
+	end
+
 	local points = {}
 
 	if not party.Spot and party.ExitFrom then
@@ -2221,11 +2324,15 @@ local function onPartyFinishedEating(party, tableId)
 
 	--// DINE AND DASH: rolled here, at the moment the bill comes due.
 	--// EASY's chance is 0 (frozen); VIPs only run where allowed; the
-	--// critic always pays - imagine the scandal.
-	local dashChance = party.IsCritic and 0 or (DASH.Chance[DIFFICULTY] or 0)
+	--// critic always pays - imagine the scandal. LeaveByFade maps have
+	--// no dash at all: there is no door run where leaving is a fade.
+	local mapHere = Config.MapById(workspace:GetAttribute("MatchMapId"))
+	local noDashMap = mapHere and mapHere.LeaveByFade == true
+	local dashChance = (party.IsCritic or noDashMap) and 0
+		or (DASH.Chance[DIFFICULTY] or 0)
 	local vipOk = not party.IsVIP or DASH.VIPCanDash[DIFFICULTY]
 	local forced = DEBUG_FORCE_FIRST_DASH and not debugFirstDashDone
-		and not party.IsCritic
+		and not party.IsCritic and not noDashMap
 	if forced or (dashChance > 0 and vipOk and math.random() < dashChance) then
 		debugFirstDashDone = true
 		print(("[Service] Table %d finished eating - and they're looking SHIFTY%s")
@@ -2393,14 +2500,19 @@ local function beginDialogue(player, party, tableId)
 	}
 
 	if flow == "recommend" then
+		--// Only the ACTIVE map's menu - the waiter can't recommend a
+		--// burger in a restaurant with no patties
 		payload.Dishes = {}
-		for dishName, recipe in pairs(Config.Recipes) do
-			table.insert(payload.Dishes, {
-				Key = dishName,
-				Display = recipe.Display,
-				Icon = recipe.Icon,
-				Line = pickLine(Config.Dialogue.WaiterRecommends),
-			})
+		for dishName in pairs(Config.MenuForMap(workspace:GetAttribute("MatchMapId"))) do
+			local recipe = Config.Recipes[dishName]
+			if recipe then
+				table.insert(payload.Dishes, {
+					Key = dishName,
+					Display = recipe.Display,
+					Icon = recipe.Icon,
+					Line = pickLine(Config.Dialogue.WaiterRecommends),
+				})
+			end
 		end
 		--// pairs order is undefined; sort so the buttons never shuffle
 		table.sort(payload.Dishes, function(a, b) return a.Display < b.Display end)
@@ -2428,8 +2540,12 @@ dialogueRemote.OnServerEvent:Connect(function(player, action, token, pickedKey)
 	if not dlg or dlg.Player ~= player then return end
 
 	--// Validate the pick; a bad or absent key falls back to the party's
-	--// original ticket (the direct flow always lands here with nil)
-	if pickedKey ~= nil and (type(pickedKey) ~= "string" or Config.Recipes[pickedKey] == nil) then
+	--// original ticket (the direct flow always lands here with nil).
+	--// Off-menu dishes are bad picks too - a crafted key must not order
+	--// what this map's kitchen cannot cook.
+	if pickedKey ~= nil and (type(pickedKey) ~= "string"
+		or Config.Recipes[pickedKey] == nil
+		or Config.MenuForMap(workspace:GetAttribute("MatchMapId"))[pickedKey] == nil) then
 		pickedKey = nil
 	end
 
@@ -2646,8 +2762,12 @@ local function seatParty(party, seater)
 	if party.GreetPrompt and party.GreetPrompt.Parent then
 		party.GreetPrompt:Destroy()
 	end
-	spotOccupant[party.Spot] = nil
-	party.Spot = nil
+	--// A party past the spot count (burst spawns, or spot-starved maps)
+	--// queues spotless - there is nothing to free for them
+	if party.Spot ~= nil then
+		spotOccupant[party.Spot] = nil
+		party.Spot = nil
+	end
 	tableOccupant[tableId] = party
 	party.TableId = tableId
 
@@ -2658,29 +2778,83 @@ local function seatParty(party, seater)
 	--// computed standing spot when it does not.
 	local seats = seatSpots(tablePart, #party.Members)
 
-	--// Route around this map's walls before arriving at the chairs
-	local points = routePoints(parseVia(tablePart:GetAttribute("EntryVia")))
-	print(("[Service] Party %d (%d) walking to Table %d via %d waypoint(s)")
-		:format(party.Id, #party.Members, tableId, #points))
-
-	--// Walk the shared route together, then each peels off to their chair
-	walkPath(party, points, function()
-		walkParty(party, function(index)
+	-- SEATED BAR STARTS HERE (from settleAtSeats): bodies in chairs
+	local function settleAtSeats()
+		for index, member in ipairs(party.Members or {}) do
 			local spot = seats[index] or seats[1]
-			return spot.Walk
-		end, function()
-		-- SEATED BAR STARTS HERE: bodies in chairs
-			for index, member in ipairs(party.Members or {}) do
-				local spot = seats[index] or seats[1]
-				if spot.Sit then
-					sitMember(member, spot.Sit)
+			if spot.Sit then
+				sitMember(member, spot.Sit)
+			end
+		end
+		setPartyState(party, STATE.SEATED)
+		startSeatedBar(party)
+		refreshTablePrompt(tableId)
+	end
+
+	--// GHOST SEATING (owner ruling, Sep 2026): on LeaveByFade maps a
+	--// table on ANOTHER floor is reached the way this restaurant's
+	--// guests depart - dissolve at the door, materialize at the table.
+	--// Nobody walks stairs, entering or leaving.
+	local mapHere = Config.MapById(workspace:GetAttribute("MatchMapId"))
+	local firstRoot = party.Members and party.Members[1] and party.Members[1].Root
+	local ghost = mapHere and mapHere.LeaveByFade and firstRoot
+		and math.abs(tablePart.Position.Y - firstRoot.Position.Y) > 6
+
+	if ghost then
+		print(("[Service] Party %d (%d) GHOSTS to Table %d (cross-floor)")
+			:format(party.Id, #party.Members, tableId))
+		local rp = RaycastParams.new()
+		rp.RespectCanCollide = true
+		local saved = {}
+		for _, member in ipairs(party.Members or {}) do
+			if member.Model then
+				for _, inst in ipairs(member.Model:GetDescendants()) do
+					if (inst:IsA("BasePart") or inst:IsA("Decal")) and inst.Transparency < 1 then
+						saved[inst] = inst.Transparency
+						TweenService:Create(inst, TweenInfo.new(0.8),
+							{ Transparency = 1 }):Play()
+					end
 				end
 			end
-			setPartyState(party, STATE.SEATED)
-			startSeatedBar(party)
-			refreshTablePrompt(tableId)
+		end
+		task.delay(1, function()
+			for index, member in ipairs(party.Members or {}) do
+				local root = member.Root
+				local spot = seats[index] or seats[1]
+				if root and root.Parent and spot then
+					local at = spot.Walk
+					local hereFloor = workspace:Raycast(root.Position, Vector3.new(0, -30, 0), rp)
+					local lift = hereFloor and (root.Position.Y - hereFloor.Position.Y) or 2.8
+					local floorHit = workspace:Raycast(
+						at + Vector3.new(0, 4, 0), Vector3.new(0, -30, 0), rp)
+					local y = (floorHit and floorHit.Position.Y or at.Y) + lift
+					root.CFrame = CFrame.lookAt(
+						Vector3.new(at.X, y, at.Z),
+						Vector3.new(tablePart.Position.X, y, tablePart.Position.Z))
+				end
+			end
+			for inst, transparency in pairs(saved) do
+				if inst.Parent then
+					TweenService:Create(inst, TweenInfo.new(0.8),
+						{ Transparency = transparency }):Play()
+				end
+			end
+			task.delay(0.4, settleAtSeats)
 		end)
-	end)
+	else
+		--// Route around this map's walls before arriving at the chairs
+		local points = routePoints(parseVia(tablePart:GetAttribute("EntryVia")))
+		print(("[Service] Party %d (%d) walking to Table %d via %d waypoint(s)")
+			:format(party.Id, #party.Members, tableId, #points))
+
+		--// Walk the shared route together, then each peels off to their chair
+		walkPath(party, points, function()
+			walkParty(party, function(index)
+				local spot = seats[index] or seats[1]
+				return spot.Walk
+			end, settleAtSeats)
+		end)
+	end
 	if seater then
 		scoreOnly(seater, "Seats", 1) --// the hidden score counts the host work
 	end
@@ -2886,7 +3060,8 @@ local function spawnParty()
 	party.DishesRemaining = dishCount
 	party.Ticket = {}
 	for _ = 1, dishCount do
-		table.insert(party.Ticket, Config.RollDish())
+		table.insert(party.Ticket,
+			Config.RollDish(Config.MenuForMap(workspace:GetAttribute("MatchMapId"))))
 	end
 
 	if isCritic then
@@ -3374,8 +3549,38 @@ task.spawn(function()
 	print(("[Service] === SHIFT START - %s, %ds, target %d parties ===")
 		:format(diff.Label, shift.Length, diff.Rewards.TargetParties))
 
+	--// STUDIO-ONLY DEBUG: force-spawn parties on demand, for route/map
+	--// testing. Command bar (server view):
+	--//   game.ServerStorage.DebugSpawnParty:Invoke(4)
+	--// Never exists in live servers.
+	if game:GetService("RunService"):IsStudio()
+		and not game:GetService("ServerStorage"):FindFirstChild("DebugSpawnParty") then
+		local debugSpawn = Instance.new("BindableFunction")
+		debugSpawn.Name = "DebugSpawnParty"
+		debugSpawn.OnInvoke = function(count)
+			for _ = 1, math.clamp(tonumber(count) or 1, 1, 8) do
+				spawnParty()
+				task.wait(0.5) --// let each pawn claim its queue spot first
+			end
+			return true
+		end
+		debugSpawn.Parent = game:GetService("ServerStorage")
+	end
+
 	task.wait(2)
-	spawnParty()
+	--// STUDIO-ONLY: the map-testing burst (Config.StudioSpawnBurst)
+	--// replaces the single opening spawn; the normal trickle follows
+	if game:GetService("RunService"):IsStudio()
+		and (Config.StudioSpawnBurst or 0) > 0 then
+		print(("[Service] STUDIO BURST: %d parties incoming (Config.StudioSpawnBurst)")
+			:format(Config.StudioSpawnBurst))
+		for _ = 1, Config.StudioSpawnBurst do
+			spawnParty()
+			task.wait(0.5)
+		end
+	else
+		spawnParty()
+	end
 	while shift.State == "RUNNING" do
 		local interval = Config.SpawnIntervalFor(shift.Phase, DIFFICULTY, #Players:GetPlayers())
 		task.wait(interval)

@@ -279,10 +279,24 @@ for name, data in pairs(Config.Ingredients) do
 	stock[name] = data.Stock or 0
 end
 
+--// Only ingredients the ACTIVE map's menu can cook exist in its kitchen -
+--// no raw shrimp in the diner fridge, no patties at Yamasaki. Computed per
+--// call because MatchMapId can arrive after this script boots.
+local function menuAllows(ingredientName)
+	local menu = Config.MenuForMap(workspace:GetAttribute("MatchMapId"))
+	for dishName in pairs(menu) do
+		local recipe = Config.Recipes[dishName]
+		if recipe and recipe.Ingredient == ingredientName then
+			return true
+		end
+	end
+	return false
+end
+
 local function ingredientsFor(sourceTag)
 	local names = {}
 	for name, data in pairs(Config.Ingredients) do
-		if data.Source == sourceTag then
+		if data.Source == sourceTag and menuAllows(name) then
 			table.insert(names, name)
 		end
 	end
@@ -403,6 +417,7 @@ kitchenRemote.OnServerEvent:Connect(function(player, action, ingredientName)
 
 	local data = Config.Ingredients[ingredientName]
 	if not data then return end
+	if not menuAllows(ingredientName) then return end --// not on this map's menu
 
 	--// Must actually be standing at a source that stocks this ingredient,
 	--// so a crafted "Take" from across the map is ignored. A little slack
@@ -611,8 +626,9 @@ local function cookSoundStart(station)
 	end
 	entry.Count += 1
 	if not (entry.Handle and entry.Handle:IsPlaying()) then
-		entry.Handle = Sfx.Loop(
-			station.Method == "Fry" and "CookFry" or "CookGrill", station.Part)
+		local loopName = ({ Fry = "CookFry", Grill = "CookGrill", Ramen = "CookRamen" })
+			[station.Method] or "CookGrill"
+		entry.Handle = Sfx.Loop(loopName, station.Part)
 	end
 end
 

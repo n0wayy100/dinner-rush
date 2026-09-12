@@ -117,11 +117,22 @@ local function difficultyBlock()
 	return Config.ForDifficulty(name)
 end
 
---// Sorted so the board rows never jump around
+--// Sorted so the board rows never jump around - and filtered to the
+--// ACTIVE map's menu (per-map menus, Sep 2026): the supplier only sells
+--// what this restaurant's kitchen can cook, same gate as the fridge.
 local function ingredientNames()
+	local allowed = {}
+	for dishName in pairs(Config.MenuForMap(workspace:GetAttribute("MatchMapId"))) do
+		local recipe = Config.Recipes[dishName]
+		if recipe then
+			allowed[recipe.Ingredient] = true
+		end
+	end
 	local names = {}
 	for name in pairs(Config.Ingredients) do
-		table.insert(names, name)
+		if allowed[name] then
+			table.insert(names, name)
+		end
 	end
 	table.sort(names)
 	return names
