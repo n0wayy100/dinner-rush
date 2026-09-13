@@ -361,3 +361,28 @@ task.spawn(function()
 		task.wait(1)
 	end
 end)
+
+--// STUDIO-ONLY (Config.Ultimates.StudioFullCharge): equips a class and
+--// keeps the charge topped up so ultimate testing needs no command bar.
+--// Re-tops every couple of seconds, so casts can be spammed. Never runs
+--// on live servers.
+if game:GetService("RunService"):IsStudio() and ULT.StudioFullCharge then
+	warn("[Charge] ==============================================")
+	warn("[Charge]  STUDIO FULL CHARGE IS ON (Config.Ultimates)")
+	warn(("[Charge]  Everyone plays %s with an always-ready ultimate.")
+		:format(ULT.StudioClassKey ~= "" and ULT.StudioClassKey or "their class"))
+	warn("[Charge]  Set StudioFullCharge = false when testing ends.")
+	warn("[Charge] ==============================================")
+	task.spawn(function()
+		while true do
+			for _, player in ipairs(Players:GetPlayers()) do
+				if (player:GetAttribute("ClassKey") or "") == ""
+					and (ULT.StudioClassKey or "") ~= "" then
+					player:SetAttribute("ClassKey", ULT.StudioClassKey)
+				end
+				player:SetAttribute("UltimateCharge", ULT.MaxCharge)
+			end
+			task.wait(2)
+		end
+	end)
+end

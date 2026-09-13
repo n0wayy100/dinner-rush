@@ -13,10 +13,13 @@
 	- Render-only. Never keyed off the keypress; charge/ability untouched.
 	- NOTHING here is interactive: Active=false everywhere, no buttons.
 	  A GUI stealing the mouse mid-shift-lock is a shipped-bug repeat.
-	- No animation on the viewport rig - Roblox viewports don't play
-	  tracks. Static pose (six upper-body Motor6Ds) applied ONCE, then
-	  the rig's joints are solved MANUALLY (part CFrames), which renders
-	  in a plain ViewportFrame regardless of engine joint handling.
+	- No animation TRACKS on the viewport rig - Roblox viewports don't
+	  play them. Poses (six upper-body Motor6Ds) are applied as
+	  rest-C0 * angles and the rig is solved MANUALLY (part CFrames),
+	  which renders in a plain ViewportFrame regardless of engine joint
+	  handling. A class with a Config Motion pose SWINGS between its two
+	  poses per-frame through that same solver (owner request, Sep 2026)
+	  - procedural, viewport-only, never the live character.
 	- Clones only: Archivable flipped and restored, scripts stripped
 	  (a cloned Animate would fight the pose every frame).
 	- Degrade, don't break: no character / failed clone = banner with an
@@ -89,19 +92,38 @@ local function cloneForPortrait(character)
 	return clone
 end
 
---// Applied ONCE to a fresh clone - C0 is multiplied, so re-applying
---// doubles every rotation.
-local function applyPose(clone, pose)
-	if not pose then return end
-	for jointName, deg in pairs(pose) do
+--// Gathers the posed joints ONCE per fresh clone, remembering each
+--// motor's REST C0 - poses are always applied as rest * angles, so
+--// re-applying (the motion loop does, every frame) never compounds.
+--// Returns { {Motor, Base, A = degrees, B = degrees|nil}, ... }.
+local function collectPose(clone, poseA, poseB)
+	local joints = {}
+	if not poseA then return joints end
+	for jointName, deg in pairs(poseA) do
 		local motor = clone:FindFirstChild(jointName, true)
 		if motor and motor:IsA("Motor6D") then
-			motor.C0 = motor.C0 * CFrame.Angles(
-				math.rad(deg[1]), math.rad(deg[2]), math.rad(deg[3]))
+			table.insert(joints, {
+				Motor = motor,
+				Base = motor.C0,
+				A = deg,
+				B = poseB and poseB[jointName] or nil,
+			})
 		elseif not warnedJoints[jointName] then
 			warnedJoints[jointName] = true
 			warn("[CastBanner] pose joint not found (R6 avatar?): " .. jointName)
 		end
+	end
+	return joints
+end
+
+--// alpha 0 = pose A, alpha 1 = pose B (joints with no B hold pose A)
+local function setPose(joints, alpha)
+	for _, joint in ipairs(joints) do
+		local a, b = joint.A, joint.B or joint.A
+		joint.Motor.C0 = joint.Base * CFrame.Angles(
+			math.rad(a[1] + (b[1] - a[1]) * alpha),
+			math.rad(a[2] + (b[2] - a[2]) * alpha),
+			math.rad(a[3] + (b[3] - a[3]) * alpha))
 	end
 end
 
@@ -236,9 +258,37 @@ local function showBanner(caster, classKey)
 	if character and character:FindFirstChild("Head") then
 		local okClone, clone = pcall(cloneForPortrait, character)
 		if okClone and clone then
-			applyPose(clone, CFG.Poses and CFG.Poses[classKey])
+			local joints = collectPose(clone,
+				CFG.Poses and CFG.Poses[classKey],
+				CFG.Motion and CFG.Motion[classKey])
+			setPose(joints, 0)
 			pcall(solveRig, clone)
 			clone.Parent = portrait
+
+			--// BANNER MOTION: classes with a Motion pose swing between
+			--// their two poses for the hold - joints lerped, rig
+			--// re-solved per frame. Viewport-only; stops with the gui.
+			local hasMotion = false
+			for _, joint in ipairs(joints) do
+				if joint.B then hasMotion = true break end
+			end
+			if hasMotion then
+				local RunService = game:GetService("RunService")
+				local swings = CFG.MotionSwingsPerHold or 2
+				local elapsed = 0
+				local conn
+				conn = RunService.RenderStepped:Connect(function(dt)
+					if not gui.Parent then
+						conn:Disconnect()
+						return
+					end
+					elapsed += dt
+					local alpha = 0.5 - 0.5 * math.cos(
+						elapsed * math.pi * 2 * swings / math.max(CFG.HoldSeconds, 0.1))
+					setPose(joints, alpha)
+					pcall(solveRig, clone)
+				end)
+			end
 
 			local head = clone:FindFirstChild("Head")
 			if head then

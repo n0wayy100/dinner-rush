@@ -1434,6 +1434,14 @@ Config.Ultimates = {
 	BarTweenSeconds = 0.2,
 	ReadyPulseSeconds = 0.8,
 
+	--// STUDIO-ONLY (banner testing, Sep 2026): every playtest equips
+	--// this class and keeps the ultimate charge FULL - no command bar.
+	--// Ignored on live servers. Set StudioFullCharge = false (and the
+	--// key "") when ultimate testing ends, or charge earning can never
+	--// be playtested in Studio.
+	StudioFullCharge = true,
+	StudioClassKey = "Chef",
+
 	--// THE CAST BANNER (Sep 2026). Cosmetic only - nothing here touches
 	--// charge, abilities or THE LAW. Caster sees their own avatar posed
 	--// for their class sliding in from the left; teammates get a toast.
@@ -1466,6 +1474,7 @@ Config.Ultimates = {
 				RightElbow = { 40, 0, 0 },
 				LeftShoulder = { 0, 0, -20 },
 			},
+			--// (per-class second poses live in Motion below)
 			Waiter = {   -- tray held high, leaning in
 				Waist = { -10, 10, 0 },
 				Neck = { -5, -10, 0 },
@@ -1485,6 +1494,22 @@ Config.Ultimates = {
 				LeftShoulder = { 0, 0, -30 },
 			},
 		},
+
+		--// BANNER MOTION (owner request, Sep 2026): a class listed here
+		--// SWINGS between its Pose (above) and this second pose for the
+		--// banner's hold - joints lerped and the rig re-solved per frame,
+		--// entirely inside the viewport. NOT animation assets, NOT the
+		--// live character. Classes without an entry stay a static pose.
+		Motion = {
+			Chef = {     -- the pan-flip: arm drops, wrist snaps, look down
+				Waist = { 0, -5, 0 },
+				Neck = { 6, 4, 0 },
+				RightShoulder = { 0, 0, 55 },
+				RightElbow = { 5, 0, 0 },
+				LeftShoulder = { 0, 0, -30 },
+			},
+		},
+		MotionSwingsPerHold = 2,    -- full there-and-back swings per hold
 	},
 }
 
@@ -1678,7 +1703,7 @@ Config.StudioMapId = "Sushi"
 --// shift goes RUNNING, so route/seating tests need no command bar.
 --// The normal spawn trickle continues after the burst. 0 = off (normal
 --// opening). Ignored on live servers - set 0 anyway when map testing ends.
-Config.StudioSpawnBurst = 4
+Config.StudioSpawnBurst = 0 --// route testing done (Sep 2026)
 
 --// Whether a given id is a real, playable map. The lobby server gates every
 --// party on this - never trust a MapId that arrived from a client.
