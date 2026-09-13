@@ -77,11 +77,16 @@ local BATTER = Color3.fromRGB(236, 192, 120)
 local NOODLE = Color3.fromRGB(242, 224, 150)
 local NOODLE_DRY = Color3.fromRGB(230, 208, 132)
 local BOWL_RED = Color3.fromRGB(198, 64, 58)
+local BOWL_WHITE = Color3.fromRGB(243, 236, 224)
 local BROTH = Color3.fromRGB(224, 192, 140)
 local NARUTO_PINK = Color3.fromRGB(240, 140, 160)
 local YOLK = Color3.fromRGB(247, 190, 70)
 local ONION = Color3.fromRGB(112, 190, 92)
 local CHOPSTICK = Color3.fromRGB(196, 150, 96)
+local CHASHU = Color3.fromRGB(158, 102, 62)
+local PARSLEY = Color3.fromRGB(92, 168, 82)
+local KARA_LIGHT = Color3.fromRGB(236, 182, 102)
+local TEMPURA_TAIL = Color3.fromRGB(243, 140, 72)
 
 --// One curled shrimp lying down: three arched body segments + a fan
 --// tail. Shared by the raw and tempura builders - only the coat and
@@ -153,31 +158,53 @@ local BUILDERS = {
 
 	Karaage = function(handle)
 		--// Golden boneless chunks in a loose pile (no bones ANYWHERE -
-		--// the steak saga proved bone shapes read as the wrong food)
+		--// the steak saga proved bone shapes read as the wrong food).
+		--// v2 matches the imported icon: craggier, lighter tops, and the
+		--// little parsley sprig on the summit.
 		deco(handle, Enum.PartType.Ball,
 			Vector3.new(0.85, 0.85, 0.85), KARA, CFrame.new(-0.25, -0.18, 0.05))
 		deco(handle, Enum.PartType.Ball,
 			Vector3.new(0.75, 0.75, 0.75), KARA, CFrame.new(0.28, -0.22, -0.12))
 		deco(handle, Enum.PartType.Ball,
 			Vector3.new(0.7, 0.7, 0.7), KARA, CFrame.new(0.05, -0.26, 0.32))
-		--// craggy fried bits
+		--// craggy fried bits, dark and light
 		deco(handle, Enum.PartType.Ball,
 			Vector3.new(0.34, 0.34, 0.34), KARA_DARK, CFrame.new(-0.12, 0.1, 0.02))
 		deco(handle, Enum.PartType.Ball,
 			Vector3.new(0.3, 0.3, 0.3), KARA_DARK, CFrame.new(0.38, 0.02, -0.02))
+		deco(handle, Enum.PartType.Ball,
+			Vector3.new(0.26, 0.26, 0.26), KARA_LIGHT, CFrame.new(-0.34, 0.06, 0.22))
+		deco(handle, Enum.PartType.Ball,
+			Vector3.new(0.24, 0.24, 0.24), KARA_LIGHT, CFrame.new(0.14, 0.02, 0.4))
+		deco(handle, Enum.PartType.Ball,
+			Vector3.new(0.22, 0.22, 0.22), KARA_LIGHT, CFrame.new(0.08, 0.14, -0.24))
+		--// the parsley sprig
+		deco(handle, Enum.PartType.Ball,
+			Vector3.new(0.24, 0.1, 0.2), PARSLEY, CFrame.new(-0.04, 0.24, 0.08))
+		deco(handle, Enum.PartType.Ball,
+			Vector3.new(0.18, 0.09, 0.16), PARSLEY, CFrame.new(0.1, 0.26, -0.02))
+		deco(handle, Enum.PartType.Ball,
+			Vector3.new(0.16, 0.08, 0.16), PARSLEY, CFrame.new(-0.14, 0.26, -0.06))
 	end,
 
 	TempuraShrimp = function(handle)
-		--// Two fat battered curls crossed on the plate, pink tails out
+		--// Two fat battered curls crossed on the plate, bright orange
+		--// tails out (tail colour matched to the imported icon)
 		shrimp(handle, CFrame.new(-0.08, -0.38, 0.2)
-			* CFrame.Angles(0, math.rad(18), 0), 0.44, BATTER, SHRIMP_TAIL)
+			* CFrame.Angles(0, math.rad(18), 0), 0.44, BATTER, TEMPURA_TAIL)
 		shrimp(handle, CFrame.new(0.12, -0.38, -0.26)
-			* CFrame.Angles(0, math.rad(-155), 0), 0.44, BATTER, SHRIMP_TAIL)
+			* CFrame.Angles(0, math.rad(-155), 0), 0.44, BATTER, TEMPURA_TAIL)
 	end,
 
 	Ramen = function(handle)
-		puck(handle, 0.6, 1.8, BOWL_RED, -0.3)                  -- the bowl
+		--// v2 bowl matches the imported icon AND the builder's dishware:
+		--// white ceramic with the red band at the rim, chashu slices,
+		--// twin narutos
+		puck(handle, 0.6, 1.8, BOWL_WHITE, -0.3)                -- the bowl
+		puck(handle, 0.14, 1.82, BOWL_RED, -0.1)                -- red rim band
 		puck(handle, 0.08, 1.62, BROTH, 0.04)                   -- broth surface
+		puck(handle, 0.09, 0.52, CHASHU, 0.11, CFrame.new(0.32, 0, -0.22)) -- chashu
+		puck(handle, 0.09, 0.46, CHASHU, 0.13, CFrame.new(0.12, 0, -0.4))
 		local strands = { { -0.1, 0.05, 8 }, { 0.12, -0.12, -14 }, { -0.28, -0.3, 22 } }
 		for _, strand in ipairs(strands) do                     -- noodle waves
 			deco(handle, Enum.PartType.Block,
@@ -185,8 +212,10 @@ local BUILDERS = {
 				CFrame.new(strand[1], 0.1, strand[2])
 					* CFrame.Angles(0, math.rad(strand[3]), 0))
 		end
-		puck(handle, 0.07, 0.42, SESAME, 0.12, CFrame.new(0.42, 0, 0.28))   -- naruto
+		puck(handle, 0.07, 0.42, SESAME, 0.12, CFrame.new(0.42, 0, 0.28))   -- narutos
 		puck(handle, 0.08, 0.16, NARUTO_PINK, 0.125, CFrame.new(0.42, 0, 0.28))
+		puck(handle, 0.07, 0.38, SESAME, 0.12, CFrame.new(0.08, 0, 0.44))
+		puck(handle, 0.08, 0.14, NARUTO_PINK, 0.125, CFrame.new(0.08, 0, 0.44))
 		deco(handle, Enum.PartType.Ball,                        -- egg half
 			Vector3.new(0.36, 0.22, 0.28), SESAME, CFrame.new(-0.45, 0.12, 0.2))
 		deco(handle, Enum.PartType.Ball,
@@ -274,8 +303,13 @@ local PLATE_DROP = {
 	RawPatty = 0.36,
 }
 
+--// Filled per imported mesh by dressWithMesh (the mesh swap path below)
+local meshDrop = {}
+
 function DishModels.plateDrop(itemName)
-	return PLATE_DROP[itemName] or 0
+	--// A measured mesh drop (see dressWithMesh) outranks the hand-tuned
+	--// parts table
+	return meshDrop[itemName] or PLATE_DROP[itemName] or 0
 end
 
 --// The reference depth: every model's bottom is this far below its
@@ -283,10 +317,56 @@ end
 --// model's BOTTOM exactly at the anchor.
 DishModels.BottomDepth = 0.61
 
+--// THE MESH SWAP PATH (Sep 2026): the team's OWN generated meshes -
+--// GLBs from Claude Design, imported via Import 3D, NEVER Toolbox.
+--// Drop each imported Model into ServerStorage.DishMeshes named EXACTLY
+--// as its item (Karaage, RawChicken, ...). Any item with a mesh there
+--// wears it; everything else keeps its parts build. Callers unchanged.
+local function dressWithMesh(basePart, itemName)
+	local folder = game:GetService("ServerStorage"):FindFirstChild("DishMeshes")
+	local template = folder and folder:FindFirstChild(itemName)
+	if not template or not basePart then
+		return false
+	end
+
+	local model = template:Clone()
+	local pivot = model:GetPivot()
+
+	--// How deep this mesh reaches below its pivot decides its plate
+	--// drop, same convention as the parts builds (see BottomDepth)
+	if meshDrop[itemName] == nil then
+		local boxCF, boxSize = model:GetBoundingBox()
+		local depth = pivot.Position.Y - (boxCF.Position.Y - boxSize.Y / 2)
+		meshDrop[itemName] = DishModels.BottomDepth - depth
+	end
+
+	for _, inst in ipairs(model:GetDescendants()) do
+		if inst:IsA("BasePart") then
+			inst.Anchored = false
+			inst.CanCollide = false
+			inst.CanQuery = false
+			inst.CanTouch = false
+			inst.Massless = true
+			inst.CastShadow = false
+			inst.CFrame = basePart.CFrame * pivot:ToObjectSpace(inst.CFrame)
+			local weld = Instance.new("WeldConstraint")
+			weld.Part0 = basePart
+			weld.Part1 = inst
+			weld.Parent = inst
+		end
+	end
+	model.Parent = basePart
+	return true
+end
+
 --// Dresses ANY base part (a Tool Handle, the pass's Food portion...).
 --// True = dressed (the caller should hide the plain base); false = no
---// builder for that name, keep the plain look.
+--// builder for that name, keep the plain look. A mesh in
+--// ServerStorage.DishMeshes wins over the parts build.
 function DishModels.dress(basePart, itemName)
+	if dressWithMesh(basePart, itemName) then
+		return true
+	end
 	local builder = itemName and BUILDERS[itemName]
 	if not builder or not basePart then
 		return false

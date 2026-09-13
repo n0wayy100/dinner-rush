@@ -112,17 +112,17 @@ Config.Ingredients = {
 	--// YAMASAKI SUSHI (only stocked on maps whose Menu cooks them).
 	--// Icons pending the owner's uploads - "" ships ugly-but-working.
 	RawChicken = {
-		Display = "Raw Chicken", Icon = "",
+		Display = "Raw Chicken", Icon = "rbxassetid://129069316269579",
 		Source = "Fridge", Color = Color3.fromRGB(235, 180, 160),
 		Stock = 18,
 	},
 	RawShrimp = {
-		Display = "Raw Shrimp", Icon = "",
+		Display = "Raw Shrimp", Icon = "rbxassetid://130809960695275",
 		Source = "Fridge", Color = Color3.fromRGB(238, 168, 158),
 		Stock = 15,
 	},
 	RawNoodles = {
-		Display = "Noodle Brick", Icon = "",
+		Display = "Noodle Brick", Icon = "rbxassetid://134060384410956",
 		Source = "DryShelf", Color = Color3.fromRGB(238, 220, 150),
 		Stock = 12,
 	},
@@ -159,17 +159,17 @@ Config.Recipes = {
 	--// its own cooker (Method "Ramen"). Price ladder mirrors the diner's:
 	--// cheap staple -> mid -> signature.
 	Karaage = {
-		Display = "Karaage", Icon = "",
+		Display = "Karaage", Icon = "rbxassetid://113472909646068",
 		Ingredient = "RawChicken", Method = "Fry", Timing = "Frying",
 		Color = Color3.fromRGB(205, 140, 60), PriceMult = 1.0,
 	},
 	TempuraShrimp = {
-		Display = "Tempura Shrimp", Icon = "",
+		Display = "Tempura Shrimp", Icon = "rbxassetid://81991543373834",
 		Ingredient = "RawShrimp", Method = "Fry", Timing = "Frying",
 		Color = Color3.fromRGB(236, 188, 108), PriceMult = 1.2,
 	},
 	Ramen = {
-		Display = "Ramen", Icon = "",
+		Display = "Ramen", Icon = "rbxassetid://111083951169268",
 		Ingredient = "RawNoodles", Method = "Ramen", Timing = "Boiling",
 		Color = Color3.fromRGB(222, 190, 140), PriceMult = 1.4,
 	},
@@ -199,7 +199,11 @@ Config.Kitchen = {
 	--// RAYCAST-MEASURED per method (the anchors sit at different heights
 	--// over their cook surfaces in this map). Re-measure after moving
 	--// appliances: the one-liner lives in the session notes.
-	StationFoodLiftStuds = { Grill = -0.49, Fry = 0.55, Ramen = 0.20 },
+	--// Fry sits DEEP on purpose (owner call, Sep 2026): raw food sinks
+	--// into the oil with just the tops peeking out - chicken, shrimp,
+	--// and the Diner's potatoes alike. 0.55 was the measured surface;
+	--// 0.0 puts the food's bottom half a stud under it.
+	StationFoodLiftStuds = { Grill = -0.49, Fry = 0.0, Ramen = 0.20 },
 	PickupHoldSeconds = 0,        -- fridge / dry shelf prompt
 	StationLoadHoldSeconds = 0,   -- starting a cook
 	CollectHoldSeconds = 0,       -- taking the result off the station
