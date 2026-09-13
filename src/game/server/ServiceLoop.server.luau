@@ -2749,9 +2749,15 @@ end
 --// THE ONE SEATING FLOW, shared by the queue prompt and the Helper.
 --// Returns false when no table is clear. `seater` is nil for the NPC.
 local function seatParty(party, seater)
-	if party.State ~= STATE.QUEUED then return false end
+	--// RE-ENTRY LOCK (Sep 2026): a party stays QUEUED while it walks or
+	--// ghosts to its table, so without this the Helper's snapshot (or a
+	--// second player) could seat the SAME party at a SECOND table -
+	--// orphaning the first as a forever-occupied ghost table and tearing
+	--// the party's bodies between two arrival chains.
+	if party.State ~= STATE.QUEUED or party.Seating then return false end
 	local tableId = findFreeTable()
 	if not tableId then return false end
+	party.Seating = true
 
 	-- DOOR BAR DIES HERE: seating initiated (the walk is free, per spec)
 	removeBar(party)
@@ -2780,6 +2786,7 @@ local function seatParty(party, seater)
 
 	-- SEATED BAR STARTS HERE (from settleAtSeats): bodies in chairs
 	local function settleAtSeats()
+		party.Seating = nil --// arrival: the re-entry lock has done its job
 		for index, member in ipairs(party.Members or {}) do
 			local spot = seats[index] or seats[1]
 			if spot.Sit then
@@ -2941,7 +2948,9 @@ do
 				(party.BarRemaining or 0) / math.max(party.BarTotal or 1, 1), 0, 1)
 		end
 		for _, party in pairs(parties) do
-			if party.State == STATE.QUEUED then
+			--// Mid-seating parties are QUEUED on paper but claimed in
+			--// fact - listing them sends the Helper to double-seat them
+			if party.State == STATE.QUEUED and not party.Seating then
 				table.insert(out.Queued, {
 					Id = party.Id,
 					DoorFraction = barFraction(party),

@@ -199,9 +199,7 @@ Config.Kitchen = {
 	--// RAYCAST-MEASURED per method (the anchors sit at different heights
 	--// over their cook surfaces in this map). Re-measure after moving
 	--// appliances: the one-liner lives in the session notes.
-	--// Ramen = 0 is a PLACEHOLDER: raycast-measure the Yamasaki cooker's
-	--// anchor once it's placed and put the real number here.
-	StationFoodLiftStuds = { Grill = -0.49, Fry = 0.55, Ramen = 0 },
+	StationFoodLiftStuds = { Grill = -0.49, Fry = 0.55, Ramen = 0.20 },
 	PickupHoldSeconds = 0,        -- fridge / dry shelf prompt
 	StationLoadHoldSeconds = 0,   -- starting a cook
 	CollectHoldSeconds = 0,       -- taking the result off the station

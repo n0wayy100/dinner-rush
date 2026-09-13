@@ -1701,6 +1701,38 @@ local function anyEventActive()
 	return false
 end
 
+--// STUDIO-ONLY DEBUG: force an event on demand, for fixture testing.
+--// Command bar (server view):
+--//   game.ServerStorage.DebugStartEvent:Invoke("ToiletEmergency")
+--// Also takes "GreaseFire" / "PowerOutage". Never exists in live servers.
+if game:GetService("RunService"):IsStudio() then
+	local debugStart = Instance.new("BindableFunction")
+	debugStart.Name = "DebugStartEvent"
+	debugStart.OnInvoke = function(name)
+		--// Refusals WARN (orange in Output) - the command bar swallows
+		--// return values, so a silent reason helps nobody
+		local definition = EVENTS[name]
+		if not definition then
+			local names = {}
+			for registered in pairs(EVENTS) do
+				table.insert(names, registered)
+			end
+			warn(("[Events] DEBUG refused: unknown event '%s' - registered: %s")
+				:format(tostring(name),
+					#names > 0 and table.concat(names, ", ") or "NONE"))
+			return false
+		end
+		if anyEventActive() then
+			warn("[Events] DEBUG refused: an event is already active - resolve it first")
+			return false
+		end
+		print(("[Events] DEBUG: force-starting %s"):format(name))
+		definition.Start()
+		return true
+	end
+	debugStart.Parent = ServerStorage
+end
+
 local function pickEvent(difficultyName)
 	local pool, total = {}, 0
 	for name, definition in pairs(EVENTS) do
