@@ -1433,6 +1433,59 @@ Config.Ultimates = {
 	--// Bar feel (client)
 	BarTweenSeconds = 0.2,
 	ReadyPulseSeconds = 0.8,
+
+	--// THE CAST BANNER (Sep 2026). Cosmetic only - nothing here touches
+	--// charge, abilities or THE LAW. Caster sees their own avatar posed
+	--// for their class sliding in from the left; teammates get a toast.
+	--// OWNER RULING SCOPE: static UI-viewport poses are allowed; live
+	--// in-world character animation remains hired-out animator work.
+	CastBanner = {
+		Enabled = true,
+
+		SlideInSeconds = 0.35,      -- Back/Out: a small overshoot snap
+		HoldSeconds = 1.4,          -- also the length of the camera push
+		SlideOutSeconds = 0.3,
+		WidthScale = 0.34,          -- fraction of screen width
+		HeightScale = 0.36,         -- fraction of screen height
+
+		CameraDistance = 4.5,       -- studs from the focus point at rest
+		CameraPushStuds = 0.8,      -- starts this much further back
+		CameraOrbitDegrees = 25,    -- three-quarter view
+		FieldOfView = 32,           -- narrow = portrait, wide = fish-eye
+
+		ToastSeconds = 2.5,         -- teammates' "X used Y!" line
+
+		--// Degrees {X, Y, Z} added to each joint's rest rotation.
+		--// Chest-up only, so legs are never posed; missing joints are
+		--// skipped. STARTING POINTS - signs may need flipping once seen.
+		Poses = {
+			Chef = {     -- pan raised mid-flip
+				Waist = { 0, -15, 0 },
+				Neck = { -8, 12, 0 },
+				RightShoulder = { 0, 0, 110 },
+				RightElbow = { 40, 0, 0 },
+				LeftShoulder = { 0, 0, -20 },
+			},
+			Waiter = {   -- tray held high, leaning in
+				Waist = { -10, 10, 0 },
+				Neck = { -5, -10, 0 },
+				LeftShoulder = { 0, 0, -120 },
+				LeftElbow = { 70, 0, 0 },
+			},
+			Fixer = {    -- wrench over the shoulder
+				Waist = { 0, 20, 0 },
+				Neck = { 0, -15, 0 },
+				RightShoulder = { -60, 0, 60 },
+				RightElbow = { 90, 0, 0 },
+			},
+			Charmer = {  -- finger-guns, head tilt
+				Waist = { 0, -10, 5 },
+				Neck = { 0, 10, -12 },
+				RightShoulder = { 0, 0, 80 },
+				LeftShoulder = { 0, 0, -30 },
+			},
+		},
+	},
 }
 
 ----------------------------------------------------------------

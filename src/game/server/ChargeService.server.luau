@@ -327,6 +327,10 @@ ultimateRemote.OnServerEvent:Connect(function(player, action)
 	if ok then
 		player:SetAttribute("UltimateCharge", 0) --// spent only on success
 		ultimateRemote:FireClient(player, "Result", true)
+		--// Everyone hears about it - ultimates are social moments. Sent
+		--// only after the ability SUCCEEDED, so no client can show a
+		--// banner for a denied cast. (CastBannerClient renders it.)
+		ultimateRemote:FireAllClients("Cast", player, player:GetAttribute("ClassKey"))
 	else
 		ultimateRemote:FireClient(player, "Result", false, reason or "Not now!")
 	end
