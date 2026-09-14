@@ -337,6 +337,22 @@ local function showBanner(caster, classKey)
 	stroke.Color = CHOC
 	stroke.Parent = panel
 
+	--// Owner-imported backdrop, when this class has one - sits behind
+	--// the (transparent) portrait viewport
+	local bgId = CFG.BackgroundImages and CFG.BackgroundImages[classKey]
+	if bgId and bgId ~= "" then
+		local backdrop = Instance.new("ImageLabel")
+		backdrop.Active = false
+		backdrop.Size = UDim2.fromScale(1, 1)
+		backdrop.BackgroundTransparency = 1
+		backdrop.Image = bgId
+		backdrop.ScaleType = Enum.ScaleType.Crop
+		backdrop.Parent = panel
+		local bgCorner = Instance.new("UICorner")
+		bgCorner.CornerRadius = UDim.new(0.08, 0)
+		bgCorner.Parent = backdrop
+	end
+
 	--// FULL-BLEED portrait (owner ruling, Sep 2026): the avatar fills
 	--// the whole panel - no circle window, no rarity burst, no ultimate
 	--// text, no badge. The avatar IS the banner.

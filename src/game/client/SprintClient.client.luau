@@ -175,11 +175,17 @@ local function stopSprintAnim()
 	end
 end
 
+--// DOUBLE TIME (Waiter ultimate): the server sets SpeedBoostMult on the
+--// Player for the burst; every speed this script applies scales by it
+local function speedMult()
+	return player:GetAttribute("SpeedBoostMult") or 1
+end
+
 local function startSprint()
 	if active then return end
 	active = true
 	if humanoid then
-		humanoid.WalkSpeed = Sprint.SprintSpeed
+		humanoid.WalkSpeed = Sprint.SprintSpeed * speedMult()
 	end
 	setFovKick(true)
 	playSprintAnim()
@@ -190,11 +196,20 @@ local function endSprint()
 	active = false
 	lastActiveAt = os.clock()
 	if humanoid and humanoid.Health > 0 then
-		humanoid.WalkSpeed = Sprint.BaseWalkSpeed
+		humanoid.WalkSpeed = Sprint.BaseWalkSpeed * speedMult()
 	end
 	setFovKick(false)
 	stopSprintAnim()
 end
+
+--// Boost starting or ending mid-stride re-applies whichever speed is
+--// current, so DOUBLE TIME kicks in (and wears off) instantly
+player:GetAttributeChangedSignal("SpeedBoostMult"):Connect(function()
+	if humanoid and humanoid.Health > 0 then
+		humanoid.WalkSpeed =
+			(active and Sprint.SprintSpeed or Sprint.BaseWalkSpeed) * speedMult()
+	end
+end)
 
 ----------------------------------------------------------------
 -- Input: one ContextActionService action covers all three platforms.
@@ -257,7 +272,7 @@ local function onCharacterAdded(character)
 	--// Fresh spawn: full tank, normal speed - never stuck fast or slow
 	stamina = Sprint.StaminaMax
 	active = false
-	humanoid.WalkSpeed = Sprint.BaseWalkSpeed
+	humanoid.WalkSpeed = Sprint.BaseWalkSpeed * speedMult()
 
 	humanoid.Died:Connect(function()
 		endSprint() --// restores FOV; WalkSpeed reset happens on the next spawn

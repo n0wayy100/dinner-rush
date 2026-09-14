@@ -976,8 +976,8 @@ Config.Classes = {
 		--// SprintClient reads these off replicated Player attributes.
 		StaminaDrainMult = 0.65,
 		StaminaRegenMult = 1.35,
-		UltimateName = "THIRD HAND!",
-		UltimateText = "Carry a third item for the rest of the shift",
+		UltimateName = "DOUBLE TIME!",
+		UltimateText = "A huge burst of speed to clear the whole floor",
 		--// ~10-15 serves per focused shift
 		UpgradeTrack = {
 			Counter = "DishesServed", Label = "Dishes served",
@@ -1422,7 +1422,13 @@ Config.Ultimates = {
 
 	--// Ability numbers
 	SweetTalkRefillFraction = 0.5,   -- half the table's patience bar back
-	ThirdHandExtraSlots = 1,         -- carry 2 -> 3 for the rest of the shift
+
+	--// DOUBLE TIME (Waiter, Sep 2026 - replaced THIRD HAND's carry slot):
+	--// a burst of serious hustle. Walk AND sprint speeds scale; the feel
+	--// is applied by SprintClient (the documented client-side movement
+	--// exception), the truth (attribute + timer) stays server-owned.
+	SpeedBoostMult = 1.35,
+	SpeedBoostSeconds = 12,          -- owner spec: 10-15s
 
 	--// FLASH FRY cooks EVERY carried raw at once. When an ingredient has
 	--// dish VARIANTS (future: RawSteak -> grilled OR pan-fried), the
@@ -1440,7 +1446,7 @@ Config.Ultimates = {
 	--// key "") when ultimate testing ends, or charge earning can never
 	--// be playtested in Studio.
 	StudioFullCharge = true,
-	StudioClassKey = "Chef",
+	StudioClassKey = "Charmer",
 
 	--// THE CAST BANNER (Sep 2026). Cosmetic only - nothing here touches
 	--// charge, abilities or THE LAW. Caster sees their own avatar posed
@@ -1456,7 +1462,7 @@ Config.Ultimates = {
 		WidthScale = 0.34,          -- fraction of screen width
 		HeightScale = 0.36,         -- fraction of screen height
 
-		CameraDistance = 6.0,       -- studs from the focus point at rest
+		CameraDistance = 8.5,       -- studs from the focus point at rest
 		CameraPushStuds = 0.8,      -- starts this much further back
 		CameraOrbitDegrees = 25,    -- three-quarter view
 		FieldOfView = 32,           -- narrow = portrait, wide = fish-eye
@@ -1469,30 +1475,34 @@ Config.Ultimates = {
 		--// assets); existing HAT accessories come off first (hair stays).
 		ChefHatOnBanner = true,
 
-		--// PARKED (owner call, Sep 2026): posing read badly on the
-		--// owner's nonstandard bundle rig. false = the banner shows the
-		--// avatar in its natural stance with just the camera push - the
-		--// original look. All pose/motion tables below stay for the day
-		--// this gets another pass (untested on a standard R15 rig).
-		PosesEnabled = false,
+		--// Owner-imported art behind the avatar, per class ("" = the
+		--// plain cream panel). Cropped to fill; keep image centers calm
+		--// so the avatar reads over them.
+		BackgroundImages = {
+			Chef = "rbxassetid://126303036451477", -- flame burst (Sep 2026)
+			Waiter = "rbxassetid://126138757523220", -- plate rush (Sep 2026)
+			Fixer = "rbxassetid://131314378577972", -- tool lightning (Sep 2026)
+			Charmer = "rbxassetid://124463219290182", -- hearts & rose (Sep 2026)
+		},
+
+		--// Poses are per-class: a class with NO Poses entry shows its
+		--// natural stance + camera push (the Chef does - owner call,
+		--// Sep 2026, after posing read badly on his bundle rig).
+		PosesEnabled = true,
 
 		--// Degrees {X, Y, Z} added to each joint's rest rotation.
 		--// Chest-up only, so legs are never posed; missing joints are
 		--// skipped. STARTING POINTS - signs may need flipping once seen.
 		Poses = {
-			Chef = {     -- pan raised mid-flip
-				Waist = { 0, -15, 0 },
-				Neck = { -8, 12, 0 },
-				RightShoulder = { 0, 0, 110 },
-				RightElbow = { 40, 0, 0 },
-				LeftShoulder = { 0, 0, -20 },
-			},
+			--// Chef: NO entry on purpose - natural stance + toque + zoom
 			--// (per-class second poses live in Motion below)
-			Waiter = {   -- tray held high, leaning in
-				Waist = { -10, 10, 0 },
-				Neck = { -5, -10, 0 },
-				LeftShoulder = { 0, 0, -120 },
-				LeftElbow = { 70, 0, 0 },
+			Waiter = {   -- mid-SPRINT, stride A: lean in, arms pumping
+				Waist = { 15, -10, 0 },
+				Neck = { -10, 10, 0 },
+				RightShoulder = { -75, 0, 10 },
+				RightElbow = { 60, 0, 0 },
+				LeftShoulder = { 45, 0, -10 },
+				LeftElbow = { 25, 0, 0 },
 			},
 			Fixer = {    -- wrench over the shoulder
 				Waist = { 0, 20, 0 },
@@ -1511,22 +1521,10 @@ Config.Ultimates = {
 		--// R6 OVERRIDES: R6 joints hinge on different axes, so translated
 		--// R15 numbers can read as nothing. A class listed here uses
 		--// these tables DIRECTLY on R6 rigs (keys are R6 joint names).
-		PosesR6 = {
-			Chef = {
-				["Right Shoulder"] = { 0, 0, -160 }, -- pan arm thrown high
-				["Left Shoulder"] = { 0, 0, 20 },
-				RootJoint = { 0, -10, 0 },
-				Neck = { 0, 0, 15 },
-			},
-		},
-		MotionR6 = {
-			Chef = {
-				["Right Shoulder"] = { 0, 0, -40 }, -- big 120-degree flip
-				["Left Shoulder"] = { 0, 0, 35 },
-				RootJoint = { 0, 8, 0 },
-				Neck = { 0, 0, -10 },
-			},
-		},
+		--// R6 hand-tuned overrides, filled per class only when the
+		--// auto-translated numbers read wrong on a REAL R6 rig
+		PosesR6 = {},
+		MotionR6 = {},
 
 		--// BANNER MOTION (owner request, Sep 2026): a class listed here
 		--// SWINGS between its Pose (above) and this second pose for the
@@ -1534,15 +1532,28 @@ Config.Ultimates = {
 		--// entirely inside the viewport. NOT animation assets, NOT the
 		--// live character. Classes without an entry stay a static pose.
 		Motion = {
-			Chef = {     -- the pan-flip: arm drops, wrist snaps, look down
-				Waist = { 0, -5, 0 },
-				Neck = { 6, 4, 0 },
-				RightShoulder = { 0, 0, 55 },
-				RightElbow = { 5, 0, 0 },
-				LeftShoulder = { 0, 0, -30 },
+			Waiter = {   -- stride B: the OPPOSITE arm swing - swinging
+				Waist = { 15, 10, 0 },   -- between A and B is a run cycle
+				Neck = { -10, -10, 0 },
+				RightShoulder = { 45, 0, 10 },
+				RightElbow = { 25, 0, 0 },
+				LeftShoulder = { -75, 0, -10 },
+				LeftElbow = { 60, 0, 0 },
+			},
+			Fixer = {    -- the wrench CRANK: arm pumps down from the
+				Waist = { 0, 10, 0 },     -- shoulder carry and back up
+				Neck = { 0, -8, 0 },
+				RightShoulder = { -25, 0, 35 },
+				RightElbow = { 45, 0, 0 },
+			},
+			Charmer = {  -- the SWAY: finger-guns swap sides, head tilts
+				Waist = { 0, 10, -5 },    -- the other way - maximum smug
+				Neck = { 0, -10, 12 },
+				RightShoulder = { 0, 0, 30 },
+				LeftShoulder = { 0, 0, -80 },
 			},
 		},
-		MotionSwingsPerHold = 2,    -- full there-and-back swings per hold
+		MotionSwingsPerHold = 3,    -- full there-and-back swings per hold
 	},
 }
 

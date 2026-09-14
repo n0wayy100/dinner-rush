@@ -19,7 +19,8 @@
 	                        dish variants resolve to what open tickets
 	                        want (neediest first), else by
 	                        Config.Ultimates.FlashFryMethodOrder
-	  Waiter   THIRD HAND!  CarryLimit attribute +1 for the rest of the shift
+	  Waiter   DOUBLE TIME! SpeedBoostMult attribute for SpeedBoostSeconds
+	                        (SprintClient applies the movement feel)
 	  Fixer    SPEED DIAL!  ServerStorage.ResolveActiveEvent (EventSystem's
 	                        own stop* success paths - never re-implemented)
 	  Charmer  SWEET TALK!  ServerStorage.SweetTalkTable (ServiceLoop's
@@ -246,14 +247,22 @@ local function flashFry(player)
 	return true
 end
 
-local function thirdHand(player)
-	if player:GetAttribute("CarryLimit") then
-		return false, "Third hand already out!"
+--// DOUBLE TIME (replaced THIRD HAND, owner call Sep 2026): a timed
+--// speed burst. Server owns the attribute + timer; SprintClient scales
+--// the actual WalkSpeed (movement feel is the documented client-side
+--// exception). Deny-while-active keeps the charge.
+local function doubleTime(player)
+	if player:GetAttribute("SpeedBoostMult") then
+		return false, "Already at double time!"
 	end
-	player:SetAttribute("CarryLimit",
-		Config.Kitchen.MaxCarriedItems + ULT.ThirdHandExtraSlots)
-	print(("[Charge] THIRD HAND! %s carries %d for the rest of the shift"):format(
-		player.Name, player:GetAttribute("CarryLimit")))
+	player:SetAttribute("SpeedBoostMult", ULT.SpeedBoostMult)
+	task.delay(ULT.SpeedBoostSeconds, function()
+		if player.Parent then
+			player:SetAttribute("SpeedBoostMult", nil)
+		end
+	end)
+	print(("[Charge] DOUBLE TIME! %s moves x%.2f for %ds"):format(
+		player.Name, ULT.SpeedBoostMult, ULT.SpeedBoostSeconds))
 	return true
 end
 
@@ -293,7 +302,7 @@ end
 
 local ABILITIES = {
 	Chef = flashFry,
-	Waiter = thirdHand,
+	Waiter = doubleTime,
 	Fixer = speedDial,
 	Charmer = sweetTalk,
 }
@@ -353,9 +362,10 @@ task.spawn(function()
 		if state == "RUNNING" and lastState ~= "RUNNING" then
 			for _, player in ipairs(Players:GetPlayers()) do
 				player:SetAttribute("UltimateCharge", 0)
-				player:SetAttribute("CarryLimit", nil) --// third hands retract
+				player:SetAttribute("CarryLimit", nil) --// legacy third hands retract
+				player:SetAttribute("SpeedBoostMult", nil) --// double time ends
 			end
-			print("[Charge] new shift - charges and carry limits reset")
+			print("[Charge] new shift - charges and boosts reset")
 		end
 		lastState = state
 		task.wait(1)
