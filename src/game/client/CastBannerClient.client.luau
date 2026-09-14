@@ -92,16 +92,125 @@ local function cloneForPortrait(character)
 	return clone
 end
 
+--// THE BANNER TOQUE (Chef only, Config.ChefHatOnBanner): a parts-built
+--// chef hat welded to the clone's head - sized off the head itself so
+--// R6 and R15 both wear it right. Hat ACCESSORIES come off first (one
+--// hat at a time); hair and face accessories stay. The welds run
+--// through the same manual solver as everything else, so the toque
+--// rides the pose and the cooking swing.
+local TOQUE_WHITE = Color3.fromRGB(250, 248, 242)
+local TOQUE_BAND = Color3.fromRGB(240, 234, 222)
+
+local function addChefHat(clone)
+	local head = clone:FindFirstChild("Head")
+	if not head then return end
+
+	for _, acc in ipairs(clone:GetChildren()) do
+		if acc:IsA("Accessory") then
+			local handle = acc:FindFirstChild("Handle")
+			if handle and handle:FindFirstChild("HatAttachment") then
+				acc:Destroy() --// the crown yields to the kitchen
+			end
+		end
+	end
+
+	local w = math.max(head.Size.X, 1)
+	local top = head.Size.Y / 2
+
+	local function piece(size, color, c0)
+		local p = Instance.new("Part")
+		p.Size = size
+		p.Color = color
+		p.Material = Enum.Material.SmoothPlastic
+		p.CanCollide = false
+		p.CanQuery = false
+		p.Massless = true
+		p.TopSurface = Enum.SurfaceType.Smooth
+		p.BottomSurface = Enum.SurfaceType.Smooth
+		local weld = Instance.new("Weld")
+		weld.Part0 = head
+		weld.Part1 = p
+		weld.C0 = c0
+		weld.Parent = p
+		p.Parent = head
+		return p
+	end
+
+	--// the band (an upright cylinder: cylinders lie along X, so roll 90)
+	local band = piece(
+		Vector3.new(w * 0.38, w * 0.95, w * 0.95), TOQUE_BAND,
+		CFrame.new(0, top + w * 0.16, 0) * CFrame.Angles(0, 0, math.rad(90)))
+	band.Shape = Enum.PartType.Cylinder
+
+	--// the puff: one big squashed ball + two lumps, pure cartoon
+	local puffY = top + w * 0.34 + w * 0.28
+	local puff = piece(Vector3.new(w * 1.15, w * 0.62, w * 1.15), TOQUE_WHITE,
+		CFrame.new(0, puffY, 0))
+	puff.Shape = Enum.PartType.Ball
+	local lumpA = piece(Vector3.new(w * 0.55, w * 0.45, w * 0.55), TOQUE_WHITE,
+		CFrame.new(w * 0.32, puffY + w * 0.14, 0.08 * w))
+	lumpA.Shape = Enum.PartType.Ball
+	local lumpB = piece(Vector3.new(w * 0.5, w * 0.42, w * 0.5), TOQUE_WHITE,
+		CFrame.new(-w * 0.3, puffY + w * 0.16, -0.06 * w))
+	lumpB.Shape = Enum.PartType.Ball
+end
+
+--// R6 TRANSLATION: poses are authored in R15 joint names (most
+--// players). An R6 avatar maps shoulders across (R6 spells them with
+--// spaces), leans via RootJoint instead of Waist, and folds elbow
+--// angles into the shoulder - R6 arms are one piece. Same pose, same
+--// swing, either rig. (R6 joint AXES differ, so R6 may want its own
+--// tuning pass once seen - expected, not a bug.)
+local R6_MAP = {
+	Waist = "RootJoint",
+	Neck = "Neck",
+	RightShoulder = "Right Shoulder",
+	LeftShoulder = "Left Shoulder",
+	RightElbow = "Right Shoulder",
+	LeftElbow = "Left Shoulder",
+}
+
+local function translatePose(pose, isR6)
+	if not pose or not isR6 then return pose end
+	local out = {}
+	for name, deg in pairs(pose) do
+		local target = R6_MAP[name] or name
+		local acc = out[target]
+		if acc then --// elbow folding: angles sum into the shoulder
+			out[target] = { acc[1] + deg[1], acc[2] + deg[2], acc[3] + deg[3] }
+		else
+			out[target] = { deg[1], deg[2], deg[3] }
+		end
+	end
+	return out
+end
+
 --// Gathers the posed joints ONCE per fresh clone, remembering each
 --// motor's REST C0 - poses are always applied as rest * angles, so
 --// re-applying (the motion loop does, every frame) never compounds.
 --// Returns { {Motor, Base, A = degrees, B = degrees|nil}, ... }.
+--// Motor lookup that forgives naming dialects: exact name first, then
+--// the spaced spelling ("RightShoulder" -> "Right Shoulder") - some
+--// bundles mix conventions on one rig.
+local function findMotor(clone, name)
+	local m = clone:FindFirstChild(name, true)
+	if m and m:IsA("Motor6D") then return m end
+	local spaced = name:gsub("(%l)(%u)", "%1 %2")
+	if spaced ~= name then
+		m = clone:FindFirstChild(spaced, true)
+		if m and m:IsA("Motor6D") then return m end
+	end
+	return nil
+end
+
+local dumpedMotors = false
+
 local function collectPose(clone, poseA, poseB)
 	local joints = {}
 	if not poseA then return joints end
 	for jointName, deg in pairs(poseA) do
-		local motor = clone:FindFirstChild(jointName, true)
-		if motor and motor:IsA("Motor6D") then
+		local motor = findMotor(clone, jointName)
+		if motor then
 			table.insert(joints, {
 				Motor = motor,
 				Base = motor.C0,
@@ -110,7 +219,16 @@ local function collectPose(clone, poseA, poseB)
 			})
 		elseif not warnedJoints[jointName] then
 			warnedJoints[jointName] = true
-			warn("[CastBanner] pose joint not found (R6 avatar?): " .. jointName)
+			warn("[CastBanner] pose joint not found: " .. jointName)
+			--// GROUND TRUTH, once: what this rig actually calls its motors
+			if not dumpedMotors then
+				dumpedMotors = true
+				local names = {}
+				for _, d in ipairs(clone:GetDescendants()) do
+					if d:IsA("Motor6D") then table.insert(names, d.Name) end
+				end
+				warn("[CastBanner] this rig's motors: " .. table.concat(names, ", "))
+			end
 		end
 	end
 	return joints
@@ -219,37 +337,25 @@ local function showBanner(caster, classKey)
 	stroke.Color = CHOC
 	stroke.Parent = panel
 
-	--// The rarity burst behind the portrait
-	local burst = Instance.new("Frame")
-	burst.Active = false
-	burst.AnchorPoint = Vector2.new(0.5, 0.5)
-	burst.Size = UDim2.fromScale(0.46, 0.92)
-	burst.Position = UDim2.fromScale(0.26, 0.5)
-	burst.BackgroundColor3 = class.RarityColor or CREAM_DEEP
-	burst.BackgroundTransparency = 0.45
-	burst.BorderSizePixel = 0
-	burst.Parent = panel
-	local burstCorner = Instance.new("UICorner")
-	burstCorner.CornerRadius = UDim.new(0.5, 0)
-	burstCorner.Parent = burst
-
-	--// Portrait window (viewport OR enlarged badge fallback)
+	--// FULL-BLEED portrait (owner ruling, Sep 2026): the avatar fills
+	--// the whole panel - no circle window, no rarity burst, no ultimate
+	--// text, no badge. The avatar IS the banner.
 	local portrait = Instance.new("ViewportFrame")
 	portrait.Name = "Portrait"
 	portrait.Active = false
 	portrait.AnchorPoint = Vector2.new(0.5, 0.5)
-	portrait.Size = UDim2.fromScale(0.44, 0.88)
-	portrait.Position = UDim2.fromScale(0.26, 0.5)
+	portrait.Size = UDim2.fromScale(1, 1)
+	portrait.Position = UDim2.fromScale(0.5, 0.5)
 	portrait.BackgroundTransparency = 1
 	--// Unlit viewports render avatars dark and muddy
 	portrait.Ambient = Color3.fromRGB(200, 200, 200)
 	portrait.LightColor = Color3.fromRGB(255, 250, 240)
 	portrait.LightDirection = Vector3.new(-0.4, -1, -0.6)
 	portrait.Parent = panel
-	--// ClipsDescendants clips RECTANGULAR and ignores UICorner - round
-	--// the image itself (map-picker lesson)
+	--// Corner radius MATCHES the panel so the viewport's corners don't
+	--// punch through the rounded frame (map-picker lesson)
 	local portraitCorner = Instance.new("UICorner")
-	portraitCorner.CornerRadius = UDim.new(0.5, 0)
+	portraitCorner.CornerRadius = UDim.new(0.08, 0)
 	portraitCorner.Parent = portrait
 
 	--// Fill the portrait: clone -> pose -> manual solve -> camera
@@ -258,9 +364,26 @@ local function showBanner(caster, classKey)
 	if character and character:FindFirstChild("Head") then
 		local okClone, clone = pcall(cloneForPortrait, character)
 		if okClone and clone then
-			local joints = collectPose(clone,
-				CFG.Poses and CFG.Poses[classKey],
-				CFG.Motion and CFG.Motion[classKey])
+			if classKey == "Chef" and CFG.ChefHatOnBanner ~= false then
+				pcall(addChefHat, clone)
+			end
+			local cloneHumanoid = clone:FindFirstChildOfClass("Humanoid")
+			local isR6 = cloneHumanoid ~= nil
+				and cloneHumanoid.RigType == Enum.HumanoidRigType.R6
+			--// Posing is PARKED (Config.PosesEnabled) - natural stance +
+			--// camera push. When re-enabled: R6 hand-tuned tables beat
+			--// axis-translated R15 numbers whenever one exists.
+			local poseA, poseB
+			if CFG.PosesEnabled ~= false then
+				if isR6 and CFG.PosesR6 and CFG.PosesR6[classKey] then
+					poseA = CFG.PosesR6[classKey]
+					poseB = CFG.MotionR6 and CFG.MotionR6[classKey]
+				else
+					poseA = translatePose(CFG.Poses and CFG.Poses[classKey], isR6)
+					poseB = translatePose(CFG.Motion and CFG.Motion[classKey], isR6)
+				end
+			end
+			local joints = collectPose(clone, poseA, poseB)
 			setPose(joints, 0)
 			pcall(solveRig, clone)
 			clone.Parent = portrait
@@ -273,6 +396,8 @@ local function showBanner(caster, classKey)
 				if joint.B then hasMotion = true break end
 			end
 			if hasMotion then
+				print(("[CastBanner] motion running (%d joints, %s rig)")
+					:format(#joints, isR6 and "R6" or "R15"))
 				local RunService = game:GetService("RunService")
 				local swings = CFG.MotionSwingsPerHold or 2
 				local elapsed = 0
@@ -297,7 +422,8 @@ local function showBanner(caster, classKey)
 				camera.Parent = portrait
 				portrait.CurrentCamera = camera
 
-				local focus = head.Position - Vector3.new(0, 0.7, 0)
+				local focus = head.Position
+					- Vector3.new(0, CFG.FocusBelowHeadStuds or 0.7, 0)
 				local function camAt(dist)
 					local offset = CFrame.Angles(0, math.rad(CFG.CameraOrbitDegrees), 0)
 						* Vector3.new(0, 0.15, -dist) --// in front: the rig faces -Z
@@ -324,51 +450,21 @@ local function showBanner(caster, classKey)
 		badge.Parent = portrait
 	end
 
-	--// Right column: ultimate name, caster, badge
-	local nameLabel = Instance.new("TextLabel")
-	nameLabel.Active = false
-	nameLabel.Size = UDim2.fromScale(0.46, 0.34)
-	nameLabel.Position = UDim2.fromScale(0.5, 0.14)
-	nameLabel.BackgroundTransparency = 1
-	nameLabel.Font = Enum.Font.FredokaOne
-	nameLabel.TextScaled = true
-	nameLabel.Text = class.UltimateName
-	nameLabel.TextColor3 = CHOC
-	nameLabel.TextXAlignment = Enum.TextXAlignment.Left
-	nameLabel.Parent = panel
-	local nameStroke = Instance.new("UIStroke")
-	nameStroke.Thickness = 2
-	nameStroke.Color = class.RarityColor or CREAM_DEEP
-	nameStroke.Parent = nameLabel
-
+	--// Just the caster's name, small, bottom-left over the portrait
 	local casterLabel = Instance.new("TextLabel")
 	casterLabel.Active = false
-	casterLabel.Size = UDim2.fromScale(0.46, 0.14)
-	casterLabel.Position = UDim2.fromScale(0.5, 0.5)
+	casterLabel.AnchorPoint = Vector2.new(0, 1)
+	casterLabel.Size = UDim2.fromScale(0.6, 0.12)
+	casterLabel.Position = UDim2.fromScale(0.05, 0.95)
 	casterLabel.BackgroundTransparency = 1
 	casterLabel.Font = Enum.Font.FredokaOne
 	casterLabel.TextScaled = true
 	casterLabel.Text = caster.DisplayName
 	casterLabel.TextColor3 = CHOC
-	casterLabel.TextTransparency = 0.25
+	casterLabel.TextStrokeColor3 = CREAM
+	casterLabel.TextStrokeTransparency = 0.2
 	casterLabel.TextXAlignment = Enum.TextXAlignment.Left
 	casterLabel.Parent = panel
-
-	local badge = Instance.new("ImageLabel")
-	badge.Active = false
-	badge.Size = UDim2.fromScale(0.16, 0.28)
-	badge.SizeConstraint = Enum.SizeConstraint.RelativeYY
-	badge.Position = UDim2.fromScale(0.5, 0.66)
-	badge.BackgroundColor3 = CREAM_DEEP
-	badge.Image = class.IconId or ""
-	badge.Parent = panel
-	local badgeCorner = Instance.new("UICorner")
-	badgeCorner.CornerRadius = UDim.new(0.5, 0)
-	badgeCorner.Parent = badge
-	local badgeStroke = Instance.new("UIStroke")
-	badgeStroke.Thickness = 2
-	badgeStroke.Color = CHOC
-	badgeStroke.Parent = badge
 
 	--// Slide in (overshoot snap), hold, slide out, gone
 	local restPos = UDim2.new(0.015, 0, 0.5, 0)

@@ -1456,12 +1456,25 @@ Config.Ultimates = {
 		WidthScale = 0.34,          -- fraction of screen width
 		HeightScale = 0.36,         -- fraction of screen height
 
-		CameraDistance = 4.5,       -- studs from the focus point at rest
+		CameraDistance = 6.0,       -- studs from the focus point at rest
 		CameraPushStuds = 0.8,      -- starts this much further back
 		CameraOrbitDegrees = 25,    -- three-quarter view
 		FieldOfView = 32,           -- narrow = portrait, wide = fish-eye
+		FocusBelowHeadStuds = 1.3,  -- lower = more chest/arms in frame
+		                            -- (raise CameraDistance too for R6's big heads)
 
 		ToastSeconds = 2.5,         -- teammates' "X used Y!" line
+
+		--// The Chef's banner clone wears a code-built toque (parts, no
+		--// assets); existing HAT accessories come off first (hair stays).
+		ChefHatOnBanner = true,
+
+		--// PARKED (owner call, Sep 2026): posing read badly on the
+		--// owner's nonstandard bundle rig. false = the banner shows the
+		--// avatar in its natural stance with just the camera push - the
+		--// original look. All pose/motion tables below stay for the day
+		--// this gets another pass (untested on a standard R15 rig).
+		PosesEnabled = false,
 
 		--// Degrees {X, Y, Z} added to each joint's rest rotation.
 		--// Chest-up only, so legs are never posed; missing joints are
@@ -1492,6 +1505,26 @@ Config.Ultimates = {
 				Neck = { 0, 10, -12 },
 				RightShoulder = { 0, 0, 80 },
 				LeftShoulder = { 0, 0, -30 },
+			},
+		},
+
+		--// R6 OVERRIDES: R6 joints hinge on different axes, so translated
+		--// R15 numbers can read as nothing. A class listed here uses
+		--// these tables DIRECTLY on R6 rigs (keys are R6 joint names).
+		PosesR6 = {
+			Chef = {
+				["Right Shoulder"] = { 0, 0, -160 }, -- pan arm thrown high
+				["Left Shoulder"] = { 0, 0, 20 },
+				RootJoint = { 0, -10, 0 },
+				Neck = { 0, 0, 15 },
+			},
+		},
+		MotionR6 = {
+			Chef = {
+				["Right Shoulder"] = { 0, 0, -40 }, -- big 120-degree flip
+				["Left Shoulder"] = { 0, 0, 35 },
+				RootJoint = { 0, 8, 0 },
+				Neck = { 0, 0, -10 },
 			},
 		},
 
