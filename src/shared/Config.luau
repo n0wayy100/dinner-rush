@@ -7,7 +7,12 @@
 	catalog, Easy/Normal/Hard, Map Details v2, Rates and Bars (Aug 2026).
 
 	Rules:
-	  * NORMAL is the balance reference. EASY/HARD are defined relative to it.
+	  * EASY IS GENTLE, NOT FROZEN (owner ruling Sep 2026, supersedes THE
+	    EASY FREEZE): mechanics and minigames ship on EVERY difficulty -
+	    they are the fun, not the pressure. Gentleness lives in NUMBERS
+	    only: demand (spawn/patience/targets), event weights, consequence
+	    severity. The per-difficulty Interactions gates REMAIN as
+	    architecture for a future mechanic that truly earns an exclusive.
 	  * Cooking windows NEVER scale with difficulty (demand scales, not dexterity).
 	  * All timers run on the SERVER; clients only render replicated values.
 
@@ -26,6 +31,19 @@ local Config = {}
 Config.Shift = {
 	LengthSeconds = 480,              -- 8 min MVP shift
 	PrepTimeSeconds = 45,             -- vote-skippable
+
+	--// When the clock runs out the doors close but the room is not empty.
+	--// CLOSING lets everyone already inside finish eating and paying; no new
+	--// customers arrive. This is a safety cap so a stuck party cannot hold the
+	--// shift open forever.
+	ClosingMaxSeconds = 150,
+
+	--// The ride home: seconds from shift END until everyone teleports
+	--// back to the lobby. Sized to cover the awards ceremony (~15s,
+	--// skippable) + the report card (12s auto-dismiss) + a breather -
+	--// the owner's "10-15s after they've seen everything".
+	ReturnToLobbySeconds = 35,
+
 	Phases = {                        -- shift-time boundaries (seconds)
 		CalmEndsAt = 120,             -- 0:00-2:00 tutorial-in-motion
 		BuildingEndsAt = 300,         -- 2:00-5:00 pressure ramps
@@ -39,15 +57,20 @@ Config.Shift = {
 Config.Cooking = {
 	Frying   = { CookTime = 10, PerfectWindow = 5, OvercookAfter = 4, BurntAfter = 5 },
 	Grilling = { CookTime = 14, PerfectWindow = 6, OvercookAfter = 5, BurntAfter = 6 },
+	--// The ramen cooker (Yamasaki Sushi map). Frying's numbers on purpose:
+	--// a new METHOD is not a new difficulty, and hands feel the same at
+	--// every pot - THE LAW holds.
+	Boiling  = { CookTime = 10, PerfectWindow = 5, OvercookAfter = 4, BurntAfter = 5 },
 	-- Baking reserved for post-MVP update (20-30s, wide windows, fire-and-forget)
 }
 
---// CookStation parts carry a Method attribute of "Fry"/"Grill", while the
---// timing table above is keyed "Frying"/"Grilling". Map both ways so neither
---// spelling silently misses.
+--// CookStation parts carry a Method attribute of "Fry"/"Grill"/"Ramen",
+--// while the timing table above is keyed "Frying"/"Grilling"/"Boiling".
+--// Map both ways so neither spelling silently misses.
 Config.CookMethodAliases = {
 	Fry = "Frying", Frying = "Frying",
 	Grill = "Grilling", Grilling = "Grilling",
+	Ramen = "Boiling", Boiling = "Boiling",
 }
 
 function Config.CookingFor(method)
@@ -85,6 +108,24 @@ Config.Ingredients = {
 		Source = "DryShelf", Color = Color3.fromRGB(200, 175, 130),
 		Stock = 15,
 	},
+
+	--// YAMASAKI SUSHI (only stocked on maps whose Menu cooks them).
+	--// Icons pending the owner's uploads - "" ships ugly-but-working.
+	RawChicken = {
+		Display = "Raw Chicken", Icon = "rbxassetid://129069316269579",
+		Source = "Fridge", Color = Color3.fromRGB(235, 180, 160),
+		Stock = 18,
+	},
+	RawShrimp = {
+		Display = "Raw Shrimp", Icon = "rbxassetid://130809960695275",
+		Source = "Fridge", Color = Color3.fromRGB(238, 168, 158),
+		Stock = 15,
+	},
+	RawNoodles = {
+		Display = "Noodle Brick", Icon = "rbxassetid://134060384410956",
+		Source = "DryShelf", Color = Color3.fromRGB(238, 220, 150),
+		Stock = 12,
+	},
 }
 
 ----------------------------------------------------------------
@@ -113,9 +154,30 @@ Config.Recipes = {
 		Ingredient = "RawPotato", Method = "Fry", Timing = "Frying",
 		Color = Color3.fromRGB(240, 205, 110), PriceMult = 0.8,
 	},
+
+	--// THE YAMASAKI MENU. Karaage and tempura share the fryers; ramen has
+	--// its own cooker (Method "Ramen"). Price ladder mirrors the diner's:
+	--// cheap staple -> mid -> signature.
+	Karaage = {
+		Display = "Karaage", Icon = "rbxassetid://113472909646068",
+		Ingredient = "RawChicken", Method = "Fry", Timing = "Frying",
+		Color = Color3.fromRGB(205, 140, 60), PriceMult = 1.0,
+	},
+	TempuraShrimp = {
+		Display = "Tempura Shrimp", Icon = "rbxassetid://81991543373834",
+		Ingredient = "RawShrimp", Method = "Fry", Timing = "Frying",
+		Color = Color3.fromRGB(236, 188, 108), PriceMult = 1.2,
+	},
+	Ramen = {
+		Display = "Ramen", Icon = "rbxassetid://111083951169268",
+		Ingredient = "RawNoodles", Method = "Ramen", Timing = "Boiling",
+		Color = Color3.fromRGB(222, 190, 140), PriceMult = 1.4,
+	},
 }
 
---// What customers order, and how often
+--// What customers order, and how often - the FALLBACK menu, used only
+--// when the active map has no Menu of its own (see Config.Maps: each map
+--// row carries the menu its customers order from).
 Config.OrderWeights = {
 	Burger = 5,
 	Fries = 4,
@@ -125,15 +187,262 @@ Config.OrderWeights = {
 ----------------------------------------------------------------
 -- KITCHEN: carrying, stations, and what a cook is worth
 ----------------------------------------------------------------
+----------------------------------------------------------------
+-- DOORS (Sep 2026): tag "Door" on a swinging door Model (the LEAF
+-- only - a frame inside the model would swing too). E toggles it open
+-- and shut, swung server-side around its own hinge edge. If a door
+-- swings the wrong way: FlipHinge / FlipSwing boolean attributes on
+-- the model fix it without touching code.
+----------------------------------------------------------------
+Config.Doors = {
+	OpenAngleDeg = 105,           -- how far open
+	SwingSeconds = 0.35,          -- swing time, eased
+	PromptRangeStuds = 8,
+}
+
+----------------------------------------------------------------
+-- THE MINIGAME ROLL (owner spec, Sep 2026): EVERY gated cook, on every
+-- method and every map, rolls which minigame it gets - the timing
+-- ARROW (game 1), the colour SMASH (game 2), or the memory CARD MATCH
+-- (game 3; KitchenService owns the list). Base odds are EVEN across
+-- the pool. Streaks self-correct: each same-game pick IN A ROW moves
+-- a slice of that game's odds to the others (split evenly), and the
+-- moment the streak breaks the bias falls back to the single-pick
+-- baseline (1-1-2 -> the 2 rolls at baseline again). Tracked per
+-- PLAYER, on the server.
+----------------------------------------------------------------
+Config.CookMinigamePick = {
+	StreakBiasPerRepeat = 0.12,   -- each same-game pick in a row moves this
+	                              -- much of its odds to the other games
+	MaxBias = 0.24,               -- bias cap: a long streak can never push
+	                              -- its game below ~9% (1/3 - 0.24)
+
+	--// STUDIO KNOB (live-ignored, like StudioSpawnBurst): pin EVERY
+	--// roll to one game while testing it. 0 = off (normal roll),
+	--// 1 = arrow, 2 = smash, 3 = card match. REVERT TO 0 when done.
+	StudioForceGame = 3,
+}
+
+----------------------------------------------------------------
+-- THE SMASH GAME (owner design, Sep 2026 - "RamenSmash" keeps its name
+-- from its ramen-only debut, but it is now game 2 of the coin flip
+-- above). SAME ENTRY AS THE ARROW (owner spec): the pan cooks the flat
+-- Config.CookTiming.MinigameCookSeconds, the bar fills, the station
+-- reads READY - then pressing E OPENS the 7s colour game, and the
+-- score decides the dish (aging pauses while it plays; the winning
+-- dish lands straight in your hands). Ramen-only rulings that survive:
+-- ramen can NEVER be burnt - it is soup - so its worst outcome is the
+-- trash tier and a ready bowl keeps forever; a smash-cooked GRILL or
+-- FRY dish resumes normal aging after the game and can still burn if
+-- abandoned. THE LAW: one set of numbers for every difficulty; the
+-- ungated fallback is the plain timed cook.
+----------------------------------------------------------------
+Config.RamenSmash = {
+	GameSeconds = 7,              -- the playable game itself (the cook
+	                              -- before it is the arrow game's own
+	                              -- flat MinigameCookSeconds - one knob
+	                              -- for both games' wait)
+
+	--// OWNER SPEC (Sep 2026): the POINTER is FIXED at the top; three
+	--// coloured arcs ORBIT the pot's rim. Tap when an arc is under the
+	--// pointer to score ITS points - bigger arc = easier = worth less:
+	--//   yellow: largest, 1 point  ·  blue: middle, 2  ·  green:
+	--//   smallest, 3. Mixed directions, relatively fast.
+	--// ShrinkPerHitDeg: EVERY scoring hit shrinks that arc (down to
+	--// MinSizeDeg) - yellow and blue get harder as you score, green
+	--// stays the same small prize (owner spec). Every hit also
+	--// RE-ROLLS all three arcs to fresh positions, never on the pointer.
+	--// Speed ladder: green fastest, yellow slowest. Points: bigger =
+	--// cheaper (yellow 1, blue 2, green 3). Chips = how many rectangles
+	--// draw the arc (yellow 3, blue 2, green 1 - owner spec). Arcs
+	--// BOUNCE off each other (reverse + brief slow), EXCEPT blue
+	--// PHASES straight through yellow.
+	Arcs = {
+		{ SizeDeg = 70, Points = 1, Speed = 140, StartDeg = 90,     -- yellow
+			Chips = 3, ShrinkPerHitDeg = 8, MinSizeDeg = 36 },
+		{ SizeDeg = 44, Points = 2, Speed = -200, StartDeg = 210,   -- blue
+			Chips = 2, ShrinkPerHitDeg = 6, MinSizeDeg = 24, PhasesThrough = 1 },
+		{ SizeDeg = 26, Points = 3, Speed = 285, StartDeg = 320,    -- green
+			Chips = 1 },
+	},
+	CollisionSlowMult = 0.55,     -- pace while bump-slowed
+	BumpSlowSeconds = 0.6,        -- how long the post-bump slow lasts
+	SnapshotHz = 15,              -- server -> client truth updates
+	                              -- (brisker, so bounces snap on screen)
+	GraceDeg = 4,                 -- the ONLY leeway: a whisker for frame
+	                              -- timing. Lag is handled by REWINDING
+	                              -- the arcs to the moment of the tap
+	                              -- (half the player's ping), not by
+	                              -- widening the target.
+	ScoreCooldownSeconds = 0.25,  -- min gap between COUNTED taps (hit or
+	                              -- miss) - machine-gunning does nothing
+	MissPenaltyPoints = 2,        -- a miss COSTS points (floor 0) and
+	                              -- re-rolls the arcs - spraying loses
+
+	--// THE SCORELINES (points in 7s - scaled down with the game when it
+	--// shortened from 10s, same points-per-second bar):
+	--//   Perfect - PerfectPoints and up. Reaching it ENDS THE GAME ON
+	--//     THE SPOT (owner spec): instant perfect dish, no riding out
+	--//     the clock.
+	--//   Good    - GoodPoints .. PerfectPoints-1
+	--//   RUINED  - below GoodPoints: UNSERVABLE (owner ruling, Sep
+	--//     2026). The station holds a ruined dish that must be dumped
+	--//     (burnt-cleanup flow; ramen keeps its RUINED-never-"burnt"
+	--//     labels, because soup) - a wasted cook on the report.
+	PerfectPoints = 10,
+	GoodPoints = 7,
+}
+
+----------------------------------------------------------------
+-- THE CARD MATCH (owner design, Sep 2026): game 3 of the minigame
+-- roll - memory pairs with a shift-kitchen clock. Same entry as the
+-- others: flat cook, READY, E opens it. The server deals Pairs from
+-- the ACTIVE MAP's food art (menu dishes + their raws - Diner cards
+-- on the Diner, Yamasaki cards at Yamasaki), shows the whole board
+-- for the PEEK, then it's flip-two-to-match against the clock. Pairs
+-- found decide the dish; finding them ALL is Perfect ON THE SPOT.
+-- THE LAW: one set of numbers for every difficulty.
+----------------------------------------------------------------
+Config.CardMatch = {
+	GameSeconds = 10,             -- the playable clock, AFTER the peek
+	                              -- (memory needs a touch more than the
+	                              -- smash's 7 - flip-backs eat time)
+	PeekSeconds = 1.0,            -- the whole board shows face-up first:
+	                              -- turns luck into actual memory
+	Pairs = 4,                    -- 4 pairs = 8 cards, a 4x2 board
+	MismatchLockSeconds = 0.5,    -- a wrong pair sits face-up this long
+	                              -- (input locked) before flipping back -
+	                              -- the read-it-and-learn beat
+	FlipCooldownSeconds = 0.08,   -- server-side min gap between flips:
+	                              -- humans never notice, autoclickers do
+
+	--// THE SCORELINES (pairs found when the clock lands):
+	PerfectPairs = 4,             -- sweep the board = Perfect, instantly
+	GoodPairs = 3,
+	OvercookedPairs = 2,          -- below this = RUINED, bin it
+}
+
+----------------------------------------------------------------
+-- THE TUTORIAL (owner design, Sep 2026): a guided first shift in the
+-- real restaurant. Opt-in only - a live server enters it via lobby
+-- teleport data (Mode = "TUTORIAL"; button lands with the lobby
+-- wiring pass) - Manager Bruno teaches one full customer loop with
+-- one scripted party: seat, greet, order, then fetch-cook-serve THREE
+-- dishes (one per cook minigame, pinned in CookGameOrder), collect
+-- the payment, done. While MatchMode is TUTORIAL: patience bars are
+-- FROZEN, the shift clock is frozen (so events never roll and the
+-- night never ends), natural spawns/dash/critic/VIP/Helper are all
+-- off. After the wrap-up the kitchen stays open as FREE PRACTICE.
+-- TutorialService runs the steps; TutorialClient draws the objective
+-- banner + SKIP button; the EventArrow points at each target.
+----------------------------------------------------------------
+Config.Tutorial = {
+	--// STUDIO KNOB (live-ignored): boot Studio playtests straight
+	--// into the tutorial for testing. REVERT to false when done.
+	StudioTutorial = false, --// off - tutorial polish continues (Sep 2026)
+
+	WelcomeSeconds = 4,           -- Bruno's hello before the first task
+	WrapSeconds = 6,              -- the send-off lingers this long
+	StepSettleSeconds = 1.0,      -- breath between a step done and the next
+
+	--// The three teaching cooks pin the minigame roll in this order
+	--// (1 = arrow, 2 = smash, 3 = card match)
+	CookGameOrder = { 1, 2, 3 },
+
+	--// Bruno's script + the objective banner per step. Runtime fills
+	--// {DISH} {INGREDIENT} {SOURCE} {METHOD} from the scripted ticket.
+	Text = {
+		Welcome = {
+			Bruno = "Welcome to the crew, rookie! I'm Bruno, the manager. Follow my lead - and follow the arrow!",
+			Objective = "Listen to Bruno!",
+		},
+		Seat = {
+			Bruno = "Customers at the door! Walk up and press E to seat them.",
+			Objective = "Seat the customers - press E on them!",
+		},
+		Greet = {
+			Bruno = "Quick, say hello! A friendly hi keeps a table patient.",
+			Objective = "Greet the table - press E on a customer!",
+		},
+		Order = {
+			Bruno = "Now take their order - E again. Remember what they want!",
+			Objective = "Take the order!",
+		},
+		Fetch = {
+			Bruno = "Food time! Grab {INGREDIENT} from the {SOURCE}.",
+			Objective = "Get {INGREDIENT} from the {SOURCE}!",
+		},
+		Cook = {
+			{
+				Bruno = "Load the {METHOD} station, then press E when it's ready - and stop the arrow in the GREEN!",
+				Objective = "Cook {DISH} - stop the arrow in the green!",
+			},
+			{
+				Bruno = "This one plays COLOUR SMASH - tap when a colour crosses the pointer!",
+				Objective = "Cook {DISH} - smash those colours!",
+			},
+			{
+				Bruno = "Last trick: MEMORY MATCH! Peek hard, then find the pairs!",
+				Objective = "Cook {DISH} - match the pairs!",
+			},
+		},
+		Serve = {
+			Bruno = "Beautiful! Run it to the table - press E on the customer.",
+			Objective = "Serve {DISH} to the table!",
+		},
+		Collect = {
+			Bruno = "They loved it! Hold G at the table to collect the money.",
+			Objective = "Collect the payment - hold G at the table!",
+		},
+		Wrap = {
+			Bruno = "THAT'S the whole job, rookie! The kitchen's yours - practice as long as you like.",
+			Objective = "Tutorial complete! Free practice",
+		},
+	},
+}
+
 Config.Kitchen = {
 	MaxCarriedItems = 2,          -- the design's two-item inventory rule
-	PickupHoldSeconds = 0.4,      -- fridge / dry shelf prompt
-	StationLoadHoldSeconds = 0.5, -- starting a cook
-	CollectHoldSeconds = 0.4,     -- taking the result off the station
-	BurntCleanupSeconds = 1.0,    -- clearing a ruined pan
 
-	--// Payout multipliers applied when the dish is served
+	--// OWNER RULING (Aug 2026): E means PRESS, everywhere. Every
+	--// default-key prompt is a tap - the only holds left in the game are
+	--// the 3s pitcher fill and the F/G prompts (water pour / water trap /
+	--// payment collect). The old channel-hold fix paths still exist in
+	--// code but no difficulty uses them since the Sep 2026 un-freeze.
+	--// The cooking food's BOTTOM relative to each station's anchor -
+	--// RAYCAST-MEASURED per method (the anchors sit at different heights
+	--// over their cook surfaces in this map). Re-measure after moving
+	--// appliances: the one-liner lives in the session notes.
+	--// Fry sits DEEP on purpose (owner call, Sep 2026): raw food sinks
+	--// into the oil with just the tops peeking out - chicken, shrimp,
+	--// and the Diner's potatoes alike. 0.55 was the measured surface;
+	--// 0.0 puts the food's bottom half a stud under it.
+	StationFoodLiftStuds = { Grill = -0.49, Fry = 0.0, Ramen = 0.20 },
+	PickupHoldSeconds = 0,        -- fridge / dry shelf prompt
+	StationLoadHoldSeconds = 0,   -- starting a cook
+	CollectHoldSeconds = 0,       -- taking the result off the station
+	                              -- (NOTE: Chef's CollectHoldMult passive now
+	                              -- has nothing to scale - re-spec pending)
+	BurntCleanupSeconds = 0,      -- clearing a ruined pan
+	BinHoldSeconds = 0,           -- the TrashBin taps too, per the ruling
+
+	--// One cook per station. Several burners = several CookStation anchors
+	--// side by side, each with its own prompt and its own small bar.
+	--// Bars are narrow on purpose: wide ones overlap when the anchors are
+	--// only a few studs apart.
+	StationBarWidth = 80,
+	StationBarHeight = 30,
+
+	--// Tighter than Config.Interaction.PromptRangeStuds (8). Neighbouring
+	--// burners sit within a few studs, so a wide range would put every
+	--// station's prompt in reach at once and E would fire an arbitrary one.
+	StationPromptRangeStuds = 5,
+
+	--// Payout multipliers applied when the dish is served.
+	--// "Good" is the cook-minigame's middle tier (yellow saved by green);
+	--// the yellow-yellow "OK" result reuses the Overcooked tier.
 	PerfectPayMult = 1.5,
+	GoodPayMult = 1.0,
 	OvercookedPayMult = 0.6,
 
 	--// Reputation. PerfectDish already exists in Config.Reputation and is
@@ -160,23 +469,28 @@ function Config.RecipeFor(ingredient, method)
 	return nil
 end
 
---// Picks a dish name using OrderWeights
-function Config.RollDish()
-	local total = 0
-	for _, weight in pairs(Config.OrderWeights) do
+--// Picks a dish name from a weights table - the active map's Menu when
+--// the caller passes one, the global OrderWeights fallback otherwise.
+function Config.RollDish(weights)
+	weights = weights or Config.OrderWeights
+	local total, first = 0, nil
+	for name, weight in pairs(weights) do
+		first = first or name
 		total += weight
 	end
 
 	local roll = math.random() * total
 	local acc = 0
-	for name, weight in pairs(Config.OrderWeights) do
+	for name, weight in pairs(weights) do
 		acc += weight
 		if roll <= acc then
 			return name
 		end
 	end
 
-	return "Burger"
+	--// Float rounding can leave roll a hair past acc: any menu dish is
+	--// right, a HARDCODED one would put burgers on the sushi menu
+	return first or "Burger"
 end
 
 ----------------------------------------------------------------
@@ -194,9 +508,46 @@ Config.Customers = {
 	SeatedPatienceSeconds = 75,       -- seated -> LAST dish served (one bar!)
 	VIPSeatedPatienceSeconds = 45,
 
+	--// Seating: where members of a party stand around their table anchor.
+	--// Computed from the anchor's own facing, so no extra seat parts are
+	--// needed - member 1 takes the near side, member 2 the far side.
+	SeatOffsetStuds = 4,
+
+	--// Customers wear real avatars pulled from players' friend lists. Both
+	--// Roblox calls behind this yield and are rate-limited, so AvatarPool
+	--// fetches in the background and the spawner only reads the cache.
+	Avatars = {
+		Enabled = true,
+		FallbackUserId = 5191267798,      -- OWNER'S USER ID - set this, or a server with
+		                         -- no reachable friend lists gets plain rigs
+		PoolTarget = 12,         -- how many descriptions to keep cached
+		FetchDelaySeconds = 1,   -- gap between web calls, to stay under limits
+		FriendsPerPlayer = 20,   -- how many of each player's friends to consider
+
+		--// Testing: put user IDs here and the pool uses ONLY these, skipping
+		--// friend lists entirely. Deterministic, and works on an alt with no
+		--// friends. Empty = normal behaviour.
+		--//   e.g. { 156, 1, 261 }
+		DebugUserIds = {},
+	},
+
 	WaterPourFirstBonus = 18,
 	WaterPourRepeatBonus = 10,        -- diminishing, same table
 	WaterStationHoldSeconds = 3,
+
+	ChairSearchStuds = 9,             -- ChairSeat-tagged parts this close to a
+	                                  -- table anchor are that table's chairs
+	SitHipStuds = 1.1,                -- root height above the seat surface when
+	                                  -- parked on a chair (tune to the chairs)
+
+	TicketVisibleStuds = 30,          -- wanted-dish icons draw only this close
+	                                  -- (walls occlude them too - the kitchen
+	                                  -- reads the OrderBoard, not heads)
+
+	--// Table prompts: TAPS, per the E-means-press ruling (the server
+	--// still validates the dish, so a mistap serve is denied, not wasted)
+	TakeOrderHoldSeconds = 0,
+	ServeHoldSeconds = 0,
 	PerDishServeBonus = 5,            -- multi-dish orders: grace per dish landed
 	PaySeconds = 5,
 	SeatingWalkIsFree = true,         -- door bar dies on INITIATE; walk untimed
@@ -225,6 +576,31 @@ Config.Bussing = {
 Config.Supplier = {
 	PriceEventDecisionSeconds = 10,
 	FreeItemThreshold = 5,            -- failure odds scale per item over this
+
+	--// Delivery time is NOT here: Difficulty[*].SupplierDeliverySeconds
+	--// already holds 22 / 25 / 30, so difficulty changes it for free.
+
+	UnitsPerCrate = 5,                -- one crate restocks this many
+	MaxCratesPerIngredient = 3,       -- per order, so a single order caps at 15
+	CollectHoldSeconds = 0,           -- E on a crate (press, per the ruling)
+	TruckLingerSeconds = 45,          -- truck leaves; uncollected crates go with it
+
+	--// Money is OFF for the MVP. Coins are per-player leaderstats, so charging
+	--// one player for the whole restaurant's supplies is odd in co-op, and a
+	--// broke team could soft-lock. Flip this on once there is a shared till.
+	ChargeForOrders = true,
+	CratePrice = {                    -- coins per crate when charging is on
+		RawPatty = 20,
+		RawSteak = 30,
+		RawPotato = 12,
+	},
+
+	--// Placeholder delivery props, replaced by your own truck model later
+	TruckSize = Vector3.new(10, 8, 18),
+	TruckColor = Color3.fromRGB(210, 90, 80),
+	CrateSize = Vector3.new(3, 3, 3),
+	CrateColor = Color3.fromRGB(178, 138, 88),
+	CrateSpacingStuds = 4,
 }
 
 ----------------------------------------------------------------
@@ -250,6 +626,9 @@ Config.Reputation = {
 Config.Difficulty = {
 
 	EASY = {
+		--// GENTLE, NOT FROZEN (Sep 2026): EASY gets every mechanic - its
+		--// kindness is in these NUMBERS (slow spawns, long patience, soft
+		--// consequences), never in withholding the fun parts.
 		Label = "Cozy Shift",
 		Patience = 1.2,               -- multiplies both bars
 		SpawnRate = 0.8,              -- interval = base / SpawnRate
@@ -294,6 +673,14 @@ Config.Difficulty = {
 			                          -- predated the extinguisher fetch, unwinnable)
 		},
 		Reputation = { SatisfiedParty = 3, VIPSatisfied = 5 },
+		--// The minigames are the FUN - every difficulty gets them (owner
+		--// ruling Sep 2026; the old freeze kept EASY on hold-E chores)
+		Interactions = {
+			BreakerMinigame = true,
+			BreakerWires = 3,         -- the gentlest wire count
+			CookMinigame = true,
+			PlungeMinigame = true,
+		},
 		Rewards = {
 			CoinMult = 0.8, CompletionBonus = 100,
 			StreakCap = 2.0, XPMult = 0.9,
@@ -341,6 +728,12 @@ Config.Difficulty = {
 			FireSpreadSeconds = 35,   -- retuned from 8, see EASY note
 		},
 		Reputation = { SatisfiedParty = 2, VIPSatisfied = 4 },
+		Interactions = {
+			BreakerMinigame = true,   -- the wire-matching panel
+			BreakerWires = 4,
+			CookMinigame = true,      -- the timing-arrow collect
+			PlungeMinigame = true,    -- the spam-tap plunge bar
+		},
 		Rewards = {
 			CoinMult = 1.0, CompletionBonus = 150,
 			StreakCap = 2.5, XPMult = 1.0,
@@ -389,6 +782,12 @@ Config.Difficulty = {
 			FireSpreadSeconds = 25,   -- retuned from 6, see EASY note
 		},
 		Reputation = { SatisfiedParty = 2, VIPSatisfied = 4 },
+		Interactions = {
+			BreakerMinigame = true,
+			BreakerWires = 5,         -- one more wire than NORMAL
+			CookMinigame = true,
+			PlungeMinigame = true,
+		},
 		Rewards = {
 			CoinMult = 1.5, CompletionBonus = 250,
 			StreakCap = 3.0, XPMult = 1.25,
@@ -469,14 +868,46 @@ Config.Events = {
 		DouseRangeStuds = 10,         -- click-to-spray works within this range;
 		                              -- walking out of it cancels the douse
 		RepDrainPer10sPerFire = 1,    -- each burning station bleeds independently
-		FixRepReward = 1,             -- for putting out the LAST fire
+		FixRepReward = 1,             -- for spraying the blaze out
 		WaterTrapMessage = "NEVER put water on a grease fire!",
 		ToastSeconds = 4,             -- how long the water-trap lesson fills the screen
 
 		--// Cosmetics
-		FireSize = 8,                 -- Roblox Fire instance size on a burning station
+		FireSize = 12,                -- Roblox Fire instance size on the blaze
+		BlazeCoverStuds = 7,          -- footprint of the invisible pad the flames
+		                              -- ride on - ONE big fire covering the whole
+		                              -- appliance, not a candle on the anchor
 		LightRange = 14,              -- orange glow radius
 	},
+
+	PowerOutage = {
+		--// Hold at the breaker. Per-difficulty, like the toilet's channel.
+		FixChannelSeconds = { EASY = 6, NORMAL = 8, HARD = 10 },
+
+		RepDrainPer10s = 1,           -- bleed while the lights are out
+		FixRepReward = 1,             -- for restoring power
+
+		--// Seated patience melts faster in the dark. Applied ONLY while the
+		--// outage is active, via EventState.PatienceMultiplier.
+		PatienceDrainMultiplier = 1.25,
+
+		--// Dim, never black. Young players on bright phone screens still have
+		--// to navigate the restaurant, so this stays readable on purpose.
+		DarkAmbient = Color3.fromRGB(74, 64, 54),
+		DarkOutdoorAmbient = Color3.fromRGB(64, 56, 48),
+		DarkBrightness = 0.6,
+	},
+}
+
+----------------------------------------------------------------
+-- MONEY
+-- Every shift opens a shared till at zero. Customer payments go into it,
+-- the Supplier spends out of it, and whatever survives to the buzzer is
+-- split evenly into each player's own balance.
+----------------------------------------------------------------
+Config.Money = {
+	ShiftStartingTill = 0,
+	RemainderToFirstPlayer = true,  -- odd coins go somewhere rather than vanishing
 }
 
 ----------------------------------------------------------------
@@ -505,8 +936,16 @@ Config.Interaction = {
 -- Difficulty NEVER touches these: hands feel the same everywhere.
 ----------------------------------------------------------------
 Config.Sprint = {
-	BaseWalkSpeed = 16,           -- Roblox default; THE source of truth for normal speed
-	SprintSpeed = 24,             -- while sprinting (1.5x)
+	--// Double-tap W to sprint, then keep W held. LeftShift is Roblox's own
+	--// shift-lock toggle, so binding sprint to it fought the camera.
+	DoubleTapSeconds = 0.35,      -- max gap between the two W presses
+	StopOnRelease = true,         -- letting go of W ends the sprint
+
+	--// 1.5x Roblox's default 16. The restaurant is big enough that stock
+	--// walking made every trip feel like a chore; sprint keeps its 1.5x
+	--// margin on top so it still reads as a burst rather than the norm.
+	BaseWalkSpeed = 24,           -- was 16 (Roblox default)
+	SprintSpeed = 36,             -- was 24; still 1.5x the base
 	StaminaMax = 100,
 	DrainPerSecond = 20,          -- ~5s of continuous full sprint
 	RegenPerSecond = 15,          -- empty -> full in ~6.7s once regen starts
@@ -532,6 +971,9 @@ Config.Dialogue = {
 	TimeoutSeconds = 15,          -- unfinished dialogue auto-resolves; party never stuck
 	RecommendPatienceBonus = 5,   -- seated-bar refresh for a great suggestion; 0 disables
 	CloseAfterSeconds = 1.0,      -- panel lingers this long after the closing line
+	BubbleSeconds = 4,            -- chat bubbles fade after this (owner: snappy).
+	                              -- NOTE: sets the GLOBAL bubble duration, so
+	                              -- player chat bubbles share the same pace
 
 	--// Customer-voiced pools come in Singular/Plural: a party of one says
 	--// "I", a party of two or more says "we". The server picks the voice
@@ -633,7 +1075,7 @@ Config.Dialogue = {
 }
 
 ----------------------------------------------------------------
--- PAYMENT COLLECTION (money waits on the table and melts - see
+-- PAYMENT COLLECTION (money waits on the table at full value - see
 -- ServiceLoop's payment section)
 --
 -- The split, as implemented:
@@ -641,16 +1083,692 @@ Config.Dialogue = {
 --          BASE_COINS_PER_PARTY * Size * CoinMult * OvercookedPayMult
 --   TIP  = everything the actual payout adds above that (the perfect-cook
 --          surplus and the VIP surplus)
--- Base decays to BaseFloorPercent and stops; tip decays all the way out.
--- Hustle is rewarded, success is never zeroed.
+-- Both are paid in full whenever the money is collected. The split is kept
+-- because it is what a future pressure mechanic would act on.
 ----------------------------------------------------------------
 Config.Payment = {
-	GraceSeconds = 8,             -- full value this long; walking over isn't a sin
-	DecaySeconds = 20,            -- after grace, the melt takes this long to finish
-	BaseFloorPercent = 0.45,      -- base never drops below this fraction
-	TipFloorPercent = 0,          -- tips melt completely (kept tunable anyway)
-	LingerSeconds = 6,            -- fully-decayed money stays this long, then vanishes
+	--// Payments no longer melt. Money sits on the table at full value until
+	--// someone collects it, or until the shift ends and it is swept into the
+	--// till. Removed for now pending a different answer to "don't let money
+	--// pile up as a free buffer" - see LingerSeconds below for the one piece
+	--// of pressure kept.
+	LingerSeconds = 0,            -- 0 = never vanishes; >0 = seconds on the table
 	CollectHoldSeconds = 1.0,     -- hold time on the collect prompt
+}
+
+----------------------------------------------------------------
+-- SHIFT REPORT (the end-of-shift results panel - see ShiftReportClient)
+-- The server computes every number and the verdict; the client renders.
+----------------------------------------------------------------
+Config.ShiftReport = {
+	AutoDismissSeconds = 12,      -- panel dismisses itself after this long
+	RowRevealSeconds = 0.35,      -- drumroll: pause between row reveals
+
+	--// Checked top to bottom, first match wins. ServedFraction is of the
+	--// difficulty's TargetParties; a missing key means "don't care".
+	--// Tone picks the stamp colour: "good" basil / "mid" mustard / "bad" tomato.
+	GradeThresholds = {
+		{ Grade = "5 STARS!",       Tone = "good", ServedFraction = 1.0, MinReputation = 60 },
+		{ Grade = "GREAT SHIFT!",   Tone = "good", ServedFraction = 1.0 },
+		{ Grade = "NOT BAD!",       Tone = "mid",  ServedFraction = 0.7 },
+		{ Grade = "ROUGH NIGHT...", Tone = "bad" },
+	},
+
+	--// Any FAILED shift (reputation zero, kitchen burned down) stamps this
+	--// regardless of the thresholds; the failure reason prints under it.
+	FailGrade = { Grade = "CLOSED DOWN!", Tone = "bad" },
+}
+
+----------------------------------------------------------------
+-- ORDER TICKET BOARD (wall SurfaceGui on the part tagged OrderBoard -
+-- see OrderBoardService). Most desperate party is always leftmost.
+----------------------------------------------------------------
+Config.OrderBoard = {
+	MaxTickets = 8,               -- cards on the board; overflow shows a "+N more"
+	                              -- chip (unreachable with 4 tables - future-proofing)
+	TicketsPerRow = 4,
+	UpdateHz = 4,                 -- refresh rate; plenty for a wall sign
+	CriticalPulseBelow = 0.25,    -- the leftmost ticket pulses under this patience
+	WalkoutFlashSeconds = 1.2,    -- tomato flash before a walkout's card drops
+	SortTweenSeconds = 0.25,      -- cards slide (never teleport) when re-sorting
+	Face = "Auto",                -- "Auto" = find the big face not buried in the
+	                              -- wall (raycast); or pin "Front"/"Back"/"Left"/
+	                              -- "Right"/"Top"/"Bottom" manually
+	PixelsPerStud = 50,           -- SurfaceGui resolution
+}
+
+----------------------------------------------------------------
+-- CLASSES (the lobby class shop - see ClassVendor / ClassShopClient).
+-- SHARED deliberately: passives and ultimates are main-game mechanics, so
+-- the main place will read this same table when they get implemented.
+-- Until then they are DISPLAY ONLY - the shop sells and equips, nothing
+-- more. Purchase/equip validation lives server-side in ProfileAPI.
+----------------------------------------------------------------
+Config.Classes = {
+	Trainee = {
+		Display = "The Trainee",
+		Rarity = "Starter", RarityColor = Color3.fromRGB(150, 150, 150),
+		Price = 0,                -- never buyable: every profile starts owning it
+		IconId = "rbxassetid://71049237083171",
+		FlavorText = "First day on the job. The apron is still stiff.",
+		PassiveText = "Eager to learn (no perks yet!)",
+		UltimateName = "", UltimateText = "",
+	},
+	Chef = {
+		Display = "The Chef",
+		Rarity = "Common", RarityColor = Color3.fromRGB(76, 175, 109),
+		Price = 1500,
+		IconId = "rbxassetid://79387702760394",
+		FlavorText = "Heard you can burn water. Prove me wrong.",
+		PassiveText = "Collects cooked dishes a little faster",
+		--// FLAT passive values (owner call: levels are a badge for now, no
+		--// per-level scaling until the numbers have been playtested).
+		--// Multiplies the collect-prompt hold on cook stations + the pass.
+		CollectHoldMult = 0.6,
+		UltimateName = "FLASH FRY!",
+		UltimateText = "Instantly cooks the raw ingredient you're holding to PERFECT",
+		--// Levels 1->5: finish the task, then PAY to upgrade. Steps[L] is the
+		--// cumulative counter needed to leave level L; Costs[L] the coins.
+		--// Tuned for ~10-15 perfects per focused shift: Lv2 in a shift or two,
+		--// max level a real career. Counters counted in the MAIN GAME
+		--// (future phase) and persisted via ProfileService.
+		UpgradeTrack = {
+			Counter = "PerfectCooks", Label = "Perfect cooks",
+			Steps = { 15, 40, 80, 150 },
+			Costs = { 300, 600, 1200, 2000 },
+		},
+	},
+	Waiter = {
+		Display = "The Waiter",
+		Rarity = "Common", RarityColor = Color3.fromRGB(76, 175, 109),
+		Price = 1500,
+		IconId = "rbxassetid://102266349813244",
+		FlavorText = "Three plates, one arm, zero fear.",
+		PassiveText = "Sprint drains slower and refills faster",
+		--// Owner ruled: the Waiter's passive is STAMINA EFFICIENCY (the old
+		--// "quicker while carrying" text described a perk that never existed).
+		--// SprintClient reads these off replicated Player attributes.
+		StaminaDrainMult = 0.65,
+		StaminaRegenMult = 1.35,
+		UltimateName = "DOUBLE TIME!",
+		UltimateText = "A huge burst of speed to clear the whole floor",
+		--// ~10-15 serves per focused shift
+		UpgradeTrack = {
+			Counter = "DishesServed", Label = "Dishes served",
+			Steps = { 20, 60, 120, 220 },
+			Costs = { 300, 600, 1200, 2000 },
+		},
+	},
+	Fixer = {
+		Display = "The Fixer",
+		Rarity = "Rare", RarityColor = Color3.fromRGB(245, 184, 65),
+		Price = 4000,
+		IconId = "rbxassetid://99068683562920",
+		FlavorText = "Toilets fear them. Fires respect them.",
+		PassiveText = "Fixes emergencies a little faster",
+		--// Multiplies every event channel: plunge + douse + breaker. Channels
+		--// are chores, not skill windows - legal under THE LAW.
+		ChannelMult = 0.7,
+		UltimateName = "SPEED DIAL!",
+		UltimateText = "Instantly resolves the active emergency",
+		--// ~1-3 event fixes per shift; rarer actions, shorter track
+		UpgradeTrack = {
+			Counter = "EventChannels", Label = "Emergencies fixed",
+			Steps = { 3, 8, 16, 30 },
+			Costs = { 500, 1000, 2000, 3500 },
+		},
+	},
+	Charmer = {
+		Display = "The Charmer",
+		Rarity = "Epic", RarityColor = Color3.fromRGB(229, 72, 120),
+		Price = 8000,
+		IconId = "rbxassetid://137270991870999",
+		FlavorText = "Could talk a burnt burger into a five-star review.",
+		PassiveText = "Earns extra on payments they collect",
+		--// Money minted on top of the payment they pick up, plus a bigger
+		--// patience bonus when their recommendation lands.
+		MoneyMult = 1.25,
+		RecommendBonusMult = 2,
+		UltimateName = "SWEET TALK!",
+		UltimateText = "Refills one table's patience by half",
+		--// ~4-8 collected payments per shift
+		UpgradeTrack = {
+			Counter = "PaymentsCollected", Label = "Payments collected",
+			Steps = { 12, 35, 70, 130 },
+			Costs = { 800, 1600, 3200, 5500 },
+		},
+	},
+}
+
+Config.ClassShop = {
+	CardOrder = { "Trainee", "Chef", "Waiter", "Fixer", "Charmer" },
+	VendorGreetings = {
+		"Lookin' to move up in the world?",
+		"Aprons, skills, destinies - take your pick!",
+		"The Trainee look suits you. But so would a promotion...",
+		"Every legend started with a name tag!",
+	},
+	CameraFocus = true,           -- brief camera tween toward the vendor on talk
+	TagMaxDistanceStuds = 45,     -- vendor nametag/bubble hidden beyond this range
+	CameraTweenSeconds = 0.35,
+	WalkAwayCloseStuds = 14,      -- wandering off closes the screen
+	BubbleSeconds = 3,            -- vendor speech bubble lifetime
+}
+
+----------------------------------------------------------------
+-- PLAYER STATS (the lobby STATS screen - see StatsServer/StatsClient).
+-- THE REGISTRY is the single source of truth for every lifetime stat:
+-- its key, where it lives, its label, format, and default. The save
+-- layer merges defaults from here; the UI builds its rows from here.
+-- Adding a stat = adding ONE entry below (plus the gameplay hook that
+-- increments it). Never touch UI code for a new stat.
+--
+-- Source:  "Stats"        -> profile.Stats[Key] (lifetime counters)
+--          "TaskProgress" -> profile.TaskProgress[Key] (already stored
+--                            for class tasks - NOT duplicated here)
+--          "Computed"     -> derived server-side at payload time
+-- Format:  "int" (1,234 / 12K) · "money" ($1,234) · "duration" (2h 14m)
+----------------------------------------------------------------
+Config.PlayerStats = {
+	LevelShiftsPerLevel = 5,      -- passport LVL = 1 + ShiftsCompleted/this
+	                              -- (derived, never stored - cannot desync)
+	BestShiftsCap = 5,            -- hard ceiling, sorted+trimmed at insert
+
+	Registry = {
+		{ Key = "ShiftsCompleted",   Source = "Stats",        Label = "Shifts Completed",   Format = "int",      Default = 0 },
+		{ Key = "ShiftsFailed",      Source = "Stats",        Label = "Shifts Failed",      Format = "int",      Default = 0 },
+		{ Key = "CustomersServed",   Source = "Stats",        Label = "Customers Served",   Format = "int",      Default = 0 },
+		{ Key = "DishesServed",      Source = "TaskProgress", Label = "Dishes Served",      Format = "int",      Default = 0 },
+		{ Key = "PerfectCooks",      Source = "TaskProgress", Label = "Perfect Cooks",      Format = "int",      Default = 0 },
+		{ Key = "EventChannels",     Source = "TaskProgress", Label = "Emergencies Fixed",  Format = "int",      Default = 0 },
+		{ Key = "PaymentsCollected", Source = "TaskProgress", Label = "Payments Collected", Format = "int",      Default = 0 },
+		{ Key = "Greetings",         Source = "TaskProgress", Label = "Warm Greetings",     Format = "int",      Default = 0 },
+		{ Key = "Recommendations",   Source = "TaskProgress", Label = "Recommendations",    Format = "int",      Default = 0 },
+		{ Key = "MoneyDeposited",    Source = "Stats",        Label = "Lifetime Earnings",  Format = "money",    Default = 0 },
+		{ Key = "TimeOnFloorSeconds", Source = "Stats",       Label = "Time On Floor",      Format = "duration", Default = 0 },
+		{ Key = "KitchenCrimes",     Source = "Stats",        Label = "Kitchen Crimes",     Format = "int",      Default = 0 },
+		{ Key = "ClassesOwned",      Source = "Computed",     Label = "Classes Owned",      Format = "int",      Default = 0 },
+	},
+}
+
+----------------------------------------------------------------
+-- WIRE FIX (the breaker minigame - see EventSystem + WireFixClient).
+-- Every difficulty matches wires now (EASY deals 3, the gentlest); the
+-- gated difficulties match wires. The SERVER deals the shuffle and checks
+-- the answer; the client only renders and reports taps. The puzzle is
+-- unfailable by design (only matching colours connect) - the fun is the
+-- fingers, the anti-exploit is the server check.
+----------------------------------------------------------------
+Config.WireFix = {
+	FixerWireDiscount = 1,        -- the Fixer's passive in minigame grammar:
+	                              -- one fewer wire to connect
+	MinWires = 3,                 -- the discount never goes below this
+	TimeoutSeconds = 25,          -- abandoned panel auto-unlocks the breaker
+	WalkAwayStuds = 12,           -- leaving the breaker closes the panel
+
+	--// Wire palette, in deal order (HARD's 5th wire = the 5th colour)
+	Colors = {
+		Color3.fromRGB(229, 72, 77),    -- tomato
+		Color3.fromRGB(245, 184, 65),   -- mustard
+		Color3.fromRGB(76, 175, 109),   -- basil
+		Color3.fromRGB(80, 150, 255),   -- blue
+		Color3.fromRGB(170, 110, 220),  -- grape
+	},
+}
+
+----------------------------------------------------------------
+-- COOK TIMING (the cooking minigame - see KitchenService + CookTimingClient)
+-- Gated by Difficulty.Interactions.CookMinigame (ON for everyone since
+-- window-collect). Replaces the COLLECT step only: the cook timer, the
+-- station flow and the burn threat are untouched. An arrow sweeps a bar;
+-- the GREEN zone sits at a RANDOM position each swing (owner call):
+--   green (1st swing)          -> Perfect
+--   yellow -> green            -> Good
+--   yellow -> yellow           -> Overcooked ("OK")
+--   red                        -> swing again (dish keeps aging - it can
+--                                 still burn under a fumbling cook!)
+-- LAW NOTE (owner-sanctioned): quality comes from the arrow on gated
+-- difficulties. Zone widths are IDENTICAL on every gated difficulty -
+-- the law holds within the mechanic, and EASY's windows are untouched.
+----------------------------------------------------------------
+Config.CookTiming = {
+	--// Every swing rolls a fresh pace from this pool (server-dealt) so
+	--// there is no metronome to memorise - each swing needs a real read.
+	--// Same pool on every gated difficulty (THE LAW).
+	SweepSecondsMin = 0.8,        -- fastest end-to-end arrow pass
+	SweepSecondsMax = 1.4,        -- slowest
+
+	--// Where the minigame runs, EVERY station cooks in the same flat time
+	--// (owner ruling: the arrow is the skill, the wait is uniform - and
+	--// the late game is hard enough already). Follows the GATE, not the
+	--// difficulty (THE LAW); an ungated difficulty would keep full timers.
+	MinigameCookSeconds = 5,      -- flat cook time on gated difficulties
+	GreenWidth = 0.09,            -- fraction of the bar; NEVER per-difficulty
+	YellowWidth = 0.11,           -- each side of the green
+	StopToleranceSeconds = 0.13,  -- claim-vs-server-clock slack in SECONDS of lag,
+	                              -- so fast swings don't punish ping harder
+	ResultFlashSeconds = 0.6,     -- PERFECT!/GOOD!/OK!/MISS! beat between swings
+	TimeoutSeconds = 20,          -- abandoned panel frees the station
+	WalkAwayStuds = 10,           -- leaving the station closes the panel
+}
+
+----------------------------------------------------------------
+-- THE PLUNGE TAP (Difficulty.Interactions.PlungeMinigame - EASY keeps
+-- ON for every difficulty). Spam tap / left-click to fill the bar;
+-- it leaks while you rest. The SERVER counts its own taps (rate-capped
+-- against autoclickers) and succeeds through stopToilet's normal path.
+-- Same numbers on every gated difficulty (THE LAW).
+----------------------------------------------------------------
+Config.PlungeTap = {
+	TapsToFill = 12,           -- taps to fill the bar (before class scaling)
+	FloodTapsMultiplier = 1.5, -- a FLOODED toilet needs this x more taps
+	DecayPerSecond = 0.10,     -- bar fraction leaking away per idle second
+	MaxTapsPerSecond = 10,     -- server ignores taps faster than this
+	TimeoutSeconds = 20,       -- abandoned panel frees the toilet
+	WalkAwayStuds = 10,        -- wander this far and the panel closes
+}
+
+----------------------------------------------------------------
+-- DINE AND DASH (per-party roll at meal end - NOT a scheduler event).
+-- The party bolts for the door instead of paying. Any EMPTY-HANDED
+-- player punches them (left-click / tap / gamepad X - no prompt, no
+-- hold) to stop them: the bill pays itself instantly with a catch
+-- bonus and the whole party gets LAUNCHED. An escape loses the money
+-- (and rep, on HARD - Difficulty.Consequences.DashUncaughtRep).
+----------------------------------------------------------------
+Config.Dash = {
+	Chance = { EASY = 0.04, NORMAL = 0.08, HARD = 0.15 }, -- per party, at meal end
+	                            -- (EASY at a whisper: the chase is fun, and
+	                            -- an escape there costs no rep - money only)
+	VIPCanDash = { EASY = false, NORMAL = false, HARD = true }, -- double bills run too
+	WarnSeconds = 5,            -- the ❗ window: they sit there LOOKING shifty
+	                            -- first - punch them at the table before they bolt
+	RunSpeed = 22,              -- dashers sprint (the amble is 12)
+	CatchBonusMult = 1.25,      -- caught = the bill plus this (justice pays)
+	PunchRangeStuds = 8,        -- server-checked reach
+	PunchCooldownSeconds = 0.4, -- per player, so click spam does nothing
+	LaunchStuds = 24,           -- how far a punched party flies
+	LaunchSeconds = 0.8,        -- airtime of the comedy arc
+}
+
+----------------------------------------------------------------
+-- THE FOOD CRITIC (at most one per shift - a party of ONE with a
+-- restaurant-sized appetite, never a VIP, never dashes). Judges the
+-- NORMAL service pipeline, weighted where the owner ruled: PATIENCE
+-- and COOKING only (no greet star). Review = 1 base star + up to 2
+-- for the patience left when the last dish lands + up to 2 for
+-- quality (all Perfect = 2, none Overcooked = 1, any Overcooked = 0).
+-- A walkout is an automatic 1 star. The rep swing is the biggest
+-- single hit/boost in the game (halved on EASY via RepMult).
+----------------------------------------------------------------
+Config.Critic = {
+	ShiftChance = { EASY = 0.2, NORMAL = 0.35, HARD = 0.5 }, -- rolled at shift start
+	EarliestFraction = 0.2,     -- never during the opening calm...
+	LatestFraction = 0.75,      -- ...or too late to finish the meal
+	MinDishes = 2,              -- one person, orders like a table
+	MaxDishes = 2,              -- owner: 3 for one person is kinda awkward
+	PatienceMult = 1.25,        -- a bit more patient than regular customers -
+	                            -- professionals take their time
+	PatienceTwoStars = 0.6,     -- bar fraction left at the last dish for +2
+	PatienceOneStar = 0.3,      -- ...for +1
+	RepByStars = { -12, -6, 0, 6, 12 }, -- [stars] -> the swing, scaled by...
+	RepMult = { EASY = 0.5, NORMAL = 1, HARD = 1 }, -- EASY reviews sting, not wound
+	StarsHoldSeconds = 5,       -- the verdict floats overhead this long
+}
+
+----------------------------------------------------------------
+-- THE SHIFT SCORE (owner ruling, Aug 2026: HIDDEN by design). Every
+-- useful moment quietly earns points through the same credit calls
+-- that write careers - NOTHING is shown during the shift, so the only
+-- winning strategy is being useful. At shift end the awards ceremony
+-- reveals one title per player (warm fallbacks guarantee everyone
+-- holds something - never a mock), then the MVP with receipt lines
+-- (evidence, never the point math). Values identical on every
+-- difficulty; the point table never leaves the server.
+----------------------------------------------------------------
+Config.Score = {
+	--// Parity target: a busy shift in ANY emergent role should land in
+	--// the same band. One 2-dish party ~ 30 kitchen pts ~ 31 floor pts.
+	PointsPer = {
+		Seats = 4,              -- seating a queued party (score-only stat)
+		Greetings = 4,          -- the timed warm welcome
+		OrdersTaken = 4,        -- finishing the take-order dialogue (score-only)
+		Recommendations = 10,   -- the dialogue skill play
+		DishesServed = 7,       -- per dish carried to its table
+		PaymentsCollected = 5,  -- beating the melt timer
+		PerfectCooks = 15,      -- the full fetch->cook->collect chain
+		GoodCooks = 8,          -- the yellow->green save (score-only)
+		OvercookedCooks = 2,    -- near-zero so bad dishes can't be farmed (score-only)
+		EventChannels = 20,     -- any emergency fixed - rare, worth ~a table,
+		                        -- low enough that nobody drops a pan to race for it
+		DashesCaught = 12,      -- punching a dine-and-dasher (rare, heroic)
+		KitchenCrimes = -20,    -- water on a grease fire
+	},
+
+	--// Title registry in claim-priority order. Keys sum into the
+	--// category; the best untitled player with a count > 0 claims it.
+	Titles = {
+		{ Name = "Top Chef",      Emoji = "🍳", Keys = { "PerfectCooks", "GoodCooks" } },
+		{ Name = "Speedy Server", Emoji = "🏃", Keys = { "DishesServed" } },
+		{ Name = "Floor Captain", Emoji = "🛎️", Keys = { "Seats", "Greetings" } },
+		{ Name = "Money Magnet",  Emoji = "💰", Keys = { "PaymentsCollected" } },
+		{ Name = "Fix-It Hero",   Emoji = "🔧", Keys = { "EventChannels" } },
+		{ Name = "Smooth Talker", Emoji = "😎", Keys = { "OrdersTaken", "Recommendations" } },
+		{ Name = "Door Guard",    Emoji = "🚓", Keys = { "DashesCaught" } },
+	},
+	--// Nobody leaves empty-handed - warm, never mocking
+	FallbackTitles = {
+		{ Name = "Team Spirit", Emoji = "🌟" },
+		{ Name = "Good Vibes",  Emoji = "🎈" },
+		{ Name = "Rising Star", Emoji = "🧢" },
+		{ Name = "Lucky Charm", Emoji = "🍀" },
+		{ Name = "Crew Member", Emoji = "🧡" },
+		{ Name = "The Backbone", Emoji = "💪" },
+	},
+
+	--// MVP receipts: friendly evidence lines (%d = the count)
+	ReceiptText = {
+		PerfectCooks = "%d perfect dishes",
+		GoodCooks = "%d good saves",
+		DishesServed = "%d dishes served",
+		Seats = "%d parties seated",
+		Greetings = "%d warm welcomes",
+		OrdersTaken = "%d orders taken",
+		Recommendations = "%d smooth recommends",
+		PaymentsCollected = "%d payments collected",
+		EventChannels = "%d emergencies fixed",
+		DashesCaught = "%d dashers punched",
+	},
+	MaxReceipts = 3,            -- evidence lines under the crown
+
+	--// Ceremony pacing (client-side theatre, before the report card)
+	CardRevealSeconds = 0.9,    -- gap between title-card pop-ins
+	TitlesHoldSeconds = 2.5,    -- admire the crew before the MVP screen
+	MVPHoldSeconds = 4,         -- crown screen before the report card
+	SoloBanner = "SHIFT HERO",  -- the crown's banner when playing alone
+}
+
+----------------------------------------------------------------
+-- MANAGER BRUNO (the commentator - ManagerService + ManagerClient).
+-- A 2D portrait card bottom-right that pipes in one-liners at story
+-- moments. With every number hidden (score, clock, target, served),
+-- Bruno IS the game's soft warning system: phase turns, closing and
+-- crises get called in VIBES, never digits. PortraitImage = "" shows
+-- the name placeholder until Bruno's PNG arrives. Cutscenes (start /
+-- end / fail) are a later build on the same rig.
+----------------------------------------------------------------
+Config.Manager = {
+	Name = "MANAGER BRUNO",
+	PortraitImage = "",           -- rbxassetid://... when the 2D face arrives
+
+	--// OWNER RULING (Sep 2026): Bruno speaks ONLY at important stages -
+	--// at most this many lines per shift, NOT counting the shift-start
+	--// and closing calls (those are always allowed). Wired triggers:
+	--// phase turns, rep PANIC, emergency STARTS, flood, dash alert.
+	--// The other pools below are a phrase library, currently unwired.
+	MaxLinesPerShift = 6,
+
+	MinSecondsBetweenLines = 6,   -- global cooldown; urgent lines ignore it
+	LineHoldBaseSeconds = 2.5,    -- bubble lingers this long...
+	LineHoldPerChar = 0.045,      -- ...plus this per character of the line
+	TypeSeconds = 0.6,            -- typewriter reveal duration
+	WalkoutGrumbleCooldown = 25,  -- at most one walkout grumble per window
+	RepWorryFraction = 0.5,       -- rep below this = worried lines
+	RepPanicFraction = 0.25,      -- rep below this = panic lines
+	RepRecoverFraction = 0.6,     -- back above this = relief (hysteresis)
+
+	Lines = {
+		ShiftStart = {
+			"Doors are open! Make me proud out there!",
+			"Deep breaths, team. Here they come!",
+			"A brand new shift! Keep 'em smiling!",
+		},
+		PhaseBusy = {
+			"It's filling up... look alive, team!",
+			"Word's getting out about us - stay sharp!",
+			"More hungry faces incoming!",
+		},
+		PhaseRush = {
+			"HERE COMES THE DINNER RUSH!!",
+			"This is it, people! RUSH TIME!",
+			"Hold onto your aprons - it's RUSH hour!",
+		},
+		Closing = {
+			"Last call! Finish those tables and collect!",
+			"Doors are shut! Land every last dish!",
+		},
+		ToiletStart = {
+			"The toilet's erupting! Grab the plunger, QUICK!",
+			"Not the bathroom again... somebody plunge it!",
+		},
+		ToiletFlood = {
+			"IT'S FLOODING! My beautiful floors!!",
+			"The bathroom is a LAKE! Fix it, fix it!",
+		},
+		ToiletDone = {
+			"Phew. We never speak of the bathroom again.",
+			"Toilet's calm. My heart is not.",
+		},
+		FireStart = {
+			"FIRE IN THE KITCHEN! Get the extinguisher!",
+			"THE KITCHEN'S ABLAZE! And NO water, you hear me?!",
+		},
+		FireDone = {
+			"Fire's out... someone check my eyebrows.",
+			"Crisis over. Back to cooking - CAREFULLY!",
+		},
+		OutageStart = {
+			"The power's out! Someone hit the breaker!",
+			"Who forgot the electric bill?! The BREAKER, go!",
+		},
+		OutageDone = {
+			"Lights! Beautiful lights! Back to work!",
+			"Power's back. I can see the mess again...",
+		},
+		RepWorry = {
+			"The customers are grumbling... turn it around!",
+			"I'm seeing frowns out there. FEED them!",
+		},
+		RepPanic = {
+			"We're one bad table from CLOSING DOWN!",
+			"My diner is DYING! Save it, please!",
+		},
+		RepRecovered = {
+			"That's more like it! They love us again!",
+			"Smiles everywhere - keep it going!",
+		},
+		Walkout = {
+			"We just lost a table! Move faster!",
+			"They walked out! My heart breaks...",
+		},
+		DashStart = {
+			"THEY'RE RUNNING WITHOUT PAYING! STOP THEM!",
+			"Dine and dash!! Somebody PUNCH them!",
+		},
+		DashCaught = {
+			"HA! Nobody skips a bill in MY diner!",
+			"Beautiful punch. Beautiful. I'm so proud.",
+		},
+		DashEscaped = {
+			"They got away... my beautiful money...",
+			"Gone! Without paying! I need to sit down.",
+		},
+		CriticArrive = {
+			"A FOOD CRITIC! Act natural! PERFECT dishes only!",
+			"That's a critic! One person, big appetite, bigger opinions!",
+		},
+		CriticHappy = {
+			"THE REVIEW IS IN! Frame it! FRAME IT!",
+			"Stars! Beautiful stars! I could cry!",
+		},
+		CriticOkay = {
+			"Three stars... we live to cook another day.",
+			"An average review. I have complicated feelings.",
+		},
+		CriticAngry = {
+			"A TERRIBLE review!! My grandmother's recipes...",
+			"The review is bad. Do NOT read the review.",
+		},
+	},
+}
+
+----------------------------------------------------------------
+-- ULTIMATES (charge + the four abilities - see ChargeService/ChargeClient)
+-- Charge is SERVER-owned, 0..MaxCharge per player, earned at the same
+-- moments the career counters fire, spent by activation (Q / touch / pad Y).
+-- Only a SUCCESSFUL ability consumes the charge; a denial keeps it.
+----------------------------------------------------------------
+Config.Ultimates = {
+	MaxCharge = 100,
+
+	--// Charge per counted moment, keyed by PlayerStats registry keys.
+	--// A missing key gives 0 (Kitchen Crimes build character, not charge).
+	--// Multiplied by the count (CustomersServed arrives as party size).
+	ChargePer = {
+		PerfectCooks = 12,
+		DishesServed = 8,
+		CustomersServed = 4,
+		PaymentsCollected = 10,
+		Greetings = 5,
+		Recommendations = 12,
+		EventChannels = 25,
+	},
+
+	--// Ability numbers
+	SweetTalkRefillFraction = 0.5,   -- half the table's patience bar back
+
+	--// DOUBLE TIME (Waiter, Sep 2026 - replaced THIRD HAND's carry slot):
+	--// a burst of serious hustle. Walk AND sprint speeds scale; the feel
+	--// is applied by SprintClient (the documented client-side movement
+	--// exception), the truth (attribute + timer) stays server-owned.
+	SpeedBoostMult = 1.35,
+	SpeedBoostSeconds = 12,          -- owner spec: 10-15s
+
+	--// FLASH FRY cooks EVERY carried raw at once. When an ingredient has
+	--// dish VARIANTS (future: RawSteak -> grilled OR pan-fried), the
+	--// ultimate cooks what an open ticket wants, neediest table first;
+	--// with nobody asking, the first method listed here wins.
+	FlashFryMethodOrder = { "Grill", "Fry", "Ramen" },
+
+	--// Bar feel (client)
+	BarTweenSeconds = 0.2,
+	ReadyPulseSeconds = 0.8,
+
+	--// STUDIO-ONLY (banner testing, Sep 2026): every playtest equips
+	--// this class and keeps the ultimate charge FULL - no command bar.
+	--// Ignored on live servers. Set StudioFullCharge = false (and the
+	--// key "") when ultimate testing ends, or charge earning can never
+	--// be playtested in Studio.
+	StudioFullCharge = true,
+	StudioClassKey = "Charmer",
+
+	--// THE CAST BANNER (Sep 2026). Cosmetic only - nothing here touches
+	--// charge, abilities or THE LAW. Caster sees their own avatar posed
+	--// for their class sliding in from the left; teammates get a toast.
+	--// OWNER RULING SCOPE: static UI-viewport poses are allowed; live
+	--// in-world character animation remains hired-out animator work.
+	CastBanner = {
+		Enabled = true,
+
+		SlideInSeconds = 0.35,      -- Back/Out: a small overshoot snap
+		HoldSeconds = 1.4,          -- also the length of the camera push
+		SlideOutSeconds = 0.3,
+		WidthScale = 0.34,          -- fraction of screen width
+		HeightScale = 0.36,         -- fraction of screen height
+
+		CameraDistance = 8.5,       -- studs from the focus point at rest
+		CameraPushStuds = 0.8,      -- starts this much further back
+		CameraOrbitDegrees = 25,    -- three-quarter view
+		FieldOfView = 32,           -- narrow = portrait, wide = fish-eye
+		FocusBelowHeadStuds = 1.3,  -- lower = more chest/arms in frame
+		                            -- (raise CameraDistance too for R6's big heads)
+
+		ToastSeconds = 2.5,         -- teammates' "X used Y!" line
+
+		--// The Chef's banner clone wears a code-built toque (parts, no
+		--// assets); existing HAT accessories come off first (hair stays).
+		ChefHatOnBanner = true,
+
+		--// Owner-imported art behind the avatar, per class ("" = the
+		--// plain cream panel). Cropped to fill; keep image centers calm
+		--// so the avatar reads over them.
+		BackgroundImages = {
+			Chef = "rbxassetid://126303036451477", -- flame burst (Sep 2026)
+			Waiter = "rbxassetid://126138757523220", -- plate rush (Sep 2026)
+			Fixer = "rbxassetid://131314378577972", -- tool lightning (Sep 2026)
+			Charmer = "rbxassetid://124463219290182", -- hearts & rose (Sep 2026)
+		},
+
+		--// Poses are per-class: a class with NO Poses entry shows its
+		--// natural stance + camera push (the Chef does - owner call,
+		--// Sep 2026, after posing read badly on his bundle rig).
+		PosesEnabled = true,
+
+		--// Degrees {X, Y, Z} added to each joint's rest rotation.
+		--// Chest-up only, so legs are never posed; missing joints are
+		--// skipped. STARTING POINTS - signs may need flipping once seen.
+		Poses = {
+			--// Chef: NO entry on purpose - natural stance + toque + zoom
+			--// (per-class second poses live in Motion below)
+			Waiter = {   -- mid-SPRINT, stride A: lean in, arms pumping
+				Waist = { 15, -10, 0 },
+				Neck = { -10, 10, 0 },
+				RightShoulder = { -75, 0, 10 },
+				RightElbow = { 60, 0, 0 },
+				LeftShoulder = { 45, 0, -10 },
+				LeftElbow = { 25, 0, 0 },
+			},
+			Fixer = {    -- wrench over the shoulder
+				Waist = { 0, 20, 0 },
+				Neck = { 0, -15, 0 },
+				RightShoulder = { -60, 0, 60 },
+				RightElbow = { 90, 0, 0 },
+			},
+			Charmer = {  -- finger-guns, head tilt
+				Waist = { 0, -10, 5 },
+				Neck = { 0, 10, -12 },
+				RightShoulder = { 0, 0, 80 },
+				LeftShoulder = { 0, 0, -30 },
+			},
+		},
+
+		--// R6 OVERRIDES: R6 joints hinge on different axes, so translated
+		--// R15 numbers can read as nothing. A class listed here uses
+		--// these tables DIRECTLY on R6 rigs (keys are R6 joint names).
+		--// R6 hand-tuned overrides, filled per class only when the
+		--// auto-translated numbers read wrong on a REAL R6 rig
+		PosesR6 = {},
+		MotionR6 = {},
+
+		--// BANNER MOTION (owner request, Sep 2026): a class listed here
+		--// SWINGS between its Pose (above) and this second pose for the
+		--// banner's hold - joints lerped and the rig re-solved per frame,
+		--// entirely inside the viewport. NOT animation assets, NOT the
+		--// live character. Classes without an entry stay a static pose.
+		Motion = {
+			Waiter = {   -- stride B: the OPPOSITE arm swing - swinging
+				Waist = { 15, 10, 0 },   -- between A and B is a run cycle
+				Neck = { -10, -10, 0 },
+				RightShoulder = { 45, 0, 10 },
+				RightElbow = { 25, 0, 0 },
+				LeftShoulder = { -75, 0, -10 },
+				LeftElbow = { 60, 0, 0 },
+			},
+			Fixer = {    -- the wrench CRANK: arm pumps down from the
+				Waist = { 0, 10, 0 },     -- shoulder carry and back up
+				Neck = { 0, -8, 0 },
+				RightShoulder = { -25, 0, 35 },
+				RightElbow = { 45, 0, 0 },
+			},
+			Charmer = {  -- the SWAY: finger-guns swap sides, head tilts
+				Waist = { 0, 10, -5 },    -- the other way - maximum smug
+				Neck = { 0, -10, 12 },
+				RightShoulder = { 0, 0, 30 },
+				LeftShoulder = { 0, 0, -80 },
+			},
+		},
+		MotionSwingsPerHold = 3,    -- full there-and-back swings per hold
+	},
 }
 
 ----------------------------------------------------------------
@@ -705,6 +1823,495 @@ function Config.PhaseAt(elapsedSeconds)
 	end
 	return "Crescendo"
 end
+
+----------------------------------------------------------------
+-- THE PASS (plate hand-off between kitchen and floor)
+----------------------------------------------------------------
+Config.Pass = {
+	--// Plating is mandatory: a bare dish cannot be served. The pass is the
+	--// only route from kitchen to floor.
+	RequirePlateToServe = true,
+
+	--// Taps, matching the cook/order prompts. Nobody holds E on a plate.
+	PlaceHoldSeconds = 0,
+	TakeHoldSeconds = 0,
+
+	--// Slots sit side by side on the counter, so the prompt range is tight
+	--// for the same reason the cook stations are - otherwise E hits whichever
+	--// neighbour the engine felt like.
+	PromptRangeStuds = 5,
+
+	--// The food sits this far above the top face of the plate.
+	FoodLiftStuds = 0.12,
+	FoodSize = Vector3.new(1.1, 0.34, 1.1),
+
+	--// Extra nudge for the portion if it sinks into or floats over the plate.
+	--// Local to the plate: X/Z slide it across the surface, Y raises it.
+	FoodOffset = Vector3.new(0, 0, 0),
+
+	--// HOW THE PLATE SITS IN A PLAYER'S HAND.
+	--// Roblox welds a Tool's Handle to the hand through Tool.Grip. Left at
+	--// identity a flat object stands on its edge, so a plate needs tipping.
+	--// Degrees, applied X then Y then Z.
+	--//
+	--// The Tool builds its own invisible, axis-aligned Handle, so 0,0,0 now
+	--// means "held exactly as it sits on the counter" - the union's own axes
+	--// no longer leak in. Only change this to tilt the plate on purpose.
+	GripAngles = Vector3.new(0, 0, 0),
+
+	--// Slides the plate within the hand once the rotation is right.
+	GripOffset = Vector3.new(0, 0, 0),
+
+	--// How far BELOW the plate the invisible handle sits, so the hand reads as
+	--// a palm under a plate rather than a fist through one. Raise it if the
+	--// plate still clips the hand; 0 puts the hand at the plate's underside.
+	HandleDropStuds = 0.15,
+
+	--// Where a served plate lands: 0 = table centre, 1 = the customer's seat
+	--// position. Just past halfway puts it in front of them, on the table.
+	TablePlateInset = 0.55,
+	TablePlateLiftStuds = 0.05,
+
+	--// Keeps a served plate off the very edge of the table. Raise it if plates
+	--// look like they are about to slide off.
+	TablePlateEdgeMargin = 0.9,
+
+	--// THE PLATE ECONOMY. However many PassSlot models exist is how many
+	--// dishes can be in flight at once. A plate is only free again once its
+	--// table's payment has been collected (owner's ruling), so an uncollected
+	--// payment holds a plate hostage - see the reclaim paths in PassService.
+	ReclaimOnPlayerLeave = true,   -- carrier disconnects or dies -> plate home
+	ReclaimOnShiftEnd = true,      -- never start a shift short of plates
+}
+
+----------------------------------------------------------------
+-- MAPS
+--
+-- One place, many restaurants. Id is the MODEL NAME inside
+-- ServerStorage.Maps - MatchServer clones it by that name, so a typo here is
+-- a shift with no restaurant.
+--
+-- The lobby renders this list and the lobby SERVER validates against it, so a
+-- modified client cannot ask for a map that does not exist.
+--
+-- Adding a map later: build the model, drop it in ServerStorage.Maps, add a
+-- row here. No code changes anywhere.
+----------------------------------------------------------------
+Config.Maps = {
+	{
+		Id = "Diner",                 -- model name in ServerStorage.Maps
+		Display = "Route 67 Diner",   -- used in logs and as the art placeholder
+		--// The bar IS this image. Empty shows a lettered placeholder instead,
+		--// so a map without art yet is still a correct-looking card.
+		ImageId = "rbxassetid://126553494895194",
+		Available = true,
+		--// THE MENU: what this restaurant's customers order (dish -> roll
+		--// weight), and through it which ingredients its kitchen stocks -
+		--// the recommend picker and the fridge/shelf menus follow this
+		--// list too. A map with no Menu falls back to Config.OrderWeights.
+		Menu = { Burger = 5, Fries = 4, GrilledSteak = 3 },
+	},
+	{
+		Id = "Sushi",
+		Display = "Yamasaki Sushi",
+		ImageId = "",
+		--// Not built yet: shows as COMING SOON and cannot be picked. Flip to
+		--// true the day the model lands in ServerStorage.Maps.
+		Available = false,
+		--// Full Japanese - no diner carry-overs (owner ruling, Sep 2026).
+		Menu = { Karaage = 5, TempuraShrimp = 4, Ramen = 3 },
+		--// Seated guests DISSOLVE at the table instead of walking back
+		--// out (owner ruling: upstairs rooms, nobody hikes down). Also
+		--// disables dine-and-dash here - you cannot bolt for the door on
+		--// a map where leaving is a fade. Queue walkouts still walk.
+		LeaveByFade = true,
+	},
+}
+
+--// The map a party gets when nothing valid was chosen. Must be an Available
+--// Id above, or the first shift of a fresh install has nowhere to happen.
+--// THE MAP BAR in the picker: WIDTH ON WIDTH DIVIDED BY HEIGHT of your art.
+--//
+--// The bar takes the panel's full width and derives its HEIGHT from this, so
+--// the image fills it exactly with no border showing and nothing cropped -
+--// and it stays exact if the panel is ever resized.
+--//
+--// Current art is 1024 x 205, so 1024/205. Keep new map art to the same
+--// shape and nothing here needs touching.
+Config.MapCardAspect = 1024 / 205
+
+--// ===== DEV SWITCH - PUT THIS BACK TO true BEFORE PUBLISHING =====
+--// false stops the stored map being cloned in at match start, so a map being
+--// built directly in Workspace is not buried under a second copy of another
+--// one. Whatever is already in Workspace is what gets played.
+--// Every system still finds its objects by tag, so a half-built map works as
+--// far as its tags go and warns about the rest.
+Config.LoadMapOnStart = false
+
+Config.DefaultMapId = "Diner"
+
+--// STUDIO-ONLY map override: while building a map, point every Studio
+--// playtest at it - customers order ITS menu, the kitchen stocks ITS
+--// ingredients - without the lobby handoff or a per-test command line.
+--// "" falls back to DefaultMapId. Live servers ignore this completely:
+--// the lobby's teleport data always wins there.
+Config.StudioMapId = "Diner" --// tutorial testing at Route 67 (Sep 2026)
+
+--// STUDIO-ONLY spawn burst: this many parties march in the moment the
+--// shift goes RUNNING, so route/seating tests need no command bar.
+--// The normal spawn trickle continues after the burst. 0 = off (normal
+--// opening). Ignored on live servers - set 0 anyway when map testing ends.
+Config.StudioSpawnBurst = 0 --// route testing done (Sep 2026)
+
+--// Whether a given id is a real, playable map. The lobby server gates every
+--// party on this - never trust a MapId that arrived from a client.
+function Config.IsPlayableMap(mapId)
+	if type(mapId) ~= "string" then
+		return false
+	end
+	for _, map in ipairs(Config.Maps) do
+		if map.Id == mapId and map.Available then
+			return true
+		end
+	end
+	return false
+end
+
+function Config.MapById(mapId)
+	for _, map in ipairs(Config.Maps) do
+		if map.Id == mapId then
+			return map
+		end
+	end
+	return nil
+end
+
+--// The menu the active map's customers order from. Callers pass
+--// workspace:GetAttribute("MatchMapId") (published by MatchServer);
+--// unknown or unset ids get the global fallback, so a Studio session
+--// with no teleport data still serves the diner menu.
+function Config.MenuForMap(mapId)
+	local map = Config.MapById(mapId)
+	return (map and map.Menu) or Config.OrderWeights
+end
+
+----------------------------------------------------------------
+-- SOUND EFFECTS
+--
+-- Server-played, so everyone hears the same thing at the same moment.
+--
+-- HOW 3D SOUND WORKS HERE: a Sound parented to a BasePart is positional
+-- automatically. MinStuds is the radius of full volume; past MaxStuds it is
+-- silent, tapering between the two. So a fryer with MinStuds 8 / MaxStuds 35
+-- is loud at the station, faint across the dining room, and gone outside.
+-- Global = true skips all that and plays flat for everyone, wherever they are.
+--
+-- MAP-AGNOSTIC BY DESIGN: nothing here names an instance. Every sound is
+-- attached to whatever the calling system already found by TAG, so a new map
+-- only needs its tags placed - no code changes, no paths to update.
+--
+-- Leave an Id empty and that sound is simply silent. Nothing breaks, and the
+-- log says once which one is missing.
+----------------------------------------------------------------
+----------------------------------------------------------------
+-- THE HELPER (HelperService): an NPC coworker who runs the FLOOR when
+-- the shift starts short-handed - seats parties, takes plain orders,
+-- ferries plated dishes from the pass, collects payments. Deliberately
+-- WEAKER than a player: ambles, one task at a time, never cooks, never
+-- fixes events, never greets/recommends/punches, and credits nobody
+-- (no careers, charge or hidden score). Player-count mercy, not
+-- difficulty mercy - runs on every difficulty.
+----------------------------------------------------------------
+Config.Helper = {
+	MaxPlayersForHelper = 2,      -- helper spawns when the shift starts
+	                              -- with this many players or fewer
+	WalkSpeed = 13,               -- an amble; players can always outrun it
+	ThinkSeconds = 0.6,           -- pause between task decisions
+	Name = "HELPER",              -- the overhead tag
+
+	--// PACING (owner + Claude ruling): the polite pause exists only when
+	--// everything is calm - past the Calm phase, or with a queue, or a
+	--// draining door bar, he hustles.
+	SeatAtDoorFraction = 0.85,    -- in Calm, seat once the door bar dips here
+	SeatQueueRush = 2,            -- ...or the moment this many wait in line
+
+	--// CARRYING: like a player, two hands. He gathers a table's whole
+	--// order before walking when patience allows...
+	MaxCarry = 2,
+	DeliverAnywayFraction = 0.4,  -- ...but below this patience he stops
+	                              -- waiting for the kitchen and delivers
+	                              -- whatever he holds
+
+	--// The suit: paste any shirt/pants TEMPLATE ids the group may use
+	--// (clothing is image data - script-free, safe). Empty = a smart
+	--// charcoal-suit body-colour fallback.
+	ShirtTemplate = "",
+	PantsTemplate = "",
+}
+
+----------------------------------------------------------------
+-- EVENT ARROW (EventArrowClient): an edge-of-screen pointer toward
+-- whatever the current crisis needs - the TOOL mount first when the
+-- fix needs a tool you aren't holding, then the emergency itself, and
+-- any dine-and-dasher mid-bolt. Hidden while the target is on screen
+-- (its own billboards take over there).
+----------------------------------------------------------------
+Config.EventArrow = {
+	EdgeMarginPx = 56,            -- how far the arrow floats from the edge
+	RefreshSeconds = 0.2,         -- how often targets are re-picked
+}
+
+----------------------------------------------------------------
+-- GESTURES (Roblox's own catalog emote animations - PLAYED on customer
+-- rigs at story moments, never authored: the hired-animator ruling
+-- covers custom poses, not prefab Roblox assets). Classic R15 emote
+-- ids, Roblox-owned so they play in any experience. Empty = off.
+-- If one stays silent in a test, the id needs re-checking in Studio.
+----------------------------------------------------------------
+Config.Gestures = {
+	Wave = "rbxassetid://507770239",   -- greeted at the door: the party waves back
+	Point = "rbxassetid://507770453",  -- ordering: the speaker points it out
+	Cheer = "rbxassetid://507770677",  -- a dish lands: the table celebrates
+	Sit = "rbxassetid://2506281703",   -- held (looped) while parked on a chair
+	Walk = "rbxassetid://507777826",   -- the catalog R15 walk cycle - looped by
+	                                   -- customers AND the Helper while moving
+}
+
+----------------------------------------------------------------
+-- PLACES (the two-place experience, both under Magistrate Studios).
+-- Shared Config on purpose: either place can address the other.
+----------------------------------------------------------------
+Config.Places = {
+	LobbyPlaceId = 132877152120112,
+	GamePlaceId = 97952115394249,
+}
+
+Config.Sfx = {
+	Enabled = true,
+
+	--// Scales every sound below, for balancing against the music in one place
+	MasterVolume = 1,
+
+	--// Used by any sound that does not override them
+	DefaultMinStuds = 10,
+	DefaultMaxStuds = 60,
+
+	--// Per-sound. Volume is 0..1 before MasterVolume.
+	--//   Loop   = true   plays until the system stops it
+	--//   Global = true   heard everywhere at flat volume, ignores distance
+	Sounds = {
+
+		--// KITCHEN -------------------------------------------------------
+		--// Tight radius on purpose: the kitchen should sound busy from the
+		--// pass and only murmur from the dining room.
+		--// Owner ruling (Sep 2026): kitchen-only - audible near the
+		--// stations, gone by the dining room
+		CookFry = {
+			Id = "75511010485145", Volume = 0.5, Loop = true,
+			MinStuds = 8, MaxStuds = 25,
+		},
+		--// The ramen cooker's bubbling broth. Id pending the sound
+		--// person - "" is silent, same as every unset sound here.
+		CookRamen = {
+			Id = "", Volume = 0.5, Loop = true,
+			MinStuds = 8, MaxStuds = 25,
+		},
+		CookGrill = {
+			Id = "77924122314675", Volume = 0.5, Loop = true,
+			MinStuds = 8, MaxStuds = 25,
+		},
+
+		--// EMERGENCIES ---------------------------------------------------
+		--// Alerts carry across the whole restaurant - the point is that
+		--// nobody can miss them - so they are global.
+		ToiletAlert = { Id = "", Volume = 0.7, Global = true },
+		FireAlert   = { Id = "133849873643710", Volume = 0.8, Global = true },
+		PowerAlert  = { Id = "", Volume = 1, Global = true }, -- owner: louder.
+		                              -- NOTE: Id still empty = silent until set!
+
+		--// The FIXES are positional: you hear them where the work is.
+		ToiletFix = {
+			Id = "", Volume = 0.6, Loop = true,
+			MinStuds = 6, MaxStuds = 30,
+		},
+		BreakerFix = {
+			--// UNWIRED since the owner ruling (Sep 2026): the wire fix
+			--// sounds per CONNECTION (WireConnect below), not per session
+			Id = "87055568032543", Volume = 0.6, Loop = true,
+			MinStuds = 6, MaxStuds = 30,
+		},
+		--// Client-local one-shot: a little zap each time a wire seats
+		--// (played by WireFixClient directly, not the server module)
+		WireConnect = { Id = "87055568032543", Volume = 0.6 },
+		FireExtinguish = {
+			Id = "84243999556475", Volume = 0.7, Loop = true,
+			MinStuds = 8, MaxStuds = 40,
+		},
+
+		--// Relief beat when the lights come back. Global - everyone was in
+		--// the dark together.
+		PowerRestored = { Id = "", Volume = 0.7, Global = true },
+
+		--// CUSTOMERS -----------------------------------------------------
+		--// At the customer, so you can tell WHICH table just gave up.
+		CustomerAngry = {
+			Id = "119046821634222", Volume = 0.7,
+			MinStuds = 10, MaxStuds = 55,
+		},
+
+		--// SUPPLIER ------------------------------------------------------
+		--// The order confirmation plays at the board you just used; the
+		--// arrival plays at the truck so it pulls your attention outside.
+		SupplyOrdered = {
+			Id = "", Volume = 0.6,
+			MinStuds = 8, MaxStuds = 35,
+		},
+		TruckArrived = {
+			Id = "110342333875026", Volume = 0.8,
+			MinStuds = 15, MaxStuds = 90,
+		},
+
+		--// SHIFT ---------------------------------------------------------
+		--// Everyone hears these together, wherever they happen to be.
+		ShiftStart = { Id = "", Volume = 0.8, Global = true },
+		ShiftEnd   = { Id = "", Volume = 0.8, Global = true },
+	},
+}
+
+----------------------------------------------------------------
+-- MUSIC
+--
+-- Client-side by design: every player owns their own music so they can mute
+-- it, and the server spends nothing on it. Nothing here affects gameplay.
+----------------------------------------------------------------
+Config.Music = {
+	Enabled = true,
+
+	--// 0..1. Background music should sit UNDER the prompts and event stings -
+	--// if players turn it off to hear the game, it is too loud.
+	Volume = 0.95,
+
+	--// Seconds to fade between tracks. Long enough not to jolt, short enough
+	--// that a phase change still reads as a change.
+	CrossfadeSeconds = 2.5,
+
+	--// Tapping this mutes/unmutes for that player only.
+	ToggleKey = Enum.KeyCode.M,
+
+	--// Start each playlist on a random track, so the same shift twice does
+	--// not open on the same bar.
+	Shuffle = true,
+
+	--// A track that never loads would end the playlist silently, so give up
+	--// on one and move to the next after this long.
+	LoadTimeoutSeconds = 8,
+
+	--// PLAYLISTS. Each entry is a full asset string:
+	--//     "rbxassetid://1234567890"
+	--//
+	--// More than one id in a list plays them in rotation.
+	--//
+	--// LOBBY ONLY for now. The restaurant gets its own soundtrack later - when
+	--// it does, add its playlists here and a MusicClient in src/game/client
+	--// that calls Music.Play with the right name. The player itself needs no
+	--// changes; it takes any playlist name in this table.
+	Playlists = {
+		Lobby = {
+			-- "rbxassetid://0",
+			"rbxassetid://88152996529508",
+		},
+	},
+}
+
+----------------------------------------------------------------
+-- PERSISTENCE (the savefile)
+----------------------------------------------------------------
+Config.Profile = {
+	--// DataStore name. NEVER rename this once players have saves - a new name
+	--// is a new, empty store and every existing profile is orphaned with no
+	--// way back. The _v1 suffix is the escape hatch: if the schema ever breaks
+	--// unrecoverably, bump to _v2 rather than trying to migrate broken data.
+	StoreName = "DinnerRush_Profiles_v1",
+
+	--// Profile key is KeyPrefix .. UserId
+	KeyPrefix = "Player_",
+
+	--// Studio writes to the LIVE store by default - that is what makes the
+	--// "earn -> leave -> rejoin" test actually prove anything. Flip to true to
+	--// run against a throwaway in-memory store where nothing persists.
+	UseMockInStudio = false,
+
+	--// A player with no profile would earn progress into nothing, so we kick
+	--// instead of letting them play. This is how long we let the load run.
+	LoadTimeoutSeconds = 30,
+	KickMessage = "Couldn't load your save. Please rejoin - your progress is safe.",
+
+	--// Mirrors Wallet into leaderstats so it is visible without any UI. Coins
+	--// stays what it already is: this shift's team money, session-only.
+	ShowWalletInLeaderstats = true,
+
+	--// THE SAVEFILE. Every key here is created for new players and back-filled
+	--// into existing ones on load, so adding a key later is always safe.
+	--//
+	--// Never store in here: Instances, Vector3/Color3/CFrame, functions, or
+	--// arrays with gaps. None of those survive a DataStore round-trip.
+	Template = {
+		SchemaVersion = 1,
+
+		Wallet = 0,                   -- persistent personal money (spec 6)
+
+		--// Sets, not arrays: OwnedClasses.Chef = true. Arrays with gaps are the
+		--// documented DataStore hazard, and set lookup is what every call site
+		--// actually wants. Deviates from spec 4 deliberately.
+		OwnedClasses = {},            -- ["Chef"] = true
+		ClassLevels = {},             -- ["Chef"] = 1..5
+		EquippedClass = "",           -- "" = classless, which is legal
+
+		--// Cumulative, lifetime. Single-shift challenge counts live in server
+		--// memory (spec 4) - only their completions land here.
+		TaskProgress = {
+			PerfectCooks = 0,
+			DishesServed = 0,
+			EventChannels = 0,
+			PaymentsCollected = 0,
+			Greetings = 0,
+			Recommendations = 0,
+		},
+
+		TutorialDone = false,         -- false = next shift runs guided (spec 7)
+
+		--// Set once if DevSeedProgress ever ran on this profile, so a dev seed
+		--// cannot stack every time they rejoin.
+		DevSeeded = false,
+
+		--// Lifetime stats behind the passport screen. Keys and defaults come
+		--// from Config.PlayerStats.Registry and are merged in on load, so a
+		--// stat added to the registry later appears on old profiles too.
+		Stats = {},
+
+		--// Best shifts, sorted and trimmed to PlayerStats.BestShiftsCap at
+		--// insert - the saved array has a hard ceiling forever.
+		BestShifts = {},
+
+		--// Absorbed from the lobby (spec 3) - one profile per player, not one
+		--// per feature. Neither system is built yet; the keys are here so the
+		--// schema does not need a migration when they are.
+		RedeemedCodes = {},           -- ["CODE"] = true
+		DailyGift = { LastClaim = 0, Streak = 0 },
+	},
+
+	--// The tutorial that awards the Trainee is a later phase. Until it exists
+	--// every profile is handed the Trainee on first load, so the CLASSES
+	--// screen is never empty. Phase 3 sets this false and the tutorial grants it.
+	GrantTraineeOnJoin = true,
+
+	--// DEV ONLY. Fills TaskProgress with fake numbers so the class upgrade
+	--// buttons can be tested without playing shifts first.
+	--// WARNING: this writes into the REAL save. Anything it grants is
+	--// permanent for that player. Off unless you are deliberately testing.
+	DevSeedProgress = false,
+	DevSeedWallet = 0,            -- coins granted on first load when seeding
+}
 
 ----------------------------------------------------------------
 -- Config is read-only: a system that writes to it would silently
