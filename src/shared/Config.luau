@@ -220,7 +220,7 @@ Config.CookMinigamePick = {
 	--// STUDIO KNOB (live-ignored, like StudioSpawnBurst): pin EVERY
 	--// roll to one game while testing it. 0 = off (normal roll),
 	--// 1 = arrow, 2 = smash, 3 = card match. REVERT TO 0 when done.
-	StudioForceGame = 3,
+	StudioForceGame = 0, --// card-game testing done (Sep 2026)
 }
 
 ----------------------------------------------------------------
@@ -339,9 +339,20 @@ Config.CardMatch = {
 Config.Tutorial = {
 	--// STUDIO KNOB (live-ignored): boot Studio playtests straight
 	--// into the tutorial for testing. REVERT to false when done.
-	StudioTutorial = false, --// off - tutorial polish continues (Sep 2026)
+	StudioTutorial = true, --// ON for tutorial polish (Sep 2026) - revert when done
 
-	WelcomeSeconds = 4,           -- Bruno's hello before the first task
+	--// STUDIO KNOB (live-ignored): sprint silently past the main
+	--// lesson straight to the finale (fire drill + critic) - no boxes,
+	--// no scripted tables, waits auto-pass. REVERT to false when done.
+	StudioSkipToFinale = false, --// finale verified (Sep 2026)
+
+	--// THE EXIT: when the tutorial ends, everyone teleports back to
+	--// the lobby (owner-provided PlaceId, Sep 2026). Studio always
+	--// stays put (TeleportAsync cannot run there).
+	LobbyPlaceId = 132877152120112,
+	TeleportDelaySeconds = 3,     -- goodbye breath before the send
+
+	TypeCharsPerSecond = 28,      -- Bruno's typewriter pace on the card
 	WrapSeconds = 6,              -- the send-off lingers this long
 	StepSettleSeconds = 1.0,      -- breath between a step done and the next
 
@@ -349,54 +360,162 @@ Config.Tutorial = {
 	--// (1 = arrow, 2 = smash, 3 = card match)
 	CookGameOrder = { 1, 2, 3 },
 
+	--// TWO TABLES (owner spec, Sep 2026): party sizes in arrival
+	--// order - a pair first (they order the first two dishes), then a
+	--// solo customer for the last dish. Sizes must sum to
+	--// #CookGameOrder, one dish per person.
+	Parties = { 2, 1 },
+
+	--// THE GUIDE LINE (owner spec: "an actual line arrow") - a beam
+	--// from the player to the current target plus a bobbing marker
+	--// over it; the edge arrow still covers off-screen targets
+	Guide = {
+		BeamWidthStuds = 0.5,     -- at the player's end (tapers to 40%)
+		BeamTransparency = 0.3,
+		MarkerHoverStuds = 4,     -- ⬇ marker height over the target
+		RefreshSeconds = 0.4,     -- how often the nearest target re-picks
+	},
+
 	--// Bruno's script + the objective banner per step. Runtime fills
 	--// {DISH} {INGREDIENT} {SOURCE} {METHOD} from the scripted ticket.
+	--// OWNER RULINGS (Sep 2026): basic punctuation ONLY in Bruno's
+	--// lines and the objectives - commas, periods, ! and ?, nothing
+	--// else, ever. And Bruno WAITS: each Bruno entry is a list of
+	--// short dialogue BOXES the player clicks through at their own
+	--// pace (tap to finish the typing, tap again for the next box);
+	--// the objective and arrow only appear after the last box.
 	Text = {
 		Welcome = {
-			Bruno = "Welcome to the crew, rookie! I'm Bruno, the manager. Follow my lead - and follow the arrow!",
+			Bruno = {
+				"Welcome to the crew, rookie! I'm Bruno, your manager.",
+				"See that big arrow? It points where you need to go.",
+				"Follow it and do what I say. Time to serve your first table!",
+			},
 			Objective = "Listen to Bruno!",
 		},
-		Seat = {
-			Bruno = "Customers at the door! Walk up and press E to seat them.",
-			Objective = "Seat the customers - press E on them!",
-		},
 		Greet = {
-			Bruno = "Quick, say hello! A friendly hi keeps a table patient.",
-			Objective = "Greet the table - press E on a customer!",
+			Bruno = { "Customers at the door! Walk over and say hello. A friendly hi keeps them happy to wait!" },
+			Objective = "Greet the customers!",
+		},
+		Seat = {
+			Bruno = { "Now give them a table! Seat them." },
+			Objective = "Seat the customers!",
+		},
+		Patience = {
+			Bruno = {
+				"See the bars over their heads? That is their patience.",
+				"When a bar runs out, they storm off and your reputation takes the hit!",
+				"No stress today though. Patience is frozen while you learn.",
+			},
+			Objective = "",
 		},
 		Order = {
-			Bruno = "Now take their order - E again. Remember what they want!",
+			Bruno = { "Time to take their order. Remember what they want!" },
 			Objective = "Take the order!",
 		},
+		Cooking = {
+			Bruno = {
+				"Now for the fun part. Cooking!",
+				"Every cook plays one of three little games. The arrow, Colour Smash, or Memory Match.",
+				"Which one you get is a surprise each time. Today I will show you all three!",
+			},
+			Objective = "",
+		},
 		Fetch = {
-			Bruno = "Food time! Grab {INGREDIENT} from the {SOURCE}.",
+			Bruno = { "To the kitchen! Grab {INGREDIENT} from the {SOURCE}." },
 			Objective = "Get {INGREDIENT} from the {SOURCE}!",
 		},
+		--// Every game gets its FULL rules up front (owner spec): how to
+		--// play, what earns perfect, decent and garbage, and every way
+		--// to lose points or waste time. Number placeholders fill from
+		--// the real minigame Config at runtime, so a retune never makes
+		--// Bruno a liar.
 		Cook = {
 			{
-				Bruno = "Load the {METHOD} station, then press E when it's ready - and stop the arrow in the GREEN!",
-				Objective = "Cook {DISH} - stop the arrow in the green!",
+				Bruno = {
+					"Load the {METHOD} station and let the bar fill up. When it reads READY, the arrow game begins!",
+					"The arrow slides side to side. Tap to stop it!",
+					"Stop it in the green on your first try for a PERFECT cook. Yellow gives you one more swing, and green on that one is a DECENT cook.",
+					"Yellow twice makes a sloppy cook. Red just wastes a swing. And the food keeps cooking the whole time you aim, so too slow means burnt garbage!",
+				},
+				Objective = "Cook {DISH}, stop the arrow in the green!",
 			},
 			{
-				Bruno = "This one plays COLOUR SMASH - tap when a colour crosses the pointer!",
-				Objective = "Cook {DISH} - smash those colours!",
+				Bruno = {
+					"Next dish! This station plays Colour Smash.",
+					"Three colours race around a ring. Tap when one slides under the pointer to score its points. Green is 3, blue is 2, yellow is 1!",
+					"Watch out! A miss COSTS {SMASHMISS} points and shuffles the whole board.",
+					"Reach {SMASHPERFECT} points for a PERFECT cook, it even ends the game early! {SMASHGOOD} or more is a DECENT cook. Any less is garbage that goes straight in the bin!",
+				},
+				Objective = "Cook {DISH}, smash those colours!",
 			},
 			{
-				Bruno = "Last trick: MEMORY MATCH! Peek hard, then find the pairs!",
-				Objective = "Cook {DISH} - match the pairs!",
+				Bruno = {
+					"Last one! This station plays Memory Match.",
+					"The cards peek face up for a moment. Remember them! Then flip two at a time to find matching pairs before the clock runs out.",
+					"A wrong pair freezes your hands for a moment, so wild guessing just wastes precious time.",
+					"Match all {CARDPAIRS} pairs for a PERFECT cook, it ends the game right away! {CARDGOOD} pairs is a DECENT cook, {CARDOK} pairs is a sloppy one, and less is garbage for the bin!",
+				},
+				Objective = "Cook {DISH}, match the pairs!",
 			},
 		},
 		Serve = {
-			Bruno = "Beautiful! Run it to the table - press E on the customer.",
-			Objective = "Serve {DISH} to the table!",
+			Bruno = {
+				"Smells amazing! But no bare hands service in my restaurant.",
+				"Take the dish to the pass counter and set it on a plate first.",
+				"Then carry the plate to the table and hand it over!",
+			},
+			Objective = "Plate {DISH} at the pass, then serve it!",
+		},
+		ServeAgain = { --// dishes after the first: the plate rule, short
+			Bruno = { "Plate it at the pass, then run it to the table!" },
+			Objective = "Plate {DISH} at the pass, then serve it!",
+		},
+		Seat2 = {
+			Bruno = {
+				"A new customer just walked in!",
+				"Real shifts juggle lots of tables at once. Seat them too!",
+			},
+			Objective = "Seat the new customer!",
+		},
+		Order2 = {
+			Bruno = { "Take their order too. Every table wants something!" },
+			Objective = "Take the order!",
 		},
 		Collect = {
-			Bruno = "They loved it! Hold G at the table to collect the money.",
-			Objective = "Collect the payment - hold G at the table!",
+			Bruno = {
+				"They loved it! Scoop up the money waiting at each table.",
+				"Collecting also sends your plates back to the pass, ready for the next dish!",
+			},
+			Objective = "Collect the payments at the tables!",
+		},
+		--// THE FINALE (owner spec, Sep 2026): a taste of what a real
+		--// shift throws at you - a live fire drill, then a VIP served
+		--// with zero hand holding as the graduation exam
+		FireDrill = {
+			Bruno = {
+				"Before I let you go, two more things you WILL meet out there.",
+				"RANDOM EVENTS! Sometimes the restaurant itself goes wrong. Toilets flood, the power cuts out, and worse.",
+				"The worst one? FIRE! Sometimes a station just catches fire. Grease and heat are a spicy couple.",
+				"When it happens, run for the extinguisher on the kitchen wall and spray the flames. One good spray clears the whole fire!",
+				"Ready? FIRE DRILL!",
+			},
+			Objective = "Put out the fire with the extinguisher!",
+		},
+		Critic = {
+			Bruno = {
+				"Nicely done, firefighter! Last thing. Some guests are SPECIAL.",
+				"Here comes the FOOD CRITIC. One picky eater with a notebook. Their review can lift this restaurant or sink it!",
+				"Serve them start to finish all by yourself, and cook it PERFECTLY if you can. Show me what you learned!",
+			},
+			Objective = "Serve the food critic all by yourself!",
 		},
 		Wrap = {
-			Bruno = "THAT'S the whole job, rookie! The kitchen's yours - practice as long as you like.",
-			Objective = "Tutorial complete! Free practice",
+			Bruno = {
+				"Out there you will also meet gold star VIP guests, sneaky runners who skip the bill, and surprises I will not spoil. Expect anything!",
+				"And that's the whole job, rookie! Seat them, feed them, get paid. See you on a real shift!",
+			},
+			Objective = "Tutorial complete!",
 		},
 	},
 }

@@ -53,6 +53,10 @@ local function shiftOpen()
 end
 
 local function speak(poolName, urgent)
+	--// TUTORIAL: the tutor owns Bruno completely - his teaching boxes
+	--// render in TutorialClient, and normal commentary would talk over
+	--// the lesson (ManagerSay below still works for exact lines)
+	if workspace:GetAttribute("MatchMode") == "TUTORIAL" then return end
 	if not shiftOpen() then return end
 	local pool = MANAGER.Lines[poolName]
 	if not pool or #pool == 0 then return end

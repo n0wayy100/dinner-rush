@@ -1733,6 +1733,27 @@ if game:GetService("RunService"):IsStudio() then
 	debugStart.Parent = ServerStorage
 end
 
+--// TUTORIAL SEAM: the tutor's FIRE DRILL. Same start path as the
+--// debug lever above but it EXISTS on live servers - hard-gated to
+--// tutorial mode, server-only, refuses anything already burning.
+do
+	local bindable = Instance.new("BindableFunction")
+	bindable.Name = "TutorialStartEvent"
+	bindable.OnInvoke = function(name)
+		if workspace:GetAttribute("MatchMode") ~= "TUTORIAL" then
+			return false
+		end
+		local definition = EVENTS[name]
+		if not definition or anyEventActive() then
+			return false
+		end
+		print(("[Events] TUTORIAL: force-starting %s for the drill"):format(name))
+		definition.Start()
+		return true
+	end
+	bindable.Parent = ServerStorage
+end
+
 local function pickEvent(difficultyName)
 	local pool, total = {}, 0
 	for name, definition in pairs(EVENTS) do

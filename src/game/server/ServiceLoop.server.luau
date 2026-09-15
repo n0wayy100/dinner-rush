@@ -104,6 +104,17 @@ local function tutorialMode()
 	return workspace:GetAttribute("MatchMode") == "TUTORIAL"
 end
 
+--// THE TUTORIAL'S ACTION GATE (owner spec, Sep 2026): on tutorial
+--// servers, TutorialService names the ONE interaction currently
+--// allowed in a workspace attribute ("" while Bruno talks, "Free"
+--// once the lesson ends). Everything else politely refuses. The
+--// attribute never exists on a normal server, so nothing is gated.
+local function tutorialGateAllows(action)
+	local gate = workspace:GetAttribute("TutorialGate")
+	if gate == nil or gate == "Free" then return true end
+	return gate == action
+end
+
 -- DEBUG knobs (set to nil to use real Config values)
 local DEBUG_PREP_SECONDS = 8        -- real: Config.Shift.PrepTimeSeconds (45)
 local DEBUG_SHIFT_SECONDS = nil     -- e.g. 180 for a 3-minute test shift
@@ -2051,6 +2062,15 @@ local function createPayment(party, tableId)
 	prompt.Parent = tablePart
 
 	prompt.Triggered:Connect(function(player)
+		if not tutorialGateAllows("Collect") then
+			prompt.ObjectText = "Wait for Bruno!"
+			task.delay(1.5, function()
+				if prompt.Parent then
+					prompt.ObjectText = ("Table %d"):format(tableId)
+				end
+			end)
+			return
+		end
 		collectPayment(tableId, player)
 	end)
 
@@ -2066,6 +2086,18 @@ end
 --// Payments hold their value now, so this only keeps the label honest and
 --// clears anything that has outstayed LingerSeconds (0 = never).
 local function updatePayments()
+	--// TUTORIAL: money WAITS for the lesson - no melt, no vanish (a
+	--// vanished payment would strand the collect step forever). The
+	--// clock is pushed forward so every payment stays factory fresh.
+	if tutorialMode() then
+		for _, payment in pairs(payments) do
+			payment.CreatedAt = os.clock()
+			payment.Amount.Text = tostring(paymentValue(payment))
+			payment.Amount.TextColor3 = PAY_COLOR.GRACE
+		end
+		return
+	end
+
 	local lifetime = Config.Payment.LingerSeconds
 	local expired = nil
 
@@ -2692,6 +2724,11 @@ local function setupTable(tableId, tablePart)
 		if not party or not serviceOpen() then return end
 
 		if party.State == STATE.SEATED then
+			if not tutorialGateAllows("Order") then
+				prompt.ObjectText = "Wait for Bruno!"
+				task.delay(1.5, function() refreshTablePrompt(tableId) end)
+				return
+			end
 			--// The ticket was rolled when the party spawned. Taking the order
 			--// is now a short dialogue on the waiter's screen; the ticket is
 			--// revealed to the kitchen when it resolves (or times out).
@@ -2704,6 +2741,11 @@ local function setupTable(tableId, tablePart)
 			beginDialogue(player, party, tableId)
 
 		elseif party.State == STATE.WAITING_FOOD then
+			if not tutorialGateAllows("Serve") then
+				prompt.ObjectText = "Wait for Bruno!"
+				task.delay(1.5, function() refreshTablePrompt(tableId) end)
+				return
+			end
 			local dish, dishName = findTicketDish(player, party)
 			if not dish then
 				prompt.ObjectText = ("Table %d wants %s"):format(tableId, ticketText(party))
@@ -2903,6 +2945,14 @@ local function attachQueuePrompts(party)
 	party.GreetPrompt = greet --// so seatParty can retire it too
 
 	greet.Triggered:Connect(function(player)
+		if not tutorialGateAllows("Greet") then
+			local previous = greet.ObjectText
+			greet.ObjectText = "Wait for Bruno!"
+			task.delay(1.5, function()
+				if greet.Parent then greet.ObjectText = previous end
+			end)
+			return
+		end
 		--// Gap 2 closed: the greeter is no longer anonymous - their career
 		--// (and later their charge) credits the warm welcome
 		if party.State ~= STATE.QUEUED or party.Greeted then return end
@@ -2914,6 +2964,15 @@ local function attachQueuePrompts(party)
 	end)
 
 	seat.Triggered:Connect(function(player)
+		if not tutorialGateAllows("Seat") then
+			seat.ObjectText = "Wait for Bruno!"
+			task.delay(1.5, function()
+				if seat.Parent then
+					seat.ObjectText = ("Party of %d"):format(party.Size)
+				end
+			end)
+			return
+		end
 		if seatParty(party, player) then return end
 		if party.State ~= STATE.QUEUED then return end
 
@@ -3036,7 +3095,10 @@ end
 
 --// options (all optional - absent means the classic roll): the
 --// TUTORIAL's scripted party passes { Plain = true (never VIP/critic),
---// Size = n, Ticket = {dish, ...} (forced, in order) }
+--// Size = n, Ticket = {dish, ...} (forced, in order) }; VIP = true
+--// forces the gold star anyway, Critic = true forces the food critic
+--// (the tutorial's graduation guest - the shift's own critic plan is
+--// left untouched)
 local function spawnParty(options)
 	options = options or {}
 	local plain = options.Plain == true
@@ -3053,7 +3115,9 @@ local function spawnParty(options)
 	--// THE CRITIC claims the first spawn past his planned moment (set at
 	--// shift start). One person, never a VIP, never dashes.
 	local isCritic = false
-	if plain then
+	if options.Critic == true then
+		isCritic = true --// the tutorial's graduation guest
+	elseif plain then
 		--// a scripted party is never the critic and never claims him
 	elseif DEBUG_FORCE_FIRST_CRITIC and not debugFirstCriticDone then
 		isCritic = true
@@ -3069,8 +3133,8 @@ local function spawnParty(options)
 		Id = nextPartyId,
 		Size = options.Size or (isCritic and 1 or rollPartySize()),
 		IsCritic = isCritic,
-		IsVIP = not plain and not isCritic
-			and (forcedVIP or math.random() < diff.VIPChance),
+		IsVIP = options.VIP == true or (not plain and not isCritic
+			and (forcedVIP or math.random() < diff.VIPChance)),
 		State = STATE.QUEUED,
 		Spot = spot,
 		Greeted = false,
@@ -3085,9 +3149,13 @@ local function spawnParty(options)
 		party.BillUnits = dishCount
 	end
 	if options.Ticket and #options.Ticket > 0 then
-		--// the tutor's forced ticket replaces the roll entirely
+		--// the tutor's forced ticket replaces the roll entirely - and
+		--// a forced-ticket critic bills for exactly what they ordered
 		party.Ticket = table.clone(options.Ticket)
 		dishCount = #party.Ticket
+		if isCritic then
+			party.BillUnits = dishCount
+		end
 	else
 		party.Ticket = {}
 		for _ = 1, dishCount do
@@ -3394,6 +3462,12 @@ do
 	local bridge = Instance.new("BindableFunction")
 	bridge.Name = "ForceEndShift"
 	bridge.OnInvoke = function(reason)
+		--// TUTORIAL: the lesson cannot be failed - not even by burning
+		--// the whole kitchen down during the fire drill
+		if tutorialMode() then
+			print("[Service] ForceEndShift ignored - tutorial shifts never fail")
+			return false
+		end
 		endShift(false, tostring(reason or "event catastrophe"))
 		return true
 	end
@@ -3539,7 +3613,7 @@ RunService.Heartbeat:Connect(function(dt)
 		updatePayments()
 	end
 
-	if shift.Reputation <= 0 then
+	if shift.Reputation <= 0 and not tutorialMode() then
 		endShift(false, "reputation hit zero - the manager is furious")
 
 	elseif shift.State == "RUNNING" and shift.Elapsed >= shift.Length then

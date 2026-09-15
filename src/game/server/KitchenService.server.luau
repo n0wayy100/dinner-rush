@@ -70,6 +70,20 @@ local function creditStat(player, key, amount)
 	scoreOnly(player, key, amount)
 end
 
+--// THE TUTORIAL'S ACTION GATE (owner spec, Sep 2026): on tutorial
+--// servers a workspace attribute names the ONE interaction currently
+--// allowed ("" while Bruno talks, "Free" after the lesson); pass any
+--// action names this call site accepts. Never exists on normal
+--// servers, so nothing is gated there.
+local function tutorialGateAllows(...)
+	local gate = workspace:GetAttribute("TutorialGate")
+	if gate == nil or gate == "Free" then return true end
+	for _, action in ipairs({ ... }) do
+		if gate == action then return true end
+	end
+	return false
+end
+
 --// COOK TIMING GATE (used by startCook for the compensated timer and by
 --// the collect path to open the minigame - see the cook-timing section)
 local TIMING = Config.CookTiming
@@ -388,6 +402,13 @@ local function setupSource(instance, sourceTag)
 	prompt.Parent = part
 
 	prompt.Triggered:Connect(function(player)
+		--// fetching is allowed during the cook phase too (a re-grab
+		--// after a binned mistake must never wedge the lesson)
+		if not tutorialGateAllows("Fetch", "Cook") then
+			flash(prompt, "Wait for Bruno!",
+				sourceTag == "DryShelf" and "Dry Shelf" or sourceTag)
+			return
+		end
 		kitchenRemote:FireClient(player, "OpenSourceMenu", sourceTag, menuPayload(sourceTag))
 	end)
 
@@ -414,6 +435,7 @@ end
 kitchenRemote.OnServerEvent:Connect(function(player, action, ingredientName)
 	if action ~= "Take" then return end
 	if typeof(ingredientName) ~= "string" then return end
+	if not tutorialGateAllows("Fetch", "Cook") then return end
 
 	local data = Config.Ingredients[ingredientName]
 	if not data then return end
@@ -1774,6 +1796,13 @@ local function setupStation(instance)
 
 	prompt.Triggered:Connect(function(player)
 		if station.Disabled then return end
+
+		if not tutorialGateAllows("Cook") then
+			flash(prompt, "Wait for Bruno!", station.State == "IDLE"
+				and ("%s station"):format(station.Method)
+				or stationPromptText(station))
+			return
+		end
 
 		if powerOut() then
 			flash(prompt, "No power!", stationPromptText(station))
