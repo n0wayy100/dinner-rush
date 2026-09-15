@@ -541,7 +541,7 @@ local function stationLabel(station)
 	end
 
 	if station.State == "BURNT" then
-		return "BURNT!"
+		return station.Method == "Ramen" and "RUINED!" or "BURNT!"
 	end
 
 	local recipe = Config.Recipes[station.Dish]
@@ -559,6 +559,9 @@ local function stationPromptText(station)
 		return ("%s - READY"):format(display)
 	elseif station.State == "OVERCOOKED" then
 		return ("%s - overcooked"):format(display)
+	end
+	if station.Method == "Ramen" then
+		return ("%s - RUINED"):format(display)
 	end
 	return ("%s - BURNT"):format(display)
 end
@@ -708,11 +711,288 @@ local function refreshStationFood(station)
 	end
 end
 
+----------------------------------------------------------------
+-- RAMEN SMASH (Config.RamenSmash): ramen's 10s boil IS its minigame.
+-- The server keeps its own colour clock - the colour at time t is
+-- floor(t / cycle) % Colors, identical maths on the client - and
+-- honours taps within TapToleranceSeconds. The hit count at the end
+-- decides the bowl (station.ForcedQuality); ramen NEVER burns.
+----------------------------------------------------------------
+local RAMEN = Config.RamenSmash
+
+local ramenRemote = remotes:FindFirstChild("RamenSmashRemote")
+if not ramenRemote then
+	ramenRemote = Instance.new("RemoteEvent")
+	ramenRemote.Name = "RamenSmashRemote"
+	ramenRemote.Parent = remotes
+end
+
+local ramenSessions = {} --// [station] = session (see beginRamenSession)
+local ramenToken = 0
+
+--// Shortest angular distance, degrees
+local function angDist(a, b)
+	return math.abs(((a - b) + 180) % 360 - 180)
+end
+
+local function ramenQualityFor(points)
+	if points >= RAMEN.PerfectPoints then
+		return "Perfect"
+	elseif points >= RAMEN.GoodPoints then
+		return "Good"
+	end
+	return "Ruined" --// below mid = UNSERVABLE - dump it (owner ruling)
+end
+
+local function closeRamenSession(station, tellClient)
+	local session = ramenSessions[station]
+	if not session then return end
+	ramenSessions[station] = nil
+	if tellClient and session.Player and session.Player.Parent then
+		ramenRemote:FireClient(session.Player, "Close", session.Token)
+	end
+end
+
+local function beginRamenSession(station, player)
+	ramenToken += 1
+	local offset = math.random(0, 359) --// same layout, never the same start
+	local session = {
+		Player = player,
+		Token = ramenToken,
+		StartedAt = os.clock(),
+		Score = 0,
+		LastScoreAt = 0,
+		Arcs = {},
+	}
+	local openArcs = {}
+	for i, def in ipairs(RAMEN.Arcs) do
+		session.Arcs[i] = {
+			Angle = (def.StartDeg + offset) % 360,
+			Size = def.SizeDeg,
+			Points = def.Points,
+			Base = def.Speed,
+			Eff = def.Speed,
+			Shrink = def.ShrinkPerHitDeg or 0,
+			MinSize = def.MinSizeDeg or def.SizeDeg,
+			Phases = def.PhasesThrough, --// arc index this one ghosts past
+		}
+		openArcs[i] = {
+			SizeDeg = def.SizeDeg,
+			Points = def.Points,
+			Chips = def.Chips,
+			Angle = session.Arcs[i].Angle,
+			Speed = def.Speed,
+		}
+	end
+	ramenSessions[station] = session
+
+	ramenRemote:FireClient(player, "Open", {
+		Token = session.Token,
+		GameSeconds = RAMEN.GameSeconds,
+		Arcs = openArcs,
+	})
+
+	--// THE SIMULATION: the server steps the arcs (overlapping arcs run
+	--// at CollisionSlowMult) and snapshots the truth to the cook a few
+	--// times a second; the client only extrapolates between snapshots
+	task.spawn(function()
+		local last = os.clock()
+		local lastSnap = 0
+		while ramenSessions[station] == session do
+			task.wait(0.03)
+			local now = os.clock()
+			local dt = now - last
+			last = now
+
+			--// BUMPER ARCS (owner spec): arcs never overlap. On contact
+			--// both REVERSE, get pushed apart to just-touching, and run
+			--// slowed for BumpSlowSeconds.
+			for i = 1, #session.Arcs do
+				for j = i + 1, #session.Arcs do
+					local a, b = session.Arcs[i], session.Arcs[j]
+					local delta = ((b.Angle - a.Angle + 180) % 360) - 180
+					local minGap = (a.Size + b.Size) / 2 + 2
+					--// phasing pairs ghost through each other, no bump
+					if a.Phases == j or b.Phases == i then
+						minGap = -1
+					end
+					if math.abs(delta) < minGap then
+						local sign = delta >= 0 and 1 or -1
+						local push = (minGap - math.abs(delta)) / 2
+						a.Angle = (a.Angle - sign * push) % 360
+						b.Angle = (b.Angle + sign * push) % 360
+						a.Base, b.Base = -a.Base, -b.Base
+						a.BumpUntil = now + RAMEN.BumpSlowSeconds
+						b.BumpUntil = now + RAMEN.BumpSlowSeconds
+					end
+				end
+			end
+			for _, arc in ipairs(session.Arcs) do
+				arc.Eff = arc.Base * ((arc.BumpUntil or 0) > now
+					and RAMEN.CollisionSlowMult or 1)
+				arc.Angle = (arc.Angle + arc.Eff * dt) % 360
+				--// short TRUE-position history (~0.7s) for lag-
+				--// compensated taps - survives bounces honestly
+				local hist = arc.Hist
+				if not hist then
+					hist = {}
+					arc.Hist = hist
+				end
+				hist[#hist + 1] = { T = now, A = arc.Angle }
+				if #hist > 24 then
+					table.remove(hist, 1)
+				end
+			end
+
+			if now - lastSnap >= 1 / RAMEN.SnapshotHz then
+				lastSnap = now
+				if player.Parent then
+					local snap = {}
+					for i, arc in ipairs(session.Arcs) do
+						snap[i] = { Angle = arc.Angle, Speed = arc.Eff, Size = arc.Size }
+					end
+					ramenRemote:FireClient(player, "Sync", session.Token, snap)
+				end
+			end
+		end
+	end)
+
+	--// The pot decides when the game is over, not the client
+	task.delay(RAMEN.GameSeconds, function()
+		local live = ramenSessions[station]
+		if live ~= session then return end
+		ramenSessions[station] = nil
+
+		local quality = ramenQualityFor(session.Score)
+		if quality == "Ruined" then
+			--// UNSERVABLE: the pot flips to the cleanup state (never
+			--// called burnt out loud - the labels say RUINED)
+			station.ForcedQuality = nil
+			if station.State ~= "IDLE" then
+				station.State = "BURNT"
+				refreshStationFood(station)
+				refreshStationUi(station)
+				refreshStationPrompt(station)
+			end
+		else
+			station.ForcedQuality = quality
+		end
+		if player.Parent then
+			ramenRemote:FireClient(player, "End", session.Token, session.Score, quality)
+		end
+		print(("[Kitchen] RAMEN SMASH: %s scored %d point(s) - %s bowl")
+			:format(player.Name, session.Score, quality))
+	end)
+end
+
+ramenRemote.OnServerEvent:Connect(function(player, action, token)
+	if action ~= "Tap" then return end
+
+	local station, session
+	for s, sess in pairs(ramenSessions) do
+		if sess.Token == token and sess.Player == player then
+			station, session = s, sess
+			break
+		end
+	end
+	if not session then return end
+
+	local now = os.clock()
+	if now - session.StartedAt > RAMEN.GameSeconds then return end
+	if now - (session.LastTapAt or 0) < RAMEN.ScoreCooldownSeconds then
+		return --// machine-gun taps are ignored entirely
+	end
+	session.LastTapAt = now
+
+	--// SERVER STATE RULES with FULL LAG COMPENSATION: the player's
+	--// screen runs a whole round-trip behind this clock (display lag +
+	--// return trip), so judge each arc where it ACTUALLY WAS then -
+	--// looked up from its recorded history, which stays honest through
+	--// bounces. GraceDeg is the only forgiveness; Studio's ~zero ping
+	--// makes this an exact-edge test.
+	local rewind = math.clamp(player:GetNetworkPing() * 2, 0, 0.4)
+	local tapTime = now - rewind
+	local best = nil
+	for _, arc in ipairs(session.Arcs) do
+		local angleThen = arc.Angle
+		local hist = arc.Hist
+		if hist and #hist > 0 then
+			angleThen = hist[1].A --// oldest available as the floor
+			for index = #hist, 1, -1 do
+				if hist[index].T <= tapTime then
+					angleThen = hist[index].A
+					break
+				end
+			end
+		end
+		if angDist(angleThen, 0) <= arc.Size / 2 + RAMEN.GraceDeg then
+			if not best or arc.Points > best.Points then
+				best = arc
+			end
+		end
+	end
+
+	--// Both outcomes RE-ROLL the board (owner spec) - hits also shrink
+	--// yellow/blue toward their floors
+	local function rerollArcs(shrink)
+		for index, arc in ipairs(session.Arcs) do
+			if shrink and arc.Shrink > 0 then
+				arc.Size = math.max(arc.Size - arc.Shrink, arc.MinSize)
+			end
+			--// fresh spot: off the pointer AND clear of already-placed
+			--// arcs, so a re-roll never spawns a stack
+			for _ = 1, 14 do
+				local candidate = math.random(0, 359)
+				local clear = angDist(candidate, 0) > arc.Size / 2 + 25
+				if clear then
+					for prior = 1, index - 1 do
+						local other = session.Arcs[prior]
+						if angDist(candidate, other.Angle)
+							< (arc.Size + other.Size) / 2 + 8 then
+							clear = false
+							break
+						end
+					end
+				end
+				if clear then
+					arc.Angle = candidate
+					break
+				end
+			end
+			--// fresh world: old positions must not judge new taps (a
+			--// stale history could double-score across a re-roll)
+			arc.Hist = nil
+		end
+		local snap = {}
+		for i, arc in ipairs(session.Arcs) do
+			snap[i] = { Angle = arc.Angle, Speed = arc.Eff, Size = arc.Size }
+		end
+		return snap
+	end
+
+	if best then
+		session.Score += best.Points
+		ramenRemote:FireClient(player, "Hit", token, session.Score, {
+			Points = best.Points,
+			Arcs = rerollArcs(true),
+		})
+	else
+		--// A miss COSTS (floor 0) and scrambles the board anyway
+		session.Score = math.max(session.Score - RAMEN.MissPenaltyPoints, 0)
+		ramenRemote:FireClient(player, "Miss", token, session.Score, {
+			Penalty = RAMEN.MissPenaltyPoints,
+			Arcs = rerollArcs(false),
+		})
+	end
+end)
+
 local function clearStation(station)
 	--// Every route out of cooking lands here - collected, binned, burnt,
 	--// wiped by a grease fire - so one stop covers all of them.
 	cookSoundStop(station)
 	clearStationFood(station)
+	closeRamenSession(station, true) --// a wiped pot ends its smash game
+	station.ForcedQuality = nil
 
 	station.State = "IDLE"
 	station.Dish = nil
@@ -740,6 +1020,14 @@ local function startCook(station, player, tool, dishName, recipe)
 		cookTime = TIMING.MinigameCookSeconds
 	end
 
+	--// RAMEN SMASH: on gated difficulties the 10s colour game IS the
+	--// boil - its length replaces the flat minigame cook time
+	local isRamen = station.Method == "Ramen"
+	local ramenGame = isRamen and cookMinigameGated()
+	if ramenGame then
+		cookTime = RAMEN.GameSeconds
+	end
+
 	station.State = "COOKING"
 	station.Dish = dishName
 	station.RawName = rawName
@@ -748,6 +1036,19 @@ local function startCook(station, player, tool, dishName, recipe)
 	station.PerfectUntil = cookTime + timing.PerfectWindow
 	station.OvercookedUntil = station.PerfectUntil + timing.OvercookAfter
 	station.BurntAt = station.OvercookedUntil + timing.BurntAfter
+
+	if isRamen then
+		--// RAMEN NEVER BURNS (owner ruling: it is soup). The worst an
+		--// ignored pot reaches is the trash tier, and it keeps forever.
+		station.BurntAt = math.huge
+		if ramenGame then
+			--// Quality comes from the smash score, not the windows: the
+			--// finished bowl holds at PERFECT-state (warm) indefinitely
+			station.PerfectUntil = math.huge
+			station.OvercookedUntil = math.huge
+			beginRamenSession(station, player)
+		end
+	end
 
 	--// Sizzle at the station, not in the player's ear: positional, and
 	--// shared per method - see cookSoundStart's ref-counting above.
@@ -778,7 +1079,9 @@ local function collect(station, player)
 
 	local dishName = station.Dish
 	local recipe = Config.Recipes[dishName]
-	local quality = station.State == "PERFECT" and "Perfect" or "Overcooked"
+	--// A ramen bowl's quality was decided by its smash score
+	local quality = station.ForcedQuality
+		or (station.State == "PERFECT" and "Perfect" or "Overcooked")
 
 	local tool = makeTool(recipe.Display, recipe.Icon, recipe.Color, {
 		Dish = dishName,
@@ -790,6 +1093,8 @@ local function collect(station, player)
 	--// credit here, at the pan, not later at the table (owner call)
 	if quality == "Perfect" then
 		creditStat(player, "PerfectCooks", 1)
+	elseif quality == "Good" then
+		scoreOnly(player, "GoodCooks", 1) --// hidden score only
 	else
 		scoreOnly(player, "OvercookedCooks", 1) --// hidden score only
 	end
@@ -894,6 +1199,22 @@ local function grantFromMinigame(station, player, quality)
 end
 
 local function beginCookSession(station, player)
+	--// RAMEN skips the arrow: its game already played DURING the boil,
+	--// so collecting a finished bowl is a plain grab at the scored tier
+	if station.Method == "Ramen" then
+		if ramenSessions[station] then
+			flash(station.Prompt, "Still boiling!", stationPromptText(station))
+			return
+		end
+		if station.State == "BURNT" then
+			collect(station, player) --// a RUINED bowl only dumps
+			return
+		end
+		grantFromMinigame(station, player, station.ForcedQuality
+			or (station.State == "PERFECT" and "Perfect" or "Overcooked"))
+		return
+	end
+
 	local existing = cookSessions[station]
 	if existing then
 		if existing.Player ~= player then
@@ -961,14 +1282,19 @@ cookTimingRemote.OnServerEvent:Connect(function(player, action, token, claimed)
 		return
 	end
 
-	--// SERVER CLOCK RULES: honour the claim only within tolerance.
-	--// Tolerance is lag in seconds converted to bar distance at THIS
-	--// swing's speed, so a fast swing forgives the same ping
-	local expected = arrowAt(os.clock() - session.SwingStart, session.SweepSeconds)
+	--// SERVER CLOCK with LAG REWIND (Sep 2026 fix): the client's arrow
+	--// starts one network-trip late and the claim takes a trip back, so
+	--// the player's screen runs a full ROUND-TRIP behind this clock.
+	--// Judge the claim against where the arrow was THEN - without this,
+	--// a seen-green judged a miss (and seen-yellow a lucky perfect) for
+	--// anyone with real ping. Tolerance now absorbs jitter only.
+	local rewind = math.clamp(player:GetNetworkPing() * 2, 0, 0.4)
+	local expected = arrowAt(
+		os.clock() - session.SwingStart - rewind, session.SweepSeconds)
 	local tolerance = TIMING.StopToleranceSeconds / session.SweepSeconds
 	local position = tonumber(claimed)
 	if not position or math.abs(position - expected) > tolerance then
-		position = expected
+		position = expected --// dishonest (or hopeless) claims get the truth
 	end
 	position = math.clamp(position, 0, 1)
 

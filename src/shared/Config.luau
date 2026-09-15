@@ -187,6 +187,65 @@ Config.OrderWeights = {
 ----------------------------------------------------------------
 -- KITCHEN: carrying, stations, and what a cook is worth
 ----------------------------------------------------------------
+----------------------------------------------------------------
+-- RAMEN SMASH (owner design, Sep 2026): ramen's boil IS its minigame.
+-- Loading noodles opens a 10s colour-match game (tap when the swirling
+-- broth matches the target colour); the HIT COUNT decides the bowl.
+-- Ramen can NEVER be burnt - it is soup - so the worst outcome is the
+-- trash tier, and a ready bowl keeps forever. THE LAW: one set of
+-- numbers for every difficulty; the ungated fallback is a plain timed
+-- boil (Boiling windows) that also never burns.
+----------------------------------------------------------------
+Config.RamenSmash = {
+	GameSeconds = 10,             -- the whole boil, and the whole game
+
+	--// OWNER SPEC (Sep 2026): the POINTER is FIXED at the top; three
+	--// coloured arcs ORBIT the pot's rim. Tap when an arc is under the
+	--// pointer to score ITS points - bigger arc = easier = worth less:
+	--//   yellow: largest, 1 point  ·  blue: middle, 2  ·  green:
+	--//   smallest, 3. Mixed directions, relatively fast.
+	--// ShrinkPerHitDeg: EVERY scoring hit shrinks that arc (down to
+	--// MinSizeDeg) - yellow and blue get harder as you score, green
+	--// stays the same small prize (owner spec). Every hit also
+	--// RE-ROLLS all three arcs to fresh positions, never on the pointer.
+	--// Speed ladder: green fastest, yellow slowest. Points: bigger =
+	--// cheaper (yellow 1, blue 2, green 3). Chips = how many rectangles
+	--// draw the arc (yellow 3, blue 2, green 1 - owner spec). Arcs
+	--// BOUNCE off each other (reverse + brief slow), EXCEPT blue
+	--// PHASES straight through yellow.
+	Arcs = {
+		{ SizeDeg = 70, Points = 1, Speed = 170, StartDeg = 90,     -- yellow
+			Chips = 3, ShrinkPerHitDeg = 8, MinSizeDeg = 36 },
+		{ SizeDeg = 44, Points = 2, Speed = -240, StartDeg = 210,   -- blue
+			Chips = 2, ShrinkPerHitDeg = 6, MinSizeDeg = 24, PhasesThrough = 1 },
+		{ SizeDeg = 26, Points = 3, Speed = 340, StartDeg = 320,    -- green
+			Chips = 1 },
+	},
+	CollisionSlowMult = 0.55,     -- pace while bump-slowed
+	BumpSlowSeconds = 0.6,        -- how long the post-bump slow lasts
+	SnapshotHz = 15,              -- server -> client truth updates
+	                              -- (brisker, so bounces snap on screen)
+	GraceDeg = 4,                 -- the ONLY leeway: a whisker for frame
+	                              -- timing. Lag is handled by REWINDING
+	                              -- the arcs to the moment of the tap
+	                              -- (half the player's ping), not by
+	                              -- widening the target.
+	ScoreCooldownSeconds = 0.25,  -- min gap between COUNTED taps (hit or
+	                              -- miss) - machine-gunning does nothing
+	MissPenaltyPoints = 2,        -- a miss COSTS points (floor 0) and
+	                              -- re-rolls the arcs - spraying loses
+
+	--// THE SCORELINES (points in 10s):
+	--//   MASTER BOWL  (Perfect)   - PerfectPoints and up
+	--//   DECENT BOWL  (Good tier) - GoodPoints .. PerfectPoints-1
+	--//   RUINED       - below GoodPoints: UNSERVABLE (owner ruling,
+	--//     Sep 2026). The pot holds a ruined bowl that must be dumped
+	--//     (burnt-cleanup flow, ramen-flavoured labels) - a wasted cook
+	--//     on the report, but still never "burnt", because soup.
+	PerfectPoints = 15,
+	GoodPoints = 10,
+}
+
 Config.Kitchen = {
 	MaxCarriedItems = 2,          -- the design's two-item inventory rule
 
