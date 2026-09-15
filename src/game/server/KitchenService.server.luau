@@ -712,13 +712,77 @@ local function refreshStationFood(station)
 end
 
 ----------------------------------------------------------------
--- RAMEN SMASH (Config.RamenSmash): ramen's 10s boil IS its minigame.
--- The server keeps its own colour clock - the colour at time t is
--- floor(t / cycle) % Colors, identical maths on the client - and
--- honours taps within TapToleranceSeconds. The hit count at the end
--- decides the bowl (station.ForcedQuality); ramen NEVER burns.
+-- THE SMASH GAME (Config.RamenSmash - the name survives its ramen-only
+-- debut; it is now game 2 of the minigame coin flip, playable on ANY
+-- method). The 7s colour game IS the cook: the server simulates the
+-- arcs, honours lag-rewound taps, and the score at the end decides the
+-- dish (station.ForcedQuality). Ramen still never burns; a smash-
+-- cooked grill/fry dish resumes normal aging after the game.
 ----------------------------------------------------------------
 local RAMEN = Config.RamenSmash
+local CARDS = Config.CardMatch
+local PICK = Config.CookMinigamePick
+
+--// THE MINIGAME ROLL (owner spec, Sep 2026): every gated cook rolls
+--// which game it gets - even odds across the pool. Per-player streak
+--// memory: each same-game pick in a row moves a slice of that game's
+--// odds to the others (split evenly, capped at MaxBias); the moment
+--// the streak breaks, the new game starts at the single-pick baseline.
+local GAME_ARROW, GAME_SMASH, GAME_CARDS = 1, 2, 3
+local GAME_COUNT = 3
+
+local pickStreaks = {} --// [userId] = { Game = 1..GAME_COUNT, Count = n in a row }
+
+local function rollCookGame(player)
+	--// TUTORIAL SEAM: the tutor pins each teaching cook to one game
+	--// (server-set workspace attribute; clients cannot write it)
+	local tutorialForced = workspace:GetAttribute("TutorialForceGame")
+	if typeof(tutorialForced) == "number"
+		and tutorialForced >= 1 and tutorialForced <= GAME_COUNT then
+		return tutorialForced
+	end
+
+	--// STUDIO KNOB (live-ignored): pin the roll while testing one game
+	if RunService:IsStudio() then
+		local forced = PICK.StudioForceGame or 0
+		if forced >= 1 and forced <= GAME_COUNT then
+			return forced
+		end
+	end
+
+	local streak = pickStreaks[player.UserId]
+	local weights = table.create(GAME_COUNT, 1 / GAME_COUNT)
+	if streak then
+		local bias = math.min(streak.Count * PICK.StreakBiasPerRepeat, PICK.MaxBias)
+		bias = math.min(bias, weights[streak.Game]) --// never below zero
+		weights[streak.Game] -= bias
+		for game = 1, GAME_COUNT do
+			if game ~= streak.Game then
+				weights[game] += bias / (GAME_COUNT - 1)
+			end
+		end
+	end
+
+	local roll, acc, pick = math.random(), 0, GAME_COUNT
+	for game = 1, GAME_COUNT do
+		acc += weights[game]
+		if roll <= acc then
+			pick = game
+			break
+		end
+	end
+
+	if streak and streak.Game == pick then
+		streak.Count += 1
+	else
+		pickStreaks[player.UserId] = { Game = pick, Count = 1 }
+	end
+	return pick
+end
+
+Players.PlayerRemoving:Connect(function(player)
+	pickStreaks[player.UserId] = nil
+end)
 
 local ramenRemote = remotes:FindFirstChild("RamenSmashRemote")
 if not ramenRemote then
@@ -729,6 +793,11 @@ end
 
 local ramenSessions = {} --// [station] = session (see beginRamenSession)
 local ramenToken = 0
+
+--// Forward-declared: defined with the arrow-game section below, and
+--// shared by both games - the smash's game-end grant lands the dish
+--// in the cook's hands the same way the arrow's result does
+local grantFromMinigame
 
 --// Shortest angular distance, degrees
 local function angDist(a, b)
@@ -754,6 +823,12 @@ local function closeRamenSession(station, tellClient)
 end
 
 local function beginRamenSession(station, player)
+	--// The score is about to decide the dish, so aging PAUSES for the
+	--// game (grill/fry windows come back at the end; ramen's never do)
+	station.PerfectUntil = math.huge
+	station.OvercookedUntil = math.huge
+	station.BurntAt = math.huge
+
 	ramenToken += 1
 	local offset = math.random(0, 359) --// same layout, never the same start
 	local session = {
@@ -857,16 +932,20 @@ local function beginRamenSession(station, player)
 		end
 	end)
 
-	--// The pot decides when the game is over, not the client
-	task.delay(RAMEN.GameSeconds, function()
+	--// ONE ENDING, TWO EXITS: the clock running out, or the score
+	--// hitting PerfectPoints early (owner spec: a perfect score ends
+	--// the game ON THE SPOT - the Tap handler calls session.Finish).
+	--// Either way the server decides when the game is over, never the
+	--// client.
+	local function finishSession()
 		local live = ramenSessions[station]
 		if live ~= session then return end
 		ramenSessions[station] = nil
 
 		local quality = ramenQualityFor(session.Score)
 		if quality == "Ruined" then
-			--// UNSERVABLE: the pot flips to the cleanup state (never
-			--// called burnt out loud - the labels say RUINED)
+			--// UNSERVABLE: the station flips to the cleanup state (on
+			--// ramen the labels say RUINED, everywhere else BURNT)
 			station.ForcedQuality = nil
 			if station.State ~= "IDLE" then
 				station.State = "BURNT"
@@ -876,13 +955,40 @@ local function beginRamenSession(station, player)
 			end
 		else
 			station.ForcedQuality = quality
+			--// A smash-cooked GRILL/FRY dish resumes normal aging from
+			--// here - leave it sitting and it still degrades and burns
+			--// (ForcedQuality only holds while the state is PERFECT).
+			--// Ramen keeps its infinite windows: soup never burns.
+			if station.Method ~= "Ramen" then
+				local recipe = Config.Recipes[station.Dish]
+				local timing = recipe and Config.Cooking[recipe.Timing]
+				if timing then
+					station.PerfectUntil = station.Elapsed + timing.PerfectWindow
+					station.OvercookedUntil = station.PerfectUntil + timing.OvercookAfter
+					station.BurntAt = station.OvercookedUntil + timing.BurntAfter
+				end
+			end
 		end
 		if player.Parent then
 			ramenRemote:FireClient(player, "End", session.Token, session.Score, quality)
 		end
-		print(("[Kitchen] RAMEN SMASH: %s scored %d point(s) - %s bowl")
-			:format(player.Name, session.Score, quality))
-	end)
+		print(("[Kitchen] SMASH: %s scored %d point(s) - %s %s")
+			:format(player.Name, session.Score, quality, tostring(station.Dish)))
+
+		--// Like the arrow: a won game lands the dish straight in the
+		--// cook's hands (after the verdict splash). Full hands leave it
+		--// waiting on the station - E collects it at the scored tier.
+		if quality ~= "Ruined" and player.Parent then
+			task.delay(1.2, function()
+				if station.ForcedQuality and not ramenSessions[station]
+					and station.State == "PERFECT" and player.Parent then
+					grantFromMinigame(station, player, station.ForcedQuality)
+				end
+			end)
+		end
+	end
+	session.Finish = finishSession
+	task.delay(RAMEN.GameSeconds, finishSession)
 end
 
 ramenRemote.OnServerEvent:Connect(function(player, action, token)
@@ -972,6 +1078,18 @@ ramenRemote.OnServerEvent:Connect(function(player, action, token)
 
 	if best then
 		session.Score += best.Points
+
+		--// PERFECT ON THE SPOT (owner spec): reaching PerfectPoints
+		--// ends the game immediately - no riding out the clock. The
+		--// final +N still pops, then the ending takes over.
+		if session.Score >= RAMEN.PerfectPoints then
+			ramenRemote:FireClient(player, "Hit", token, session.Score, {
+				Points = best.Points,
+			})
+			session.Finish()
+			return
+		end
+
 		ramenRemote:FireClient(player, "Hit", token, session.Score, {
 			Points = best.Points,
 			Arcs = rerollArcs(true),
@@ -986,13 +1104,226 @@ ramenRemote.OnServerEvent:Connect(function(player, action, token)
 	end
 end)
 
+----------------------------------------------------------------
+-- THE CARD MATCH (Config.CardMatch): game 3 of the minigame roll -
+-- memory pairs against the clock. The server deals Pairs from the
+-- ACTIVE MAP's food icons (menu dishes + their raws: Diner art on the
+-- Diner, Yamasaki art at Yamasaki), shows the board for the PEEK,
+-- then validates every flip; pairs found decide the dish, and a full
+-- sweep is Perfect on the spot. The full layout rides the "Open"
+-- payload ON PURPOSE: the peek makes it public knowledge by design,
+-- and every match is still judged here, never by the client.
+----------------------------------------------------------------
+local cardRemote = remotes:FindFirstChild("CardMatchRemote")
+if not cardRemote then
+	cardRemote = Instance.new("RemoteEvent")
+	cardRemote.Name = "CardMatchRemote"
+	cardRemote.Parent = remotes
+end
+
+local cardSessions = {} --// [station] = session (see beginCardSession)
+local cardToken = 0
+
+local function cardQualityFor(pairsFound)
+	if pairsFound >= CARDS.PerfectPairs then
+		return "Perfect"
+	elseif pairsFound >= CARDS.GoodPairs then
+		return "Good"
+	elseif pairsFound >= CARDS.OvercookedPairs then
+		return "Overcooked"
+	end
+	return "Ruined" --// barely remembered anything: bin it
+end
+
+local function closeCardSession(station, tellClient)
+	local session = cardSessions[station]
+	if not session then return end
+	cardSessions[station] = nil
+	if tellClient and session.Player and session.Player.Parent then
+		cardRemote:FireClient(session.Player, "Close", session.Token)
+	end
+end
+
+--// The ACTIVE map's food art, one entry per icon: every menu dish
+--// plus its raw ingredient. Both maps stock 6 - more than Pairs asks.
+local function cardIconPool()
+	local icons, seen = {}, {}
+	local menu = Config.MenuForMap(workspace:GetAttribute("MatchMapId"))
+	for dishName in pairs(menu) do
+		local recipe = Config.Recipes[dishName]
+		if recipe then
+			local raw = Config.Ingredients[recipe.Ingredient]
+			for _, icon in ipairs({ recipe.Icon, raw and raw.Icon }) do
+				if icon and icon ~= "" and not seen[icon] then
+					seen[icon] = true
+					table.insert(icons, icon)
+				end
+			end
+		end
+	end
+	table.sort(icons) --// stable base order; the shuffle does the mixing
+	return icons
+end
+
+local function beginCardSession(station, player)
+	--// The result is about to decide the dish, so aging PAUSES for the
+	--// game - same deal as the smash (windows restored at the finish)
+	station.PerfectUntil = math.huge
+	station.OvercookedUntil = math.huge
+	station.BurntAt = math.huge
+
+	cardToken += 1
+
+	--// THE DEAL: draw Pairs icons from the map pool, double, shuffle
+	local pool = cardIconPool()
+	for i = #pool, 2, -1 do
+		local j = math.random(i)
+		pool[i], pool[j] = pool[j], pool[i]
+	end
+	local cards = {}
+	for pair = 1, CARDS.Pairs do
+		--// wrap if a future map's pool runs short of Pairs
+		local icon = pool[(pair - 1) % math.max(#pool, 1) + 1] or ""
+		table.insert(cards, icon)
+		table.insert(cards, icon)
+	end
+	for i = #cards, 2, -1 do
+		local j = math.random(i)
+		cards[i], cards[j] = cards[j], cards[i]
+	end
+
+	local session = {
+		Player = player,
+		Token = cardToken,
+		Cards = cards,
+		Matched = {},     --// [index] = true once paired away
+		FirstPick = nil,  --// index face-up waiting for its partner
+		PairsFound = 0,
+		PlayableAt = os.clock() + CARDS.PeekSeconds, --// peek first
+		LockedUntil = 0,  --// mismatch flip-back lock
+		LastFlipAt = 0,
+	}
+	cardSessions[station] = session
+
+	cardRemote:FireClient(player, "Open", {
+		Token = session.Token,
+		Cards = cards,
+		GameSeconds = CARDS.GameSeconds,
+		PeekSeconds = CARDS.PeekSeconds,
+	})
+
+	--// ONE ENDING, TWO EXITS, same as the smash: the clock landing,
+	--// or the board swept early (the Flip handler calls Finish)
+	local function finishSession()
+		local live = cardSessions[station]
+		if live ~= session then return end
+		cardSessions[station] = nil
+
+		local quality = cardQualityFor(session.PairsFound)
+		if quality == "Ruined" then
+			--// UNSERVABLE: the station flips to the cleanup state (on
+			--// ramen the labels say RUINED, everywhere else BURNT)
+			station.ForcedQuality = nil
+			if station.State ~= "IDLE" then
+				station.State = "BURNT"
+				refreshStationFood(station)
+				refreshStationUi(station)
+				refreshStationPrompt(station)
+			end
+		else
+			station.ForcedQuality = quality
+			--// Grill/fry dishes resume normal aging from here - ramen
+			--// keeps its infinite windows (soup never burns)
+			if station.Method ~= "Ramen" then
+				local recipe = Config.Recipes[station.Dish]
+				local timing = recipe and Config.Cooking[recipe.Timing]
+				if timing then
+					station.PerfectUntil = station.Elapsed + timing.PerfectWindow
+					station.OvercookedUntil = station.PerfectUntil + timing.OvercookAfter
+					station.BurntAt = station.OvercookedUntil + timing.BurntAfter
+				end
+			end
+		end
+		if player.Parent then
+			cardRemote:FireClient(player, "End", session.Token, session.PairsFound, quality)
+		end
+		print(("[Kitchen] CARDS: %s matched %d pair(s) - %s %s")
+			:format(player.Name, session.PairsFound, quality, tostring(station.Dish)))
+
+		--// A won game lands the dish in the cook's hands after the
+		--// verdict splash; full hands leave it for an E-collect
+		if quality ~= "Ruined" and player.Parent then
+			task.delay(1.2, function()
+				if station.ForcedQuality and not cardSessions[station]
+					and station.State == "PERFECT" and player.Parent then
+					grantFromMinigame(station, player, station.ForcedQuality)
+				end
+			end)
+		end
+	end
+	session.Finish = finishSession
+	task.delay(CARDS.PeekSeconds + CARDS.GameSeconds, finishSession)
+end
+
+cardRemote.OnServerEvent:Connect(function(player, action, token, index)
+	if action ~= "Flip" then return end
+
+	local station, session
+	for s, sess in pairs(cardSessions) do
+		if sess.Token == token and sess.Player == player then
+			station, session = s, sess
+			break
+		end
+	end
+	if not session then return end
+
+	local now = os.clock()
+	if now < session.PlayableAt then return end  --// still peeking
+	if now < session.LockedUntil then return end --// mismatch flip-back
+	if now - session.LastFlipAt < CARDS.FlipCooldownSeconds then return end
+	session.LastFlipAt = now
+
+	index = tonumber(index)
+	if not index or index ~= math.floor(index) then return end
+	if not session.Cards[index] then return end
+	if session.Matched[index] or session.FirstPick == index then return end
+
+	if not session.FirstPick then
+		session.FirstPick = index
+		cardRemote:FireClient(player, "Show", token, index)
+		return
+	end
+
+	local first = session.FirstPick
+	session.FirstPick = nil
+	cardRemote:FireClient(player, "Show", token, index)
+
+	if session.Cards[first] == session.Cards[index] then
+		session.Matched[first] = true
+		session.Matched[index] = true
+		session.PairsFound += 1
+		cardRemote:FireClient(player, "Match", token,
+			{ A = first, B = index, Pairs = session.PairsFound })
+		--// Perfect bar reached (or board swept): over on the spot
+		if session.PairsFound >= CARDS.PerfectPairs
+			or session.PairsFound >= CARDS.Pairs then
+			session.Finish()
+		end
+	else
+		session.LockedUntil = now + CARDS.MismatchLockSeconds
+		cardRemote:FireClient(player, "Mismatch", token, { A = first, B = index })
+	end
+end)
+
 local function clearStation(station)
 	--// Every route out of cooking lands here - collected, binned, burnt,
 	--// wiped by a grease fire - so one stop covers all of them.
 	cookSoundStop(station)
 	clearStationFood(station)
-	closeRamenSession(station, true) --// a wiped pot ends its smash game
+	closeRamenSession(station, true) --// a wiped pan ends its smash game
+	closeCardSession(station, true)  --// ...and its card game
 	station.ForcedQuality = nil
+	station.CookGame = nil
 
 	station.State = "IDLE"
 	station.Dish = nil
@@ -1016,17 +1347,16 @@ local function startCook(station, player, tool, dishName, recipe)
 	--// Gated difficulties cook in one flat time - the minigame is the
 	--// skill there; an ungated difficulty would keep the full timers
 	local cookTime = timing.CookTime
-	if cookMinigameGated() then
+	local gated = cookMinigameGated()
+	if gated then
 		cookTime = TIMING.MinigameCookSeconds
 	end
 
-	--// RAMEN SMASH: on gated difficulties the 10s colour game IS the
-	--// boil - its length replaces the flat minigame cook time
-	local isRamen = station.Method == "Ramen"
-	local ramenGame = isRamen and cookMinigameGated()
-	if ramenGame then
-		cookTime = RAMEN.GameSeconds
-	end
+	--// THE MINIGAME ROLL: every gated cook, any method, rolls its game.
+	--// ALL of them share the same entry (owner spec): the pan cooks the
+	--// flat MinigameCookSeconds, and E at the READY station opens the
+	--// drawn game - arrow, smash, or card match (see beginCookSession).
+	local cookGame = gated and rollCookGame(player) or nil
 
 	station.State = "COOKING"
 	station.Dish = dishName
@@ -1036,18 +1366,12 @@ local function startCook(station, player, tool, dishName, recipe)
 	station.PerfectUntil = cookTime + timing.PerfectWindow
 	station.OvercookedUntil = station.PerfectUntil + timing.OvercookAfter
 	station.BurntAt = station.OvercookedUntil + timing.BurntAfter
+	station.CookGame = cookGame
 
-	if isRamen then
+	if station.Method == "Ramen" then
 		--// RAMEN NEVER BURNS (owner ruling: it is soup). The worst an
 		--// ignored pot reaches is the trash tier, and it keeps forever.
 		station.BurntAt = math.huge
-		if ramenGame then
-			--// Quality comes from the smash score, not the windows: the
-			--// finished bowl holds at PERFECT-state (warm) indefinitely
-			station.PerfectUntil = math.huge
-			station.OvercookedUntil = math.huge
-			beginRamenSession(station, player)
-		end
 	end
 
 	--// Sizzle at the station, not in the player's ear: positional, and
@@ -1079,8 +1403,10 @@ local function collect(station, player)
 
 	local dishName = station.Dish
 	local recipe = Config.Recipes[dishName]
-	--// A ramen bowl's quality was decided by its smash score
-	local quality = station.ForcedQuality
+	--// A smash-cooked dish's quality was decided by its score - but only
+	--// while it still sits in the PERFECT state: a grill/fry dish left
+	--// to age past its window degrades like any other cook
+	local quality = (station.State == "PERFECT" and station.ForcedQuality)
 		or (station.State == "PERFECT" and "Perfect" or "Overcooked")
 
 	local tool = makeTool(recipe.Display, recipe.Icon, recipe.Color, {
@@ -1166,7 +1492,8 @@ local function closeCookSession(station, tellClient)
 end
 
 --// The minigame's version of collect(): same tool shape, same bookkeeping
-local function grantFromMinigame(station, player, quality)
+--// (assigns the forward declaration above - the smash section calls it too)
+function grantFromMinigame(station, player, quality)
 	local character = player.Character
 	if not character then return false end
 	if isFull(player) then
@@ -1193,25 +1520,40 @@ local function grantFromMinigame(station, player, quality)
 		scoreOnly(player, "OvercookedCooks", 1)
 	end
 
-	print(("[Kitchen] %s timed a %s %s off the arrow"):format(player.Name, quality, dishName))
+	print(("[Kitchen] %s earned a %s %s off the minigame"):format(player.Name, quality, dishName))
 	clearStation(station)
 	return true
 end
 
 local function beginCookSession(station, player)
-	--// RAMEN skips the arrow: its game already played DURING the boil,
-	--// so collecting a finished bowl is a plain grab at the scored tier
-	if station.Method == "Ramen" then
-		if ramenSessions[station] then
-			flash(station.Prompt, "Still boiling!", stationPromptText(station))
+	--// SMASH and CARD MATCH cooks: the same E that would open the
+	--// arrow opens the drawn game instead (owner spec - every game
+	--// starts on the press at a READY station), and its result
+	--// decides the dish
+	local gameSessions, beginGame
+	if station.CookGame == GAME_SMASH then
+		gameSessions, beginGame = ramenSessions, beginRamenSession
+	elseif station.CookGame == GAME_CARDS then
+		gameSessions, beginGame = cardSessions, beginCardSession
+	end
+	if gameSessions then
+		if gameSessions[station] then
+			flash(station.Prompt, "Game in progress!", stationPromptText(station))
 			return
 		end
 		if station.State == "BURNT" then
-			collect(station, player) --// a RUINED bowl only dumps
+			collect(station, player) --// a ruined dish only dumps
 			return
 		end
-		grantFromMinigame(station, player, station.ForcedQuality
-			or (station.State == "PERFECT" and "Perfect" or "Overcooked"))
+		if station.ForcedQuality then
+			--// Already played (hands were full at the grant): plain grab
+			--// at the scored tier - unless it aged past PERFECT waiting
+			grantFromMinigame(station, player,
+				(station.State == "PERFECT" and station.ForcedQuality)
+					or "Overcooked")
+			return
+		end
+		beginGame(station, player) --// THIS press starts the game
 		return
 	end
 

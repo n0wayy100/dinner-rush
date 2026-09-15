@@ -188,16 +188,60 @@ Config.OrderWeights = {
 -- KITCHEN: carrying, stations, and what a cook is worth
 ----------------------------------------------------------------
 ----------------------------------------------------------------
--- RAMEN SMASH (owner design, Sep 2026): ramen's boil IS its minigame.
--- Loading noodles opens a 10s colour-match game (tap when the swirling
--- broth matches the target colour); the HIT COUNT decides the bowl.
--- Ramen can NEVER be burnt - it is soup - so the worst outcome is the
--- trash tier, and a ready bowl keeps forever. THE LAW: one set of
--- numbers for every difficulty; the ungated fallback is a plain timed
--- boil (Boiling windows) that also never burns.
+-- DOORS (Sep 2026): tag "Door" on a swinging door Model (the LEAF
+-- only - a frame inside the model would swing too). E toggles it open
+-- and shut, swung server-side around its own hinge edge. If a door
+-- swings the wrong way: FlipHinge / FlipSwing boolean attributes on
+-- the model fix it without touching code.
+----------------------------------------------------------------
+Config.Doors = {
+	OpenAngleDeg = 105,           -- how far open
+	SwingSeconds = 0.35,          -- swing time, eased
+	PromptRangeStuds = 8,
+}
+
+----------------------------------------------------------------
+-- THE MINIGAME ROLL (owner spec, Sep 2026): EVERY gated cook, on every
+-- method and every map, rolls which minigame it gets - the timing
+-- ARROW (game 1), the colour SMASH (game 2), or the memory CARD MATCH
+-- (game 3; KitchenService owns the list). Base odds are EVEN across
+-- the pool. Streaks self-correct: each same-game pick IN A ROW moves
+-- a slice of that game's odds to the others (split evenly), and the
+-- moment the streak breaks the bias falls back to the single-pick
+-- baseline (1-1-2 -> the 2 rolls at baseline again). Tracked per
+-- PLAYER, on the server.
+----------------------------------------------------------------
+Config.CookMinigamePick = {
+	StreakBiasPerRepeat = 0.12,   -- each same-game pick in a row moves this
+	                              -- much of its odds to the other games
+	MaxBias = 0.24,               -- bias cap: a long streak can never push
+	                              -- its game below ~9% (1/3 - 0.24)
+
+	--// STUDIO KNOB (live-ignored, like StudioSpawnBurst): pin EVERY
+	--// roll to one game while testing it. 0 = off (normal roll),
+	--// 1 = arrow, 2 = smash, 3 = card match. REVERT TO 0 when done.
+	StudioForceGame = 3,
+}
+
+----------------------------------------------------------------
+-- THE SMASH GAME (owner design, Sep 2026 - "RamenSmash" keeps its name
+-- from its ramen-only debut, but it is now game 2 of the coin flip
+-- above). SAME ENTRY AS THE ARROW (owner spec): the pan cooks the flat
+-- Config.CookTiming.MinigameCookSeconds, the bar fills, the station
+-- reads READY - then pressing E OPENS the 7s colour game, and the
+-- score decides the dish (aging pauses while it plays; the winning
+-- dish lands straight in your hands). Ramen-only rulings that survive:
+-- ramen can NEVER be burnt - it is soup - so its worst outcome is the
+-- trash tier and a ready bowl keeps forever; a smash-cooked GRILL or
+-- FRY dish resumes normal aging after the game and can still burn if
+-- abandoned. THE LAW: one set of numbers for every difficulty; the
+-- ungated fallback is the plain timed cook.
 ----------------------------------------------------------------
 Config.RamenSmash = {
-	GameSeconds = 10,             -- the whole boil, and the whole game
+	GameSeconds = 7,              -- the playable game itself (the cook
+	                              -- before it is the arrow game's own
+	                              -- flat MinigameCookSeconds - one knob
+	                              -- for both games' wait)
 
 	--// OWNER SPEC (Sep 2026): the POINTER is FIXED at the top; three
 	--// coloured arcs ORBIT the pot's rim. Tap when an arc is under the
@@ -214,11 +258,11 @@ Config.RamenSmash = {
 	--// BOUNCE off each other (reverse + brief slow), EXCEPT blue
 	--// PHASES straight through yellow.
 	Arcs = {
-		{ SizeDeg = 70, Points = 1, Speed = 170, StartDeg = 90,     -- yellow
+		{ SizeDeg = 70, Points = 1, Speed = 140, StartDeg = 90,     -- yellow
 			Chips = 3, ShrinkPerHitDeg = 8, MinSizeDeg = 36 },
-		{ SizeDeg = 44, Points = 2, Speed = -240, StartDeg = 210,   -- blue
+		{ SizeDeg = 44, Points = 2, Speed = -200, StartDeg = 210,   -- blue
 			Chips = 2, ShrinkPerHitDeg = 6, MinSizeDeg = 24, PhasesThrough = 1 },
-		{ SizeDeg = 26, Points = 3, Speed = 340, StartDeg = 320,    -- green
+		{ SizeDeg = 26, Points = 3, Speed = 285, StartDeg = 320,    -- green
 			Chips = 1 },
 	},
 	CollisionSlowMult = 0.55,     -- pace while bump-slowed
@@ -235,15 +279,126 @@ Config.RamenSmash = {
 	MissPenaltyPoints = 2,        -- a miss COSTS points (floor 0) and
 	                              -- re-rolls the arcs - spraying loses
 
-	--// THE SCORELINES (points in 10s):
-	--//   MASTER BOWL  (Perfect)   - PerfectPoints and up
-	--//   DECENT BOWL  (Good tier) - GoodPoints .. PerfectPoints-1
-	--//   RUINED       - below GoodPoints: UNSERVABLE (owner ruling,
-	--//     Sep 2026). The pot holds a ruined bowl that must be dumped
-	--//     (burnt-cleanup flow, ramen-flavoured labels) - a wasted cook
-	--//     on the report, but still never "burnt", because soup.
-	PerfectPoints = 15,
-	GoodPoints = 10,
+	--// THE SCORELINES (points in 7s - scaled down with the game when it
+	--// shortened from 10s, same points-per-second bar):
+	--//   Perfect - PerfectPoints and up. Reaching it ENDS THE GAME ON
+	--//     THE SPOT (owner spec): instant perfect dish, no riding out
+	--//     the clock.
+	--//   Good    - GoodPoints .. PerfectPoints-1
+	--//   RUINED  - below GoodPoints: UNSERVABLE (owner ruling, Sep
+	--//     2026). The station holds a ruined dish that must be dumped
+	--//     (burnt-cleanup flow; ramen keeps its RUINED-never-"burnt"
+	--//     labels, because soup) - a wasted cook on the report.
+	PerfectPoints = 10,
+	GoodPoints = 7,
+}
+
+----------------------------------------------------------------
+-- THE CARD MATCH (owner design, Sep 2026): game 3 of the minigame
+-- roll - memory pairs with a shift-kitchen clock. Same entry as the
+-- others: flat cook, READY, E opens it. The server deals Pairs from
+-- the ACTIVE MAP's food art (menu dishes + their raws - Diner cards
+-- on the Diner, Yamasaki cards at Yamasaki), shows the whole board
+-- for the PEEK, then it's flip-two-to-match against the clock. Pairs
+-- found decide the dish; finding them ALL is Perfect ON THE SPOT.
+-- THE LAW: one set of numbers for every difficulty.
+----------------------------------------------------------------
+Config.CardMatch = {
+	GameSeconds = 10,             -- the playable clock, AFTER the peek
+	                              -- (memory needs a touch more than the
+	                              -- smash's 7 - flip-backs eat time)
+	PeekSeconds = 1.0,            -- the whole board shows face-up first:
+	                              -- turns luck into actual memory
+	Pairs = 4,                    -- 4 pairs = 8 cards, a 4x2 board
+	MismatchLockSeconds = 0.5,    -- a wrong pair sits face-up this long
+	                              -- (input locked) before flipping back -
+	                              -- the read-it-and-learn beat
+	FlipCooldownSeconds = 0.08,   -- server-side min gap between flips:
+	                              -- humans never notice, autoclickers do
+
+	--// THE SCORELINES (pairs found when the clock lands):
+	PerfectPairs = 4,             -- sweep the board = Perfect, instantly
+	GoodPairs = 3,
+	OvercookedPairs = 2,          -- below this = RUINED, bin it
+}
+
+----------------------------------------------------------------
+-- THE TUTORIAL (owner design, Sep 2026): a guided first shift in the
+-- real restaurant. Opt-in only - a live server enters it via lobby
+-- teleport data (Mode = "TUTORIAL"; button lands with the lobby
+-- wiring pass) - Manager Bruno teaches one full customer loop with
+-- one scripted party: seat, greet, order, then fetch-cook-serve THREE
+-- dishes (one per cook minigame, pinned in CookGameOrder), collect
+-- the payment, done. While MatchMode is TUTORIAL: patience bars are
+-- FROZEN, the shift clock is frozen (so events never roll and the
+-- night never ends), natural spawns/dash/critic/VIP/Helper are all
+-- off. After the wrap-up the kitchen stays open as FREE PRACTICE.
+-- TutorialService runs the steps; TutorialClient draws the objective
+-- banner + SKIP button; the EventArrow points at each target.
+----------------------------------------------------------------
+Config.Tutorial = {
+	--// STUDIO KNOB (live-ignored): boot Studio playtests straight
+	--// into the tutorial for testing. REVERT to false when done.
+	StudioTutorial = false, --// off - tutorial polish continues (Sep 2026)
+
+	WelcomeSeconds = 4,           -- Bruno's hello before the first task
+	WrapSeconds = 6,              -- the send-off lingers this long
+	StepSettleSeconds = 1.0,      -- breath between a step done and the next
+
+	--// The three teaching cooks pin the minigame roll in this order
+	--// (1 = arrow, 2 = smash, 3 = card match)
+	CookGameOrder = { 1, 2, 3 },
+
+	--// Bruno's script + the objective banner per step. Runtime fills
+	--// {DISH} {INGREDIENT} {SOURCE} {METHOD} from the scripted ticket.
+	Text = {
+		Welcome = {
+			Bruno = "Welcome to the crew, rookie! I'm Bruno, the manager. Follow my lead - and follow the arrow!",
+			Objective = "Listen to Bruno!",
+		},
+		Seat = {
+			Bruno = "Customers at the door! Walk up and press E to seat them.",
+			Objective = "Seat the customers - press E on them!",
+		},
+		Greet = {
+			Bruno = "Quick, say hello! A friendly hi keeps a table patient.",
+			Objective = "Greet the table - press E on a customer!",
+		},
+		Order = {
+			Bruno = "Now take their order - E again. Remember what they want!",
+			Objective = "Take the order!",
+		},
+		Fetch = {
+			Bruno = "Food time! Grab {INGREDIENT} from the {SOURCE}.",
+			Objective = "Get {INGREDIENT} from the {SOURCE}!",
+		},
+		Cook = {
+			{
+				Bruno = "Load the {METHOD} station, then press E when it's ready - and stop the arrow in the GREEN!",
+				Objective = "Cook {DISH} - stop the arrow in the green!",
+			},
+			{
+				Bruno = "This one plays COLOUR SMASH - tap when a colour crosses the pointer!",
+				Objective = "Cook {DISH} - smash those colours!",
+			},
+			{
+				Bruno = "Last trick: MEMORY MATCH! Peek hard, then find the pairs!",
+				Objective = "Cook {DISH} - match the pairs!",
+			},
+		},
+		Serve = {
+			Bruno = "Beautiful! Run it to the table - press E on the customer.",
+			Objective = "Serve {DISH} to the table!",
+		},
+		Collect = {
+			Bruno = "They loved it! Hold G at the table to collect the money.",
+			Objective = "Collect the payment - hold G at the table!",
+		},
+		Wrap = {
+			Bruno = "THAT'S the whole job, rookie! The kitchen's yours - practice as long as you like.",
+			Objective = "Tutorial complete! Free practice",
+		},
+	},
 }
 
 Config.Kitchen = {
@@ -1800,7 +1955,7 @@ Config.DefaultMapId = "Diner"
 --// ingredients - without the lobby handoff or a per-test command line.
 --// "" falls back to DefaultMapId. Live servers ignore this completely:
 --// the lobby's teleport data always wins there.
-Config.StudioMapId = "Sushi"
+Config.StudioMapId = "Diner" --// tutorial testing at Route 67 (Sep 2026)
 
 --// STUDIO-ONLY spawn burst: this many parties march in the moment the
 --// shift goes RUNNING, so route/seating tests need no command bar.

@@ -86,6 +86,24 @@ local function speak(poolName, urgent)
 end
 
 ----------------------------------------------------------------
+-- TUTORIAL SEAM: TutorialService makes Bruno say an EXACT line -
+-- urgent, budget-exempt, cooldown-exempt (the tutor owns its own
+-- pacing). Server-only bindable; no client can reach it.
+----------------------------------------------------------------
+do
+	local bindable = Instance.new("BindableEvent")
+	bindable.Name = "ManagerSay"
+	bindable.Event:Connect(function(line)
+		if typeof(line) ~= "string" or line == "" then return end
+		lineId += 1
+		ManagerState:SetAttribute("Line", line)
+		ManagerState:SetAttribute("Pool", "Tutorial")
+		ManagerState:SetAttribute("LineId", lineId)
+	end)
+	bindable.Parent = game:GetService("ServerStorage")
+end
+
+----------------------------------------------------------------
 -- Shift story beats: start, phase turns, closing
 ----------------------------------------------------------------
 local lastShiftState = ShiftState:GetAttribute("State")

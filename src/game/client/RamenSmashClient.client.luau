@@ -2,16 +2,18 @@
 	Dinner Rush - RamenSmashClient
 	StarterPlayer.StarterPlayerScripts.Client.RamenSmashClient  (LocalScript)
 
-	RAMEN SMASH (Config.RamenSmash), owner spec: the POINTER is fixed at
-	the top of the pot; three coloured arcs ORBIT the rim - yellow big
-	and cheap, blue middling, green small and precious. Tap (click /
-	touch / Space / gamepad A) when an arc passes under the pointer to
-	score its points. Arcs that run into each other slow down.
+	THE SMASH GAME (Config.RamenSmash - the name survives its ramen-only
+	debut; any cook that draws game 2 of the minigame coin flip plays
+	this). Owner spec: the POINTER is fixed at the top; three coloured
+	arcs ORBIT the rim - yellow big and cheap, blue middling, green
+	small and precious. Tap (click / touch / Space / gamepad A) when an
+	arc passes under the pointer to score its points. Arcs that run
+	into each other slow down.
 
 	The SERVER simulates the arcs and snapshots the truth ("Sync") a few
 	times a second; this panel extrapolates between snapshots and taps.
-	Scorelines at the end: MASTER BOWL! / DECENT BOWL / SAD SOUP...
-	Ramen never burns.
+	DELIBERATELY DISH-BLIND (owner spec): no dish name, no food emoji -
+	one identical panel for every method on every map.
 --]]
 
 local Players = game:GetService("Players")
@@ -42,11 +44,13 @@ local ARC_COLORS = {
 	Color3.fromRGB(76, 175, 109),  -- green: small, precious
 }
 
+--// Dish-blind on purpose: these fit a bowl, a burger, and whatever
+--// comes next
 local VERDICTS = {
-	Perfect = { Text = "MASTER BOWL!", Color = Color3.fromRGB(76, 175, 109) },
-	Good = { Text = "DECENT BOWL", Color = Color3.fromRGB(245, 184, 65) },
-	Ruined = { Text = "RUINED! DUMP IT!", Color = Color3.fromRGB(229, 72, 77) },
-	Overcooked = { Text = "SAD SOUP...", Color = Color3.fromRGB(150, 130, 120) },
+	Perfect = { Text = "MASTER COOK!", Color = Color3.fromRGB(76, 175, 109) },
+	Good = { Text = "DECENT COOK", Color = Color3.fromRGB(245, 184, 65) },
+	Ruined = { Text = "RUINED! BIN IT!", Color = Color3.fromRGB(229, 72, 77) },
+	Overcooked = { Text = "SLOPPY WORK...", Color = Color3.fromRGB(150, 130, 120) },
 }
 
 local session = nil
@@ -105,7 +109,7 @@ local function buildPanel(data)
 	title.BackgroundTransparency = 1
 	title.Font = Enum.Font.FredokaOne
 	title.TextScaled = true
-	title.Text = "RAMEN SMASH! Tap when a colour hits the pointer!"
+	title.Text = "COLOR SMASH! Tap when a colour hits the pointer!"
 	title.TextColor3 = CHOC
 	title.Parent = panel
 
@@ -130,17 +134,6 @@ local function buildPanel(data)
 	rcStroke.Thickness = 5
 	rcStroke.Color = CHOC
 	rcStroke.Parent = ringCircle
-
-	local bowl = Instance.new("TextLabel") --// the soup, for morale
-	bowl.Active = false
-	bowl.Size = UDim2.fromScale(0.5, 0.5)
-	bowl.AnchorPoint = Vector2.new(0.5, 0.5)
-	bowl.Position = UDim2.fromScale(0.5, 0.5)
-	bowl.BackgroundTransparency = 1
-	bowl.Font = Enum.Font.FredokaOne
-	bowl.TextScaled = true
-	bowl.Text = "🍜"
-	bowl.Parent = ring
 
 	--// THE POINTER: fixed at the top, pointing down at the rim
 	local pointer = Instance.new("TextLabel")
@@ -387,4 +380,4 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 	end
 end)
 
-print("[RamenSmash] ready - the boil is the game")
+print("[RamenSmash] ready - any pan can draw the smash")

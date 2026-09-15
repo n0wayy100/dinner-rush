@@ -95,6 +95,15 @@ local function creditStat(player, key, amount)
 	scoreOnly(player, key, amount)
 end
 
+--// TUTORIAL MODE (Sep 2026): MatchServer publishes MatchMode. While it
+--// is "TUTORIAL": patience bars freeze, the shift clock freezes (so the
+--// event scheduler never rolls and the night never ends), natural
+--// spawns/dash are off, and TutorialService drives the one scripted
+--// party through ServerStorage.TutorialSpawnParty.
+local function tutorialMode()
+	return workspace:GetAttribute("MatchMode") == "TUTORIAL"
+end
+
 -- DEBUG knobs (set to nil to use real Config values)
 local DEBUG_PREP_SECONDS = 8        -- real: Config.Shift.PrepTimeSeconds (45)
 local DEBUG_SHIFT_SECONDS = nil     -- e.g. 180 for a 3-minute test shift
@@ -2327,7 +2336,8 @@ local function onPartyFinishedEating(party, tableId)
 	--// critic always pays - imagine the scandal. LeaveByFade maps have
 	--// no dash at all: there is no door run where leaving is a fade.
 	local mapHere = Config.MapById(workspace:GetAttribute("MatchMapId"))
-	local noDashMap = mapHere and mapHere.LeaveByFade == true
+	local noDashMap = (mapHere and mapHere.LeaveByFade == true)
+		or tutorialMode() --// nobody runs out on Bruno's lesson
 	local dashChance = (party.IsCritic or noDashMap) and 0
 		or (DASH.Chance[DIFFICULTY] or 0)
 	local vipOk = not party.IsVIP or DASH.VIPCanDash[DIFFICULTY]
@@ -3024,13 +3034,18 @@ local function findFreeSpot()
 	return nil
 end
 
-local function spawnParty()
+--// options (all optional - absent means the classic roll): the
+--// TUTORIAL's scripted party passes { Plain = true (never VIP/critic),
+--// Size = n, Ticket = {dish, ...} (forced, in order) }
+local function spawnParty(options)
+	options = options or {}
+	local plain = options.Plain == true
 	if shift.State ~= "RUNNING" then return end
 	local spot = findFreeSpot()
 	if not spot then return end
 
 	nextPartyId += 1
-	local forcedVIP = DEBUG_FORCE_FIRST_VIP and not debugFirstVIPDone
+	local forcedVIP = not plain and DEBUG_FORCE_FIRST_VIP and not debugFirstVIPDone
 	if forcedVIP then
 		debugFirstVIPDone = true
 	end
@@ -3038,7 +3053,9 @@ local function spawnParty()
 	--// THE CRITIC claims the first spawn past his planned moment (set at
 	--// shift start). One person, never a VIP, never dashes.
 	local isCritic = false
-	if DEBUG_FORCE_FIRST_CRITIC and not debugFirstCriticDone then
+	if plain then
+		--// a scripted party is never the critic and never claims him
+	elseif DEBUG_FORCE_FIRST_CRITIC and not debugFirstCriticDone then
 		isCritic = true
 		debugFirstCriticDone = true
 		shift.CriticDone = true --// tonight's planned critic (if any) stands down
@@ -3050,9 +3067,10 @@ local function spawnParty()
 
 	local party = {
 		Id = nextPartyId,
-		Size = isCritic and 1 or rollPartySize(),
+		Size = options.Size or (isCritic and 1 or rollPartySize()),
 		IsCritic = isCritic,
-		IsVIP = not isCritic and (forcedVIP or math.random() < diff.VIPChance),
+		IsVIP = not plain and not isCritic
+			and (forcedVIP or math.random() < diff.VIPChance),
 		State = STATE.QUEUED,
 		Spot = spot,
 		Greeted = false,
@@ -3066,12 +3084,18 @@ local function spawnParty()
 		dishCount = math.random(CRITIC.MinDishes, CRITIC.MaxDishes)
 		party.BillUnits = dishCount
 	end
-	party.DishesRemaining = dishCount
-	party.Ticket = {}
-	for _ = 1, dishCount do
-		table.insert(party.Ticket,
-			Config.RollDish(Config.MenuForMap(workspace:GetAttribute("MatchMapId"))))
+	if options.Ticket and #options.Ticket > 0 then
+		--// the tutor's forced ticket replaces the roll entirely
+		party.Ticket = table.clone(options.Ticket)
+		dishCount = #party.Ticket
+	else
+		party.Ticket = {}
+		for _ = 1, dishCount do
+			table.insert(party.Ticket,
+				Config.RollDish(Config.MenuForMap(workspace:GetAttribute("MatchMapId"))))
+		end
 	end
+	party.DishesRemaining = dishCount
 
 	if isCritic then
 		shift.CriticAlert = (shift.CriticAlert or 0) + 1
@@ -3091,6 +3115,18 @@ local function spawnParty()
 	if party.IsVIP then
 		print(("[Service] VIP party %d arrived - impatient, pays double"):format(party.Id))
 	end
+end
+
+--// TUTORIAL SEAM: TutorialService spawns its one scripted party here
+--// (same validated spawn path as every natural party)
+do
+	local bindable = Instance.new("BindableFunction")
+	bindable.Name = "TutorialSpawnParty"
+	bindable.OnInvoke = function(options)
+		spawnParty(options)
+		return true
+	end
+	bindable.Parent = ServerStorage
 end
 
 ----------------------------------------------------------------
@@ -3422,6 +3458,11 @@ end
 --// this only reads it, and falls back to normal speed if it is absent.
 local eventStateFolder = nil
 local function patienceMultiplier()
+	--// TUTORIAL: patience is frozen solid - Bruno's lesson cannot be
+	--// failed by a draining bar
+	if tutorialMode() then
+		return 0
+	end
 	if not eventStateFolder or not eventStateFolder.Parent then
 		eventStateFolder = ReplicatedStorage:FindFirstChild("EventState")
 	end
@@ -3463,7 +3504,11 @@ RunService.Heartbeat:Connect(function(dt)
 	--// Elapsed freezes at closing time: the clock is done, only the room is
 	--// still working. Phases stop advancing with it.
 	if shift.State == "RUNNING" then
-		shift.Elapsed += dt
+		--// TUTORIAL: the clock stands still - the phase never turns,
+		--// the event scheduler never rolls, the night never ends
+		if not tutorialMode() then
+			shift.Elapsed += dt
+		end
 		local phase = Config.PhaseAt(shift.Elapsed)
 		if phase ~= shift.Phase then
 			shift.Phase = phase
@@ -3577,9 +3622,13 @@ task.spawn(function()
 	end
 
 	task.wait(2)
+	--// TUTORIAL: no natural customers at all - TutorialService spawns
+	--// the one scripted party through TutorialSpawnParty
+	if tutorialMode() then
+		print("[Service] TUTORIAL shift - natural spawns are off")
 	--// STUDIO-ONLY: the map-testing burst (Config.StudioSpawnBurst)
 	--// replaces the single opening spawn; the normal trickle follows
-	if game:GetService("RunService"):IsStudio()
+	elseif game:GetService("RunService"):IsStudio()
 		and (Config.StudioSpawnBurst or 0) > 0 then
 		print(("[Service] STUDIO BURST: %d parties incoming (Config.StudioSpawnBurst)")
 			:format(Config.StudioSpawnBurst))
@@ -3593,6 +3642,8 @@ task.spawn(function()
 	while shift.State == "RUNNING" do
 		local interval = Config.SpawnIntervalFor(shift.Phase, DIFFICULTY, #Players:GetPlayers())
 		task.wait(interval)
-		spawnParty()
+		if not tutorialMode() then
+			spawnParty()
+		end
 	end
 end)

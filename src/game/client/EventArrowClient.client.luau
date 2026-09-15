@@ -130,8 +130,54 @@ local function nearestBlaze()
 	return best
 end
 
+--// TUTORIAL: the nearest instance wearing the tutor's TargetTag (a
+--// TargetMethod narrows CookStation to the right appliance). Nearest
+--// beats first-found: "the fridge" means the one by the player.
+local tutorialState = nil
+local function tutorialTarget()
+	if not tutorialState or not tutorialState.Parent then
+		tutorialState = ReplicatedStorage:FindFirstChild("TutorialState")
+	end
+	if not tutorialState or tutorialState:GetAttribute("Active") ~= true then
+		return nil
+	end
+	local tag = tutorialState:GetAttribute("TargetTag")
+	if not tag or tag == "" then return nil end
+	local method = tutorialState:GetAttribute("TargetMethod")
+
+	local character = player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	local best, bestDistance = nil, math.huge
+	for _, instance in ipairs(CollectionService:GetTagged(tag)) do
+		if instance:IsDescendantOf(workspace) then
+			local part = instance:IsA("BasePart") and instance
+				or (instance:IsA("Model")
+					and (instance.PrimaryPart
+						or instance:FindFirstChildWhichIsA("BasePart", true)))
+			local methodOk = not method or method == ""
+				or instance:GetAttribute("Method") == method
+				or (part and part:GetAttribute("Method") == method)
+			if part and methodOk then
+				local distance = root
+					and (part.Position - root.Position).Magnitude or 0
+				if distance < bestDistance then
+					best, bestDistance = part, distance
+				end
+			end
+		end
+	end
+	return best
+end
+
 local function computeTargets()
 	local targets = {}
+
+	--// The tutor's "go here" beats everything (tutorial shifts have no
+	--// events or dashers anyway)
+	local tutorPart = tutorialTarget()
+	if tutorPart then
+		table.insert(targets, { Part = tutorPart, Emoji = "👉" })
+	end
 
 	local active = EventState and EventState:GetAttribute("ActiveEvent") or ""
 	if active == "ToiletEmergency" then

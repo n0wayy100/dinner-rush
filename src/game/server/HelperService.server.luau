@@ -525,7 +525,10 @@ end)
 ShiftState:GetAttributeChangedSignal("State"):Connect(function()
 	local state = ShiftState:GetAttribute("State")
 	if state == "RUNNING" and lastState ~= "RUNNING" then
-		if #Players:GetPlayers() <= HELPER.MaxPlayersForHelper then
+		--// TUTORIAL: no Helper - he would seat and serve Bruno's whole
+		--// lesson himself before the rookie moved a muscle
+		if #Players:GetPlayers() <= HELPER.MaxPlayersForHelper
+			and workspace:GetAttribute("MatchMode") ~= "TUTORIAL" then
 			spawnHelper()
 		end
 	elseif state ~= "RUNNING" and state ~= "CLOSING" then
