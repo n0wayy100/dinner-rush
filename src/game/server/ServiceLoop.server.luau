@@ -778,9 +778,44 @@ local function walkMemberTo(member, targetPos, onDone)
 	--// through it on one straight diagonal.
 	local rp = RaycastParams.new()
 	rp.RespectCanCollide = true --// markers, anchors and decor are not floors
-	local hereHit = workspace:Raycast(from, Vector3.new(0, -30, 0), rp)
-	local thereHit = workspace:Raycast(
-		targetPos + Vector3.new(0, 2.5, 0), Vector3.new(0, -35, 0), rp)
+	--// A FLOOR IS NEVER A BODY OR A CHAIR (Sep 17 fix): Humanoids force
+	--// torso collision back ON every physics step, so the floor probes
+	--// kept finding torsos - the pawn's own, then a partymate's - as
+	--// "ground", walking customers into the wood or onto each other.
+	--// The probe now casts PAST anything that belongs to a rig (this
+	--// pawn, partymates, players, the Helper) and past tagged chairs.
+	rp.FilterType = Enum.RaycastFilterType.Exclude
+	local exclude = { root.Parent }
+	for _, chair in ipairs(CollectionService:GetTagged("ChairSeat")) do
+		table.insert(exclude, chair:IsA("Model") and chair or (chair.Parent or chair))
+	end
+	rp.FilterDescendantsInstances = exclude
+	--// maxY: a surface ABOVE this cannot be this probe's floor - used
+	--// by the here-probe, where the pawn's own feet are the ceiling of
+	--// possibility (a couch top under a walking pawn fooled it once)
+	local function floorRay(origin, dir, maxY)
+		for _ = 1, 6 do
+			local hit = workspace:Raycast(origin, dir, rp)
+			if not hit then return nil end
+			local model = hit.Instance:FindFirstAncestorOfClass("Model")
+			if model and model:FindFirstChildOfClass("Humanoid") then
+				table.insert(exclude, model)
+				rp.FilterDescendantsInstances = exclude
+			elseif maxY ~= nil and hit.Position.Y > maxY then
+				table.insert(exclude, hit.Instance) --// furniture underfoot
+				rp.FilterDescendantsInstances = exclude
+			else
+				return hit
+			end
+		end
+		return nil
+	end
+	--// the pawn's real floor sits exactly Lift below the root; allow a
+	--// stud of slack, refuse anything higher as furniture
+	local hereHit = floorRay(from, Vector3.new(0, -30, 0),
+		from.Y - (member.Lift or 3) + 1)
+	local thereHit = floorRay(
+		targetPos + Vector3.new(0, 2.5, 0), Vector3.new(0, -35, 0))
 	if hereHit and thereHit
 		and math.abs(thereHit.Position.Y - hereHit.Position.Y) > FLOOR_CHANGE_STUDS then
 		local lift = from.Y - hereHit.Position.Y
@@ -801,7 +836,7 @@ local function walkMemberTo(member, targetPos, onDone)
 			--// Probe a NARROW window around the expected height: enough
 			--// to find the step underfoot, never the storey above (a
 			--// switchback's flights overlap vertically)
-			local hit = workspace:Raycast(at + Vector3.new(0, 2.5, 0), Vector3.new(0, -6, 0), rp)
+			local hit = floorRay(at + Vector3.new(0, 2.5, 0), Vector3.new(0, -6, 0))
 			local y = expected
 			if hit then
 				local surface = hit.Position.Y + lift
@@ -888,6 +923,59 @@ end
 --// The floor-level point a customer should stand at for a given part
 local function standingPoint(part)
 	return Vector3.new(part.Position.X, part.Position.Y, part.Position.Z)
+end
+
+----------------------------------------------------------------
+-- THE LINE MOVES UP (owner spec, Sep 17): a proper FIFO queue. When a
+-- spot frees (seating, walkout), every queued party shuffles forward
+-- one spot - 2nd walks to 1st, 3rd to 2nd, 4th to 3rd. Assignments
+-- flip IMMEDIATELY (so spawns see the true free tail of the line);
+-- the walk is just the visual catch-up. Patience bars are untouched
+-- by the shuffle. Only the FRONT party, standing still at spot 1,
+-- can be seated - everyone else hears "Wait your turn!".
+----------------------------------------------------------------
+local function partyAtFront(party)
+	if party.Advancing then
+		return false --// mid-shuffle: seatable once they arrive
+	end
+	local order = party.Spot and party.Spot:GetAttribute("Order")
+	--// a spotless party (legacy edge) keeps the old free-for-all rule
+	return order == nil or order == 1
+end
+
+local advanceQueue --// arrival re-runs the compaction, so forward-declared
+advanceQueue = function()
+	--// every queued spot-holder, front-most first (advancing parties
+	--// keep their rank - their NEW spot is already assigned)
+	local line = {}
+	for _, party in pairs(parties) do
+		if party.State == STATE.QUEUED and party.Spot then
+			table.insert(line, party)
+		end
+	end
+	table.sort(line, function(a, b)
+		return (a.Spot:GetAttribute("Order") or 99) < (b.Spot:GetAttribute("Order") or 99)
+	end)
+
+	for rank, party in ipairs(line) do
+		local target = queueSpots[rank]
+		if target and target ~= party.Spot and not party.Advancing
+			and spotOccupant[target] == nil then
+			spotOccupant[party.Spot] = nil
+			spotOccupant[target] = party
+			party.Spot = target
+			party.Advancing = true
+			print(("[Service] Party %d moves up to queue spot %s")
+				:format(party.Id, tostring(target:GetAttribute("Order"))))
+			walkTo(party, standingPoint(target), function()
+				party.Advancing = nil
+				--// another spot may have freed while they walked
+				if party.State == STATE.QUEUED then
+					advanceQueue()
+				end
+			end)
+		end
+	end
 end
 
 --// Where each member of a party stands at their table. Derived from the
@@ -1394,6 +1482,40 @@ do
 	bridge.Parent = ServerStorage
 end
 
+--// THE SPILL's gut-punch (EventSystem bridge, Sep 17 2026): when the
+--// puddle sits too long, a random HALF of the seated parties lose HALF
+--// their remaining patience in one hit. Fractions ride in from
+--// Config.Events.Spill so the ledger logic lives here with every other
+--// bar write. Returns how many parties were hit.
+do
+	local bridge = Instance.new("BindableFunction")
+	bridge.Name = "SpillPatienceHit"
+	bridge.OnInvoke = function(fraction, cutMult)
+		local seated = {}
+		for _, party in pairs(parties) do
+			if party.BarKind == "seated" and party.BarRemaining then
+				table.insert(seated, party)
+			end
+		end
+		for i = #seated, 2, -1 do
+			local j = math.random(i)
+			seated[i], seated[j] = seated[j], seated[i]
+		end
+
+		local count = math.min(math.ceil(#seated * (fraction or 0.5)), #seated)
+		for i = 1, count do
+			local party = seated[i]
+			party.BarRemaining *= (cutMult or 0.5)
+			updateBarVisual(party, party.BarRemaining / math.max(party.BarTotal, 1))
+			publishParty(party)
+			print(("[Service] Party %d is grossed out by the spill - patience cut to %d%%")
+				:format(party.Id, math.floor((cutMult or 0.5) * 100)))
+		end
+		return count
+	end
+	bridge.Parent = ServerStorage
+end
+
 ----------------------------------------------------------------
 -- Walkouts & departures
 ----------------------------------------------------------------
@@ -1551,7 +1673,11 @@ local function doorWalkout(party)
 		publishCriticReview(party, 1) --// couldn't even get a table
 	end
 	removeBar(party)
-	if party.Spot then spotOccupant[party.Spot] = nil; party.Spot = nil end
+	if party.Spot then
+		spotOccupant[party.Spot] = nil
+		party.Spot = nil
+		advanceQueue() --// a walkout frees their spot, the line moves up
+	end
 	if party.SeatPrompt then party.SeatPrompt:Destroy(); party.SeatPrompt = nil end
 	setPartyState(party, STATE.WALKOUT)
 	departTo(party, exitPos)
@@ -1646,13 +1772,21 @@ local function buildMember(party, memberIndex, atPosition)
 	end
 	root.Anchored = true
 
-	--// Feet on the floor: root sits hip height plus half its own depth above it
-	local lift = humanoid.HipHeight + (root.Size.Y / 2)
+	--// Feet on the floor: measured from the RIG'S OWN GEOMETRY. Pooled
+	--// avatar rigs arrive with HipHeight 0 (a raw Humanoid never fills
+	--// it in), which buried customers to the neck - the bounding box
+	--// knows where the feet actually are, whatever the avatar's
+	--// proportions. HipHeight stays as the floor for well-formed rigs;
+	--// the clamp shrugs off below-the-feet accessories.
+	local boxCF, boxSize = rig:GetBoundingBox()
+	local geometryLift = root.Position.Y - (boxCF.Position.Y - boxSize.Y / 2)
+	local hipLift = humanoid.HipHeight + (root.Size.Y / 2)
+	local lift = math.clamp(math.max(geometryLift, hipLift), 1.5, 4.5)
 	root.CFrame = CFrame.new(atPosition + Vector3.new(0, lift, 0))
 
 	humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
 
-	local member = { Model = rig, Root = root, Humanoid = humanoid }
+	local member = { Model = rig, Root = root, Humanoid = humanoid, Lift = lift }
 
 	if WALK_ANIMATION_ID ~= "" then
 		local animator = humanoid:FindFirstChildOfClass("Animator")
@@ -2807,6 +2941,9 @@ local function seatParty(party, seater)
 	--// orphaning the first as a forever-occupied ghost table and tearing
 	--// the party's bodies between two arrival chains.
 	if party.State ~= STATE.QUEUED or party.Seating then return false end
+	--// FIFO (owner spec, Sep 17): only the front of the line gets a
+	--// table - and never mid-shuffle
+	if not partyAtFront(party) then return false end
 	local tableId = findFreeTable()
 	if not tableId then return false end
 	party.Seating = true
@@ -2825,6 +2962,7 @@ local function seatParty(party, seater)
 	if party.Spot ~= nil then
 		spotOccupant[party.Spot] = nil
 		party.Spot = nil
+		advanceQueue() --// the line moves up behind them
 	end
 	tableOccupant[tableId] = party
 	party.TableId = tableId
@@ -2864,6 +3002,20 @@ local function seatParty(party, seater)
 			:format(party.Id, #party.Members, tableId))
 		local rp = RaycastParams.new()
 		rp.RespectCanCollide = true
+		--// Same Sep 17 fix as walkMemberTo: the floor probes must never
+		--// count a pawn's own torso (Humanoid re-enables its collision)
+		--// or a chair cushion as the ground
+		rp.FilterType = Enum.RaycastFilterType.Exclude
+		local ghostExclude = {}
+		for _, member in ipairs(party.Members or {}) do
+			if member.Model then
+				table.insert(ghostExclude, member.Model)
+			end
+		end
+		for _, chair in ipairs(CollectionService:GetTagged("ChairSeat")) do
+			table.insert(ghostExclude, chair:IsA("Model") and chair or (chair.Parent or chair))
+		end
+		rp.FilterDescendantsInstances = ghostExclude
 		local saved = {}
 		for _, member in ipairs(party.Members or {}) do
 			if member.Model then
@@ -2973,6 +3125,16 @@ local function attachQueuePrompts(party)
 			end)
 			return
 		end
+		--// FIFO: the line is served from the front (owner spec, Sep 17)
+		if party.State == STATE.QUEUED and not partyAtFront(party) then
+			seat.ObjectText = "Wait your turn!"
+			task.delay(1.5, function()
+				if seat.Parent then
+					seat.ObjectText = ("Party of %d"):format(party.Size)
+				end
+			end)
+			return
+		end
 		if seatParty(party, player) then return end
 		if party.State ~= STATE.QUEUED then return end
 
@@ -3018,8 +3180,11 @@ do
 		end
 		for _, party in pairs(parties) do
 			--// Mid-seating parties are QUEUED on paper but claimed in
-			--// fact - listing them sends the Helper to double-seat them
-			if party.State == STATE.QUEUED and not party.Seating then
+			--// fact - listing them sends the Helper to double-seat them.
+			--// FIFO (Sep 17): the Helper also serves the line from the
+			--// front only, so mid-line parties are not offered.
+			if party.State == STATE.QUEUED and not party.Seating
+				and partyAtFront(party) then
 				table.insert(out.Queued, {
 					Id = party.Id,
 					DoorFraction = barFraction(party),

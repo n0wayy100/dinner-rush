@@ -190,7 +190,6 @@ end
 --// {DISH}/{INGREDIENT}/{SOURCE}/{METHOD} come from the scripted
 --// ticket; the minigame numbers come from the REAL game configs, so
 --// Bruno's rules always match what the pans actually demand
-local SMASH = Config.RamenSmash or {}
 local CARDS = Config.CardMatch or {}
 local function fill(text, dishName)
 	if not text then return "" end
@@ -201,9 +200,6 @@ local function fill(text, dishName)
 		:gsub("{INGREDIENT}", ingredient.Display or tostring(recipe.Ingredient))
 		:gsub("{SOURCE}", ingredient.Source == "DryShelf" and "dry shelf" or "fridge")
 		:gsub("{METHOD}", tostring(recipe.Method))
-		:gsub("{SMASHPERFECT}", tostring(SMASH.PerfectPoints))
-		:gsub("{SMASHGOOD}", tostring(SMASH.GoodPoints))
-		:gsub("{SMASHMISS}", tostring(SMASH.MissPenaltyPoints))
 		:gsub("{CARDPAIRS}", tostring(CARDS.PerfectPairs))
 		:gsub("{CARDGOOD}", tostring(CARDS.GoodPairs))
 		:gsub("{CARDOK}", tostring(CARDS.OvercookedPairs)))

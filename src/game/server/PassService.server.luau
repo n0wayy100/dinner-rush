@@ -435,6 +435,14 @@ local function buildPlateTool(slot, dishName, quality)
 
 	local clone = slot.Root:Clone()
 
+	--// The clone inherits the slot's PassSlot tag, and the added-instance
+	--// signal would register the CARRIED plate as a brand-new slot with its
+	--// own floating prompt. Untag it - this copy is scenery, not a slot.
+	CollectionService:RemoveTag(clone, SLOT_TAG)
+	for _, descendant in ipairs(clone:GetDescendants()) do
+		CollectionService:RemoveTag(descendant, SLOT_TAG)
+	end
+
 	--// STRIP EVERYTHING THAT IS NOT GEOMETRY.
 	--//
 	--// The plate on the counter carries its ProximityPrompt and its portion as
@@ -545,7 +553,13 @@ local function buildPlateTool(slot, dishName, quality)
 			math.rad(angles.Y),
 			math.rad(angles.Z))
 
-	clone:Destroy()
+	--// A tagged MODEL leaves an empty husk here once its parts moved to the
+	--// Tool - throw it away. A plate tagged as a BARE PART **is** one of those
+	--// moved parts, so destroying it would delete the plate out of the
+	--// player's hand (the Yamasaki MeshPart plates found this the hard way).
+	if not clone:IsA("BasePart") then
+		clone:Destroy()
+	end
 	return tool
 end
 

@@ -197,6 +197,21 @@ local function computeTargets()
 		end
 	elseif active == "PowerOutage" then
 		table.insert(targets, { Part = tagPart("BreakerBox"), Emoji = "⚡" })
+	elseif active == "Spill" then
+		if holding("Broom") then
+			--// the puddle is a workspace part named SpillPuddle (the
+			--// GreaseBlaze pattern)
+			local puddle
+			for _, instance in ipairs(workspace:GetChildren()) do
+				if instance.Name == "SpillPuddle" and instance:IsA("BasePart") then
+					puddle = instance
+					break
+				end
+			end
+			table.insert(targets, { Part = puddle or tagPart("BroomMount"), Emoji = "🧹" })
+		else
+			table.insert(targets, { Part = tagPart("BroomMount"), Emoji = "🧹" })
+		end
 	end
 
 	--// A bolting dasher gets an arrow regardless of events

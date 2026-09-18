@@ -103,6 +103,7 @@ skipCorner.Parent = skip
 local skipStroke = Instance.new("UIStroke")
 skipStroke.Thickness = 2.5
 skipStroke.Color = CHOC
+skipStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border --// box, not glyphs
 skipStroke.Parent = skip
 
 skip.Activated:Connect(function()

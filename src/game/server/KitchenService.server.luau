@@ -734,14 +734,11 @@ local function refreshStationFood(station)
 end
 
 ----------------------------------------------------------------
--- THE SMASH GAME (Config.RamenSmash - the name survives its ramen-only
--- debut; it is now game 2 of the minigame coin flip, playable on ANY
--- method). The 7s colour game IS the cook: the server simulates the
--- arcs, honours lag-rewound taps, and the score at the end decides the
--- dish (station.ForcedQuality). Ramen still never burns; a smash-
--- cooked grill/fry dish resumes normal aging after the game.
+-- THE MINIGAME POOL. Game 2 is RECIPE MATH (Sep 17 2026 - it replaced
+-- the colour smash, which was retired for being ping-unfair: its
+-- bouncing arcs could never be predicted client-side).
 ----------------------------------------------------------------
-local RAMEN = Config.RamenSmash
+local MATHQ = Config.RecipeMath
 local CARDS = Config.CardMatch
 local PICK = Config.CookMinigamePick
 
@@ -750,7 +747,7 @@ local PICK = Config.CookMinigamePick
 --// memory: each same-game pick in a row moves a slice of that game's
 --// odds to the others (split evenly, capped at MaxBias); the moment
 --// the streak breaks, the new game starts at the single-pick baseline.
-local GAME_ARROW, GAME_SMASH, GAME_CARDS = 1, 2, 3
+local GAME_ARROW, GAME_MATH, GAME_CARDS = 1, 2, 3
 local GAME_COUNT = 3
 
 local pickStreaks = {} --// [userId] = { Game = 1..GAME_COUNT, Count = n in a row }
@@ -806,168 +803,158 @@ Players.PlayerRemoving:Connect(function(player)
 	pickStreaks[player.UserId] = nil
 end)
 
-local ramenRemote = remotes:FindFirstChild("RamenSmashRemote")
-if not ramenRemote then
-	ramenRemote = Instance.new("RemoteEvent")
-	ramenRemote.Name = "RamenSmashRemote"
-	ramenRemote.Parent = remotes
+----------------------------------------------------------------
+-- RECIPE MATH (Config.RecipeMath): game 2 of the roll. TWO kitchen-
+-- dressed arithmetic questions, THREE options each, a per-question
+-- clock. The server writes every question and judges every answer -
+-- there is nothing here for latency to corrupt, which is the whole
+-- reason this game exists (it replaced the ping-unfair colour smash).
+-- Both right = Perfect, one = Good, none = RUINED; the tiers ride
+-- station.ForcedQuality exactly like the card match.
+----------------------------------------------------------------
+local mathRemote = remotes:FindFirstChild("RecipeMathRemote")
+if not mathRemote then
+	mathRemote = Instance.new("RemoteEvent")
+	mathRemote.Name = "RecipeMathRemote"
+	mathRemote.Parent = remotes
 end
 
-local ramenSessions = {} --// [station] = session (see beginRamenSession)
-local ramenToken = 0
+local mathSessions = {} --// [station] = session (see beginMathSession)
+local mathToken = 0
 
 --// Forward-declared: defined with the arrow-game section below, and
---// shared by both games - the smash's game-end grant lands the dish
---// in the cook's hands the same way the arrow's result does
+--// shared by all three games - a won game's grant lands the dish in
+--// the cook's hands the same way the arrow's result does
 local grantFromMinigame
 
---// Shortest angular distance, degrees
-local function angDist(a, b)
-	return math.abs(((a - b) + 180) % 360 - 180)
-end
-
-local function ramenQualityFor(points)
-	if points >= RAMEN.PerfectPoints then
-		return "Perfect"
-	elseif points >= RAMEN.GoodPoints then
-		return "Good"
+--// One kitchen-dressed question: operands, the true answer, a flavour
+--// sentence, and three shuffled options with exactly one right.
+--// Division is built BACKWARD (quotient x divisor) so it always
+--// divides evenly; subtraction can never go negative. ONE pool for
+--// every difficulty (THE LAW - math is a skill window).
+local function buildQuestion()
+	local op = math.random(4)
+	local a, b, answer, opSign, promptKey
+	if op == 1 then
+		a = math.random(MATHQ.AddMin, MATHQ.AddMax)
+		b = math.random(MATHQ.AddMin, MATHQ.AddMax)
+		answer, opSign, promptKey = a + b, "+", "Add"
+	elseif op == 2 then
+		a = math.random(2, MATHQ.SubMax)
+		b = math.random(1, a - 1)
+		answer, opSign, promptKey = a - b, "-", "Sub"
+	elseif op == 3 then
+		a = math.random(MATHQ.MultMin, MATHQ.MultMax)
+		b = math.random(MATHQ.MultMin, MATHQ.MultMax)
+		answer, opSign, promptKey = a * b, "x", "Mult"
+	else
+		local quotient = math.random(MATHQ.DivMin, MATHQ.DivMax)
+		b = math.random(MATHQ.DivMin, MATHQ.DivMax)
+		a = quotient * b
+		answer, opSign, promptKey = quotient, "÷", "Div"
 	end
-	return "Ruined" --// below mid = UNSERVABLE - dump it (owner ruling)
+
+	--// wrong options: near the truth, distinct, never negative - close
+	--// enough to punish guessing, far enough to reward knowing
+	local candidates = {}
+	for offset = 1, MATHQ.WrongOffsetMax do
+		table.insert(candidates, answer + offset)
+		if answer - offset >= 0 then
+			table.insert(candidates, answer - offset)
+		end
+	end
+	for i = #candidates, 2, -1 do
+		local j = math.random(i)
+		candidates[i], candidates[j] = candidates[j], candidates[i]
+	end
+	local options = { answer, candidates[1], candidates[2] or (answer + MATHQ.WrongOffsetMax + 1) }
+	for i = 3, 2, -1 do
+		local j = math.random(i)
+		options[i], options[j] = options[j], options[i]
+	end
+	local correctIndex
+	for index, value in ipairs(options) do
+		if value == answer then correctIndex = index end
+	end
+
+	local item = MATHQ.Items[math.random(#MATHQ.Items)]
+	local prompt = (MATHQ.Prompts[promptKey] or "")
+		:gsub("{A}", tostring(a)):gsub("{B}", tostring(b)):gsub("{ITEM}", item)
+
+	return {
+		Prompt = prompt,
+		Equation = ("%d %s %d = ?"):format(a, opSign, b),
+		Options = options,
+		CorrectIndex = correctIndex,
+	}
 end
 
-local function closeRamenSession(station, tellClient)
-	local session = ramenSessions[station]
+local function closeMathSession(station, tellClient)
+	local session = mathSessions[station]
 	if not session then return end
-	ramenSessions[station] = nil
+	mathSessions[station] = nil
 	if tellClient and session.Player and session.Player.Parent then
-		ramenRemote:FireClient(session.Player, "Close", session.Token)
+		mathRemote:FireClient(session.Player, "Close", session.Token)
 	end
 end
 
-local function beginRamenSession(station, player)
-	--// The score is about to decide the dish, so aging PAUSES for the
-	--// game (grill/fry windows come back at the end; ramen's never do)
+local function beginMathSession(station, player)
+	--// The answers decide the dish, so aging PAUSES for the quiz
+	--// (grill/fry windows come back at the finish; ramen's never do)
 	station.PerfectUntil = math.huge
 	station.OvercookedUntil = math.huge
 	station.BurntAt = math.huge
 
-	ramenToken += 1
-	local offset = math.random(0, 359) --// same layout, never the same start
+	mathToken += 1
 	local session = {
 		Player = player,
-		Token = ramenToken,
-		StartedAt = os.clock(),
-		Score = 0,
-		LastScoreAt = 0,
-		Arcs = {},
+		Token = mathToken,
+		QIndex = 1,
+		Correct = 0,
+		Resolved = false, --// current question already judged?
+		AskedAt = os.clock(),
+		Question = buildQuestion(),
 	}
-	local openArcs = {}
-	for i, def in ipairs(RAMEN.Arcs) do
-		session.Arcs[i] = {
-			Angle = (def.StartDeg + offset) % 360,
-			Size = def.SizeDeg,
-			Points = def.Points,
-			Base = def.Speed,
-			Eff = def.Speed,
-			Shrink = def.ShrinkPerHitDeg or 0,
-			MinSize = def.MinSizeDeg or def.SizeDeg,
-			Phases = def.PhasesThrough, --// arc index this one ghosts past
-		}
-		openArcs[i] = {
-			SizeDeg = def.SizeDeg,
-			Points = def.Points,
-			Chips = def.Chips,
-			Angle = session.Arcs[i].Angle,
-			Speed = def.Speed,
-		}
-	end
-	ramenSessions[station] = session
+	mathSessions[station] = session
 
-	ramenRemote:FireClient(player, "Open", {
-		Token = session.Token,
-		GameSeconds = RAMEN.GameSeconds,
-		Arcs = openArcs,
-	})
+	local finishSession, sendQuestion, armBuzzer
 
-	--// THE SIMULATION: the server steps the arcs (overlapping arcs run
-	--// at CollisionSlowMult) and snapshots the truth to the cook a few
-	--// times a second; the client only extrapolates between snapshots
-	task.spawn(function()
-		local last = os.clock()
-		local lastSnap = 0
-		while ramenSessions[station] == session do
-			task.wait(0.03)
-			local now = os.clock()
-			local dt = now - last
-			last = now
-
-			--// BUMPER ARCS (owner spec): arcs never overlap. On contact
-			--// both REVERSE, get pushed apart to just-touching, and run
-			--// slowed for BumpSlowSeconds.
-			for i = 1, #session.Arcs do
-				for j = i + 1, #session.Arcs do
-					local a, b = session.Arcs[i], session.Arcs[j]
-					local delta = ((b.Angle - a.Angle + 180) % 360) - 180
-					local minGap = (a.Size + b.Size) / 2 + 2
-					--// phasing pairs ghost through each other, no bump
-					if a.Phases == j or b.Phases == i then
-						minGap = -1
-					end
-					if math.abs(delta) < minGap then
-						local sign = delta >= 0 and 1 or -1
-						local push = (minGap - math.abs(delta)) / 2
-						a.Angle = (a.Angle - sign * push) % 360
-						b.Angle = (b.Angle + sign * push) % 360
-						a.Base, b.Base = -a.Base, -b.Base
-						a.BumpUntil = now + RAMEN.BumpSlowSeconds
-						b.BumpUntil = now + RAMEN.BumpSlowSeconds
-					end
-				end
-			end
-			for _, arc in ipairs(session.Arcs) do
-				arc.Eff = arc.Base * ((arc.BumpUntil or 0) > now
-					and RAMEN.CollisionSlowMult or 1)
-				arc.Angle = (arc.Angle + arc.Eff * dt) % 360
-				--// short TRUE-position history (~0.7s) for lag-
-				--// compensated taps - survives bounces honestly
-				local hist = arc.Hist
-				if not hist then
-					hist = {}
-					arc.Hist = hist
-				end
-				hist[#hist + 1] = { T = now, A = arc.Angle }
-				if #hist > 24 then
-					table.remove(hist, 1)
-				end
-			end
-
-			if now - lastSnap >= 1 / RAMEN.SnapshotHz then
-				lastSnap = now
-				if player.Parent then
-					local snap = {}
-					for i, arc in ipairs(session.Arcs) do
-						snap[i] = { Angle = arc.Angle, Speed = arc.Eff, Size = arc.Size }
-					end
-					ramenRemote:FireClient(player, "Sync", session.Token, snap)
-				end
-			end
+	sendQuestion = function()
+		session.AskedAt = os.clock()
+		session.Resolved = false
+		local q = session.Question
+		if player.Parent then
+			mathRemote:FireClient(player, "Question", session.Token, {
+				Index = session.QIndex,
+				Total = MATHQ.Questions,
+				Prompt = q.Prompt,
+				Equation = q.Equation,
+				Options = q.Options,
+				Seconds = MATHQ.QuestionSeconds,
+			})
 		end
-	end)
+		armBuzzer()
+	end
 
-	--// ONE ENDING, TWO EXITS: the clock running out, or the score
-	--// hitting PerfectPoints early (owner spec: a perfect score ends
-	--// the game ON THE SPOT - the Tap handler calls session.Finish).
-	--// Either way the server decides when the game is over, never the
-	--// client.
-	local function finishSession()
-		local live = ramenSessions[station]
+	--// The finish mirrors the card match exactly: tiers ride
+	--// ForcedQuality, RUINED flips the station to cleanup, grill/fry
+	--// aging resumes, ramen keeps its infinite soup windows, and a won
+	--// dish lands in the cook's hands after the verdict splash
+	finishSession = function()
+		local live = mathSessions[station]
 		if live ~= session then return end
-		ramenSessions[station] = nil
+		mathSessions[station] = nil
 
-		local quality = ramenQualityFor(session.Score)
+		local quality
+		if session.Correct >= MATHQ.PerfectCorrect then
+			quality = "Perfect"
+		elseif session.Correct >= MATHQ.GoodCorrect then
+			quality = "Good"
+		else
+			quality = "Ruined"
+		end
+
 		if quality == "Ruined" then
-			--// UNSERVABLE: the station flips to the cleanup state (on
-			--// ramen the labels say RUINED, everywhere else BURNT)
 			station.ForcedQuality = nil
 			if station.State ~= "IDLE" then
 				station.State = "BURNT"
@@ -977,10 +964,6 @@ local function beginRamenSession(station, player)
 			end
 		else
 			station.ForcedQuality = quality
-			--// A smash-cooked GRILL/FRY dish resumes normal aging from
-			--// here - leave it sitting and it still degrades and burns
-			--// (ForcedQuality only holds while the state is PERFECT).
-			--// Ramen keeps its infinite windows: soup never burns.
 			if station.Method ~= "Ramen" then
 				local recipe = Config.Recipes[station.Dish]
 				local timing = recipe and Config.Cooking[recipe.Timing]
@@ -992,138 +975,103 @@ local function beginRamenSession(station, player)
 			end
 		end
 		if player.Parent then
-			ramenRemote:FireClient(player, "End", session.Token, session.Score, quality)
+			mathRemote:FireClient(player, "End", session.Token, session.Correct, quality)
 		end
-		print(("[Kitchen] SMASH: %s scored %d point(s) - %s %s")
-			:format(player.Name, session.Score, quality, tostring(station.Dish)))
+		print(("[Kitchen] MATH: %s answered %d/%d - %s %s")
+			:format(player.Name, session.Correct, MATHQ.Questions,
+				quality, tostring(station.Dish)))
 
-		--// Like the arrow: a won game lands the dish straight in the
-		--// cook's hands (after the verdict splash). Full hands leave it
-		--// waiting on the station - E collects it at the scored tier.
 		if quality ~= "Ruined" and player.Parent then
 			task.delay(1.2, function()
-				if station.ForcedQuality and not ramenSessions[station]
+				if station.ForcedQuality and not mathSessions[station]
 					and station.State == "PERFECT" and player.Parent then
 					grantFromMinigame(station, player, station.ForcedQuality)
 				end
 			end)
 		end
 	end
-	session.Finish = finishSession
-	task.delay(RAMEN.GameSeconds, finishSession)
+
+	--// Judge the CURRENT question exactly once (a picked option, or
+	--// nil for the buzzer), flash the result, then move on
+	session.Resolve = function(pickedIndex)
+		if session.Resolved then return end
+		session.Resolved = true
+		local q = session.Question
+		local wasCorrect = pickedIndex == q.CorrectIndex
+		if wasCorrect then
+			session.Correct += 1
+		end
+		if player.Parent then
+			mathRemote:FireClient(player, "Result", session.Token, {
+				Index = session.QIndex,
+				Picked = pickedIndex, --// nil = time ran out
+				CorrectIndex = q.CorrectIndex,
+				WasCorrect = wasCorrect,
+				CorrectSoFar = session.Correct,
+			})
+		end
+		task.delay(MATHQ.ResultFlashSeconds, function()
+			if mathSessions[station] ~= session then return end
+			if session.QIndex >= MATHQ.Questions then
+				finishSession()
+			else
+				session.QIndex += 1
+				session.Question = buildQuestion()
+				sendQuestion()
+			end
+		end)
+	end
+
+	--// The buzzer: an unanswered question judges itself as wrong. The
+	--// grace rides on top so a slow CONNECTION never eats an answer
+	--// that left the client in time - thinking time stays 7s for all.
+	armBuzzer = function()
+		local myQuestion = session.QIndex
+		task.delay(MATHQ.QuestionSeconds + MATHQ.AnswerGraceSeconds, function()
+			if mathSessions[station] ~= session then return end
+			if session.QIndex == myQuestion and not session.Resolved then
+				session.Resolve(nil)
+			end
+		end)
+	end
+
+	mathRemote:FireClient(player, "Open", {
+		Token = session.Token,
+		Total = MATHQ.Questions,
+	})
+	sendQuestion()
 end
 
-ramenRemote.OnServerEvent:Connect(function(player, action, token)
-	if action ~= "Tap" then return end
+mathRemote.OnServerEvent:Connect(function(player, action, token, questionIndex, optionIndex)
+	if action ~= "Answer" then return end
 
-	local station, session
-	for s, sess in pairs(ramenSessions) do
+	local session
+	for _, sess in pairs(mathSessions) do
 		if sess.Token == token and sess.Player == player then
-			station, session = s, sess
+			session = sess
 			break
 		end
 	end
 	if not session then return end
 
-	local now = os.clock()
-	if now - session.StartedAt > RAMEN.GameSeconds then return end
-	if now - (session.LastTapAt or 0) < RAMEN.ScoreCooldownSeconds then
-		return --// machine-gun taps are ignored entirely
+	questionIndex = tonumber(questionIndex)
+	optionIndex = tonumber(optionIndex)
+	if questionIndex ~= session.QIndex or session.Resolved then
+		return --// stale answer from a question already judged
 	end
-	session.LastTapAt = now
-
-	--// SERVER STATE RULES with FULL LAG COMPENSATION: the player's
-	--// screen runs a whole round-trip behind this clock (display lag +
-	--// return trip), so judge each arc where it ACTUALLY WAS then -
-	--// looked up from its recorded history, which stays honest through
-	--// bounces. GraceDeg is the only forgiveness; Studio's ~zero ping
-	--// makes this an exact-edge test.
-	local rewind = math.clamp(player:GetNetworkPing() * 2, 0, 0.4)
-	local tapTime = now - rewind
-	local best = nil
-	for _, arc in ipairs(session.Arcs) do
-		local angleThen = arc.Angle
-		local hist = arc.Hist
-		if hist and #hist > 0 then
-			angleThen = hist[1].A --// oldest available as the floor
-			for index = #hist, 1, -1 do
-				if hist[index].T <= tapTime then
-					angleThen = hist[index].A
-					break
-				end
-			end
-		end
-		if angDist(angleThen, 0) <= arc.Size / 2 + RAMEN.GraceDeg then
-			if not best or arc.Points > best.Points then
-				best = arc
-			end
-		end
+	if not optionIndex or optionIndex ~= math.floor(optionIndex)
+		or optionIndex < 1 or optionIndex > 3 then
+		return
 	end
 
-	--// Both outcomes RE-ROLL the board (owner spec) - hits also shrink
-	--// yellow/blue toward their floors
-	local function rerollArcs(shrink)
-		for index, arc in ipairs(session.Arcs) do
-			if shrink and arc.Shrink > 0 then
-				arc.Size = math.max(arc.Size - arc.Shrink, arc.MinSize)
-			end
-			--// fresh spot: off the pointer AND clear of already-placed
-			--// arcs, so a re-roll never spawns a stack
-			for _ = 1, 14 do
-				local candidate = math.random(0, 359)
-				local clear = angDist(candidate, 0) > arc.Size / 2 + 25
-				if clear then
-					for prior = 1, index - 1 do
-						local other = session.Arcs[prior]
-						if angDist(candidate, other.Angle)
-							< (arc.Size + other.Size) / 2 + 8 then
-							clear = false
-							break
-						end
-					end
-				end
-				if clear then
-					arc.Angle = candidate
-					break
-				end
-			end
-			--// fresh world: old positions must not judge new taps (a
-			--// stale history could double-score across a re-roll)
-			arc.Hist = nil
-		end
-		local snap = {}
-		for i, arc in ipairs(session.Arcs) do
-			snap[i] = { Angle = arc.Angle, Speed = arc.Eff, Size = arc.Size }
-		end
-		return snap
+	--// generous with transport, never with thinking: past the buzzer
+	--// plus grace, the timeout timer owns the verdict
+	if os.clock() - session.AskedAt
+		> MATHQ.QuestionSeconds + MATHQ.AnswerGraceSeconds then
+		return
 	end
 
-	if best then
-		session.Score += best.Points
-
-		--// PERFECT ON THE SPOT (owner spec): reaching PerfectPoints
-		--// ends the game immediately - no riding out the clock. The
-		--// final +N still pops, then the ending takes over.
-		if session.Score >= RAMEN.PerfectPoints then
-			ramenRemote:FireClient(player, "Hit", token, session.Score, {
-				Points = best.Points,
-			})
-			session.Finish()
-			return
-		end
-
-		ramenRemote:FireClient(player, "Hit", token, session.Score, {
-			Points = best.Points,
-			Arcs = rerollArcs(true),
-		})
-	else
-		--// A miss COSTS (floor 0) and scrambles the board anyway
-		session.Score = math.max(session.Score - RAMEN.MissPenaltyPoints, 0)
-		ramenRemote:FireClient(player, "Miss", token, session.Score, {
-			Penalty = RAMEN.MissPenaltyPoints,
-			Arcs = rerollArcs(false),
-		})
-	end
+	session.Resolve(optionIndex)
 end)
 
 ----------------------------------------------------------------
@@ -1342,8 +1290,8 @@ local function clearStation(station)
 	--// wiped by a grease fire - so one stop covers all of them.
 	cookSoundStop(station)
 	clearStationFood(station)
-	closeRamenSession(station, true) --// a wiped pan ends its smash game
-	closeCardSession(station, true)  --// ...and its card game
+	closeMathSession(station, true) --// a wiped pan ends its quiz
+	closeCardSession(station, true) --// ...and its card game
 	station.ForcedQuality = nil
 	station.CookGame = nil
 
@@ -1377,7 +1325,7 @@ local function startCook(station, player, tool, dishName, recipe)
 	--// THE MINIGAME ROLL: every gated cook, any method, rolls its game.
 	--// ALL of them share the same entry (owner spec): the pan cooks the
 	--// flat MinigameCookSeconds, and E at the READY station opens the
-	--// drawn game - arrow, smash, or card match (see beginCookSession).
+	--// drawn game - arrow, recipe math, or cards (see beginCookSession).
 	local cookGame = gated and rollCookGame(player) or nil
 
 	station.State = "COOKING"
@@ -1548,13 +1496,13 @@ function grantFromMinigame(station, player, quality)
 end
 
 local function beginCookSession(station, player)
-	--// SMASH and CARD MATCH cooks: the same E that would open the
-	--// arrow opens the drawn game instead (owner spec - every game
+	--// RECIPE MATH and CARD MATCH cooks: the same E that would open
+	--// the arrow opens the drawn game instead (owner spec - every game
 	--// starts on the press at a READY station), and its result
 	--// decides the dish
 	local gameSessions, beginGame
-	if station.CookGame == GAME_SMASH then
-		gameSessions, beginGame = ramenSessions, beginRamenSession
+	if station.CookGame == GAME_MATH then
+		gameSessions, beginGame = mathSessions, beginMathSession
 	elseif station.CookGame == GAME_CARDS then
 		gameSessions, beginGame = cardSessions, beginCardSession
 	end

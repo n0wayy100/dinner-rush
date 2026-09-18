@@ -216,6 +216,7 @@ local EVENT_POOLS = {
 	ToiletEmergency = { Start = "ToiletStart" },
 	GreaseFire = { Start = "FireStart" },
 	PowerOutage = { Start = "OutageStart" },
+	Spill = { Start = "SpillStart" },
 }
 
 task.spawn(function()

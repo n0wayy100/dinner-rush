@@ -203,7 +203,7 @@ Config.Doors = {
 ----------------------------------------------------------------
 -- THE MINIGAME ROLL (owner spec, Sep 2026): EVERY gated cook, on every
 -- method and every map, rolls which minigame it gets - the timing
--- ARROW (game 1), the colour SMASH (game 2), or the memory CARD MATCH
+-- ARROW (game 1), RECIPE MATH (game 2), or the memory CARD MATCH
 -- (game 3; KitchenService owns the list). Base odds are EVEN across
 -- the pool. Streaks self-correct: each same-game pick IN A ROW moves
 -- a slice of that game's odds to the others (split evenly), and the
@@ -219,78 +219,69 @@ Config.CookMinigamePick = {
 
 	--// STUDIO KNOB (live-ignored, like StudioSpawnBurst): pin EVERY
 	--// roll to one game while testing it. 0 = off (normal roll),
-	--// 1 = arrow, 2 = smash, 3 = card match. REVERT TO 0 when done.
-	StudioForceGame = 0, --// card-game testing done (Sep 2026)
+	--// 1 = arrow, 2 = recipe math, 3 = card match. REVERT TO 0 when done.
+	StudioForceGame = 0, --// OFF: normal random roll (card match UI review done Sep 17)
 }
 
 ----------------------------------------------------------------
--- THE SMASH GAME (owner design, Sep 2026 - "RamenSmash" keeps its name
--- from its ramen-only debut, but it is now game 2 of the coin flip
--- above). SAME ENTRY AS THE ARROW (owner spec): the pan cooks the flat
--- Config.CookTiming.MinigameCookSeconds, the bar fills, the station
--- reads READY - then pressing E OPENS the 7s colour game, and the
--- score decides the dish (aging pauses while it plays; the winning
--- dish lands straight in your hands). Ramen-only rulings that survive:
--- ramen can NEVER be burnt - it is soup - so its worst outcome is the
--- trash tier and a ready bowl keeps forever; a smash-cooked GRILL or
--- FRY dish resumes normal aging after the game and can still burn if
--- abandoned. THE LAW: one set of numbers for every difficulty; the
--- ungated fallback is the plain timed cook.
+-- RECIPE MATH (owner design, Sep 17 2026 - game 2 of the roll,
+-- REPLACING the colour smash, which was retired for being the one
+-- minigame whose difficulty scaled with the player's PING: its
+-- bouncing, rerolling arcs could never be predicted client-side, so
+-- high-latency kids aimed at ghosts. This game is perfectly
+-- latency-proof: nothing is timing-precise beyond a 7 SECOND clock).
+-- SAME ENTRY AS THE ARROW: flat cook, bar fills, READY, E opens it.
+-- TWO recipe questions (add, subtract, multiply or divide - dressed
+-- as kitchen problems, not homework), THREE answer buttons each, a
+-- per-question timer. Both right = Perfect, one = Good, none =
+-- RUINED (bin it - and a pure guesser lands there ~44% of the time,
+-- so mashing buttons is a losing strategy). Aging pauses during the
+-- game; ramen still never burns. THE LAW: ONE question pool for
+-- every difficulty - EASY and HARD kids get the same math, exactly
+-- like cook windows. Ungated fallback = the plain timed cook.
 ----------------------------------------------------------------
-Config.RamenSmash = {
-	GameSeconds = 7,              -- the playable game itself (the cook
-	                              -- before it is the arrow game's own
-	                              -- flat MinigameCookSeconds - one knob
-	                              -- for both games' wait)
+Config.RecipeMath = {
+	Questions = 2,                -- asked per cook
+	QuestionSeconds = 7,          -- answer clock per question; the buzzer
+	                              -- counts as a wrong answer
+	ResultFlashSeconds = 1.2,     -- right/wrong feedback beat between
+	                              -- questions (the correct answer glows)
+	AnswerGraceSeconds = 1.5,     -- transport slack past the buzzer - a
+	                              -- slow connection never eats an answer
+	                              -- that LEFT the client in time
 
-	--// OWNER SPEC (Sep 2026): the POINTER is FIXED at the top; three
-	--// coloured arcs ORBIT the pot's rim. Tap when an arc is under the
-	--// pointer to score ITS points - bigger arc = easier = worth less:
-	--//   yellow: largest, 1 point  ·  blue: middle, 2  ·  green:
-	--//   smallest, 3. Mixed directions, relatively fast.
-	--// ShrinkPerHitDeg: EVERY scoring hit shrinks that arc (down to
-	--// MinSizeDeg) - yellow and blue get harder as you score, green
-	--// stays the same small prize (owner spec). Every hit also
-	--// RE-ROLLS all three arcs to fresh positions, never on the pointer.
-	--// Speed ladder: green fastest, yellow slowest. Points: bigger =
-	--// cheaper (yellow 1, blue 2, green 3). Chips = how many rectangles
-	--// draw the arc (yellow 3, blue 2, green 1 - owner spec). Arcs
-	--// BOUNCE off each other (reverse + brief slow), EXCEPT blue
-	--// PHASES straight through yellow.
-	Arcs = {
-		{ SizeDeg = 70, Points = 1, Speed = 140, StartDeg = 90,     -- yellow
-			Chips = 3, ShrinkPerHitDeg = 8, MinSizeDeg = 36 },
-		{ SizeDeg = 44, Points = 2, Speed = -200, StartDeg = 210,   -- blue
-			Chips = 2, ShrinkPerHitDeg = 6, MinSizeDeg = 24, PhasesThrough = 1 },
-		{ SizeDeg = 26, Points = 3, Speed = 285, StartDeg = 320,    -- green
-			Chips = 1 },
+	--// THE NUMBER RANGES (kid-fair, age 8-13; owner tunes):
+	AddMin = 3,  AddMax = 12,     -- a + b, both in this range
+	SubMax = 20,                  -- a - b: a up to this, b < a, never negative
+	MultMin = 2, MultMax = 9,     -- a x b: times tables territory
+	DivMin = 2,  DivMax = 9,      -- a / b built BACKWARD from quotient x
+	                              -- divisor in this range - always divides
+	                              -- evenly, never a remainder
+
+	--// Wrong options sit this close to the truth (distinct, never
+	--// negative, never equal to the answer) - close enough to punish
+	--// guessing, far enough to reward actually knowing
+	WrongOffsetMax = 3,
+
+	--// THE SCORELINES (correct out of Questions):
+	PerfectCorrect = 2,           -- both right = Perfect
+	GoodCorrect = 1,              -- one right = Good
+	                              -- none right = RUINED, bin it (ramen
+	                              -- keeps its RUINED-never-"burnt" labels)
+
+	--// THE DRESSING: every question reads as a kitchen problem. {A}
+	--// {B} {ITEM} fill in; the equation renders big underneath anyway,
+	--// so the sentence is flavour, not homework. Basic punctuation only.
+	Items = {
+		"tomatoes", "noodles", "shrimps", "onions", "mushrooms",
+		"carrots", "peppers", "eggs", "buns", "pickles",
 	},
-	CollisionSlowMult = 0.55,     -- pace while bump-slowed
-	BumpSlowSeconds = 0.6,        -- how long the post-bump slow lasts
-	SnapshotHz = 15,              -- server -> client truth updates
-	                              -- (brisker, so bounces snap on screen)
-	GraceDeg = 4,                 -- the ONLY leeway: a whisker for frame
-	                              -- timing. Lag is handled by REWINDING
-	                              -- the arcs to the moment of the tap
-	                              -- (half the player's ping), not by
-	                              -- widening the target.
-	ScoreCooldownSeconds = 0.25,  -- min gap between COUNTED taps (hit or
-	                              -- miss) - machine-gunning does nothing
-	MissPenaltyPoints = 2,        -- a miss COSTS points (floor 0) and
-	                              -- re-rolls the arcs - spraying loses
-
-	--// THE SCORELINES (points in 7s - scaled down with the game when it
-	--// shortened from 10s, same points-per-second bar):
-	--//   Perfect - PerfectPoints and up. Reaching it ENDS THE GAME ON
-	--//     THE SPOT (owner spec): instant perfect dish, no riding out
-	--//     the clock.
-	--//   Good    - GoodPoints .. PerfectPoints-1
-	--//   RUINED  - below GoodPoints: UNSERVABLE (owner ruling, Sep
-	--//     2026). The station holds a ruined dish that must be dumped
-	--//     (burnt-cleanup flow; ramen keeps its RUINED-never-"burnt"
-	--//     labels, because soup) - a wasted cook on the report.
-	PerfectPoints = 10,
-	GoodPoints = 7,
+	Prompts = {
+		Add = "The recipe needs {A} {ITEM} plus {B} more!",
+		Sub = "We had {A} {ITEM} but {B} fell on the floor!",
+		Mult = "{A} plates each need {B} {ITEM}!",
+		Div = "Split {A} {ITEM} between {B} plates!",
+	},
 }
 
 ----------------------------------------------------------------
@@ -339,7 +330,7 @@ Config.CardMatch = {
 Config.Tutorial = {
 	--// STUDIO KNOB (live-ignored): boot Studio playtests straight
 	--// into the tutorial for testing. REVERT to false when done.
-	StudioTutorial = true, --// ON for tutorial polish (Sep 2026) - revert when done
+	StudioTutorial = false, --// OFF while route-fixing the Diner (Sep 17) - flip back for tutorial work
 
 	--// STUDIO KNOB (live-ignored): sprint silently past the main
 	--// lesson straight to the finale (fire drill + critic) - no boxes,
@@ -416,7 +407,7 @@ Config.Tutorial = {
 		Cooking = {
 			Bruno = {
 				"Now for the fun part. Cooking!",
-				"Every cook plays one of three little games. The arrow, Colour Smash, or Memory Match.",
+				"Every cook plays one of three little games. The arrow, Recipe Math, or Memory Match.",
 				"Which one you get is a surprise each time. Today I will show you all three!",
 			},
 			Objective = "",
@@ -442,12 +433,12 @@ Config.Tutorial = {
 			},
 			{
 				Bruno = {
-					"Next dish! This station plays Colour Smash.",
-					"Three colours race around a ring. Tap when one slides under the pointer to score its points. Green is 3, blue is 2, yellow is 1!",
-					"Watch out! A miss COSTS {SMASHMISS} points and shuffles the whole board.",
-					"Reach {SMASHPERFECT} points for a PERFECT cook, it even ends the game early! {SMASHGOOD} or more is a DECENT cook. Any less is garbage that goes straight in the bin!",
+					"Next dish! This station asks RECIPE MATH questions.",
+					"Two quick kitchen questions, three answers each. Tap the right one!",
+					"Each question has a timer. Too slow counts as wrong, and wild guessing usually ruins the dish!",
+					"Both right is a PERFECT cook. One right is a DECENT cook. None right is garbage for the bin!",
 				},
-				Objective = "Cook {DISH}, smash those colours!",
+				Objective = "Cook {DISH}, solve the recipe math!",
 			},
 			{
 				Bruno = {
@@ -759,6 +750,8 @@ Config.Difficulty = {
 		EatingSeconds = 10,
 		DashWindowSeconds = 20,
 		ToiletFuseSeconds = 120,
+		SpillFuseSeconds = 40,        -- sweep window before guests are grossed out
+		SweepChannelSeconds = 2,      -- broom hold on the puddle (Fixer scales it)
 		UnclogChannelSeconds = 6,
 		ExtinguishChannelSeconds = 4,  -- per burning station (GreaseFire)
 		AutoBusAfterSeconds = 30,     -- EASY-only training wheels
@@ -799,6 +792,7 @@ Config.Difficulty = {
 			BreakerWires = 3,         -- the gentlest wire count
 			CookMinigame = true,
 			PlungeMinigame = true,
+			SweepMinigame = true,     -- the drag-the-broom spill panel
 		},
 		Rewards = {
 			CoinMult = 0.8, CompletionBonus = 100,
@@ -819,6 +813,8 @@ Config.Difficulty = {
 		EatingSeconds = 12,
 		DashWindowSeconds = 15,
 		ToiletFuseSeconds = 105,
+		SpillFuseSeconds = 32,
+		SweepChannelSeconds = 2.5,
 		UnclogChannelSeconds = 8,
 		ExtinguishChannelSeconds = 5,
 		AutoBusAfterSeconds = nil,    -- no mercy
@@ -852,6 +848,7 @@ Config.Difficulty = {
 			BreakerWires = 4,
 			CookMinigame = true,      -- the timing-arrow collect
 			PlungeMinigame = true,    -- the spam-tap plunge bar
+			SweepMinigame = true,     -- the drag-the-broom spill panel
 		},
 		Rewards = {
 			CoinMult = 1.0, CompletionBonus = 150,
@@ -872,6 +869,8 @@ Config.Difficulty = {
 		EatingSeconds = 14,           -- slow eaters throttle table turnover
 		DashWindowSeconds = 10,
 		ToiletFuseSeconds = 90,
+		SpillFuseSeconds = 25,
+		SweepChannelSeconds = 3,
 		UnclogChannelSeconds = 10,
 		ExtinguishChannelSeconds = 6,
 		AutoBusAfterSeconds = nil,
@@ -906,6 +905,7 @@ Config.Difficulty = {
 			BreakerWires = 5,         -- one more wire than NORMAL
 			CookMinigame = true,
 			PlungeMinigame = true,
+			SweepMinigame = true,     -- the drag-the-broom spill panel
 		},
 		Rewards = {
 			CoinMult = 1.5, CompletionBonus = 250,
@@ -966,6 +966,43 @@ Config.Events = {
 		MinGapSeconds = 45,           -- breathing room between events
 		RollIntervalSeconds = 10,     -- how often a roll is considered
 		MaxActive = 1,                -- MVP: never two at once
+	},
+
+	--// THE SPILL (owner design, Sep 17 2026 - GLOBAL, both maps): a
+	--// puddle splats near a random table with a fuse
+	--// (Difficulty[*].SpillFuseSeconds). Fetch the BROOM from the
+	--// BroomMount and hold-sweep it (SweepChannelSeconds, the Fixer's
+	--// ChannelMult trims it). Swept in time = nothing happens. Fuse
+	--// out = HALF the currently seated parties lose HALF their
+	--// remaining patience in one hit, then the puddle dries by itself
+	--// and the event ends. Roadmap note: this is the mess system the
+	--// parked HealthInspector has been waiting for.
+	Spill = {
+		AffectedFraction = 0.5,       -- share of seated parties hit at fuse-out
+		PatienceCutMult = 0.5,        -- what remains of their bar after the hit
+		PuddleRadiusStuds = 5,        -- visual size of the puddle
+		PuddleOffsetStuds = 6,        -- how far from the chosen table it lands
+		EvaporateAfterHitSeconds = 8, -- post-hit linger before it dries itself
+		FuseOutRep = -4,              -- small rep sting on fuse-out (0 = none)
+	},
+
+	--// THE SWEEP MINIGAME (owner design, Sep 17 2026 - gated by
+	--// Difficulty.Interactions.SweepMinigame, ON everywhere; the plain
+	--// hold-sweep stays as the ungated fallback per the constitution).
+	--// E on the puddle with the broom opens a SQUARE panel: wooden
+	--// floor, water droplets, and the broom icon you DRAG left and
+	--// right - each full pass wipes water away until the floor shines.
+	--// The SERVER counts the strokes (plunge-tap grammar: rate-capped,
+	--// broom-in-hand + proximity re-checked per stroke); the Fixer's
+	--// ChannelMult trims the strokes needed.
+	SpillSweep = {
+		StrokesNeeded = 8,            -- full drag passes to come clean
+		MaxStrokesPerSecond = 4,      -- server rate cap vs auto-draggers
+		StrokeTravelFraction = 0.55,  -- panel-widths one pass must cover
+		TimeoutSeconds = 20,          -- abandoned panel frees the puddle
+		WalkAwayStuds = 12,           -- drift further and the session ends
+		FloorImage = "",              -- optional owner art: square floor
+		                              -- background ("" = code-drawn planks)
 	},
 
 	ToiletEmergency = {
@@ -1660,6 +1697,10 @@ Config.Manager = {
 			"The toilet's erupting! Grab the plunger, QUICK!",
 			"Not the bathroom again... somebody plunge it!",
 		},
+		SpillStart = {
+			"SPILL on the floor! Broom, broom, BROOM!",
+			"Who dropped that?! Sweep it before the guests see!",
+		},
 		ToiletFlood = {
 			"IT'S FLOODING! My beautiful floors!!",
 			"The bathroom is a LAKE! Fix it, fix it!",
@@ -1778,7 +1819,7 @@ Config.Ultimates = {
 	--// Ignored on live servers. Set StudioFullCharge = false (and the
 	--// key "") when ultimate testing ends, or charge earning can never
 	--// be playtested in Studio.
-	StudioFullCharge = true,
+	StudioFullCharge = false, --// banner testing done (Sep 17)
 	StudioClassKey = "Charmer",
 
 	--// THE CAST BANNER (Sep 2026). Cosmetic only - nothing here touches
@@ -1984,7 +2025,7 @@ Config.Pass = {
 	--// How far BELOW the plate the invisible handle sits, so the hand reads as
 	--// a palm under a plate rather than a fist through one. Raise it if the
 	--// plate still clips the hand; 0 puts the hand at the plate's underside.
-	HandleDropStuds = 0.15,
+	HandleDropStuds = 0.5,
 
 	--// Where a served plate lands: 0 = table centre, 1 = the customer's seat
 	--// position. Just past halfway puts it in front of them, on the table.
@@ -2031,12 +2072,10 @@ Config.Maps = {
 		Menu = { Burger = 5, Fries = 4, GrilledSteak = 3 },
 	},
 	{
-		Id = "Sushi",
-		Display = "Yamasaki Sushi",
-		ImageId = "",
-		--// Not built yet: shows as COMING SOON and cannot be picked. Flip to
-		--// true the day the model lands in ServerStorage.Maps.
-		Available = false,
+		Id = "Sushi", --// the Id is plumbing and never changes; the NAME is below
+		Display = "Yamasaki Ramen", --// matches the banner art (owner, Sep 17)
+		ImageId = "rbxassetid://130991090145749", --// owner's banner, de-bordered (Sep 17 2026)
+		Available = true, --// LIVE (Sep 17 2026): pickable in the lobby
 		--// Full Japanese - no diner carry-overs (owner ruling, Sep 2026).
 		Menu = { Karaage = 5, TempuraShrimp = 4, Ramen = 3 },
 		--// Seated guests DISSOLVE at the table instead of walking back
@@ -2065,7 +2104,9 @@ Config.MapCardAspect = 1024 / 205
 --// one. Whatever is already in Workspace is what gets played.
 --// Every system still finds its objects by tag, so a half-built map works as
 --// far as its tags go and warns about the rest.
-Config.LoadMapOnStart = false
+Config.LoadMapOnStart = true --// ON (Sep 17 2026): MatchServer clones
+                             --// ServerStorage.Maps[MapId] at boot - the
+                             --// Workspace must hold NO map copy anymore
 
 Config.DefaultMapId = "Diner"
 
@@ -2074,13 +2115,13 @@ Config.DefaultMapId = "Diner"
 --// ingredients - without the lobby handoff or a per-test command line.
 --// "" falls back to DefaultMapId. Live servers ignore this completely:
 --// the lobby's teleport data always wins there.
-Config.StudioMapId = "Diner" --// tutorial testing at Route 67 (Sep 2026)
+Config.StudioMapId = "Sushi" --// Studio tests at Yamasaki (Sep 17)
 
 --// STUDIO-ONLY spawn burst: this many parties march in the moment the
 --// shift goes RUNNING, so route/seating tests need no command bar.
 --// The normal spawn trickle continues after the burst. 0 = off (normal
 --// opening). Ignored on live servers - set 0 anyway when map testing ends.
-Config.StudioSpawnBurst = 0 --// route testing done (Sep 2026)
+Config.StudioSpawnBurst = 0 --// crowd tests done (Sep 17)
 
 --// Whether a given id is a real, playable map. The lobby server gates every
 --// party on this - never trust a MapId that arrived from a client.
@@ -2246,6 +2287,7 @@ Config.Sfx = {
 		ToiletAlert = { Id = "", Volume = 0.7, Global = true },
 		FireAlert   = { Id = "133849873643710", Volume = 0.8, Global = true },
 		PowerAlert  = { Id = "", Volume = 1, Global = true }, -- owner: louder.
+		SpillAlert  = { Id = "", Volume = 0.7, Global = true }, -- the splat (owner: id pending)
 		                              -- NOTE: Id still empty = silent until set!
 
 		--// The FIXES are positional: you hear them where the work is.

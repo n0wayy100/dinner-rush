@@ -73,6 +73,7 @@ print("[Events] script started")
 local SCHEDULER = Config.Events.Scheduler
 local TOILET = Config.Events.ToiletEmergency
 local OUTAGE = Config.Events.PowerOutage
+local SPILL = Config.Events.Spill
 
 --// Declared up here because stopToilet writes to it. A local declared further
 --// down would not be in scope for a function defined above it.
@@ -133,6 +134,7 @@ local eventStats = {
 	FiresExtinguished = 0,
 	OutagesFixed = 0,
 	WaterIncidents = 0,
+	SpillsSwept = 0,
 }
 local lastShiftState = "WAITING"
 
@@ -301,6 +303,492 @@ Players.PlayerAdded:Connect(function(player)
 			print("[Events] carrier died - plunger returned to the mount")
 		end
 	end)
+end)
+
+----------------------------------------------------------------
+-- THE BROOM (mirrors the plunger): one exists, lives on the part
+-- tagged BroomMount, ONLY leaves the wall while a spill is active,
+-- and returns when the spill ends or its carrier goes.
+----------------------------------------------------------------
+local spillIsActive --// forward: the spill state lives further down
+local broomHolder = nil
+local broomTool = nil
+local broomMountPrompt = nil
+
+local function returnBroom()
+	if broomTool then
+		broomTool:Destroy()
+		broomTool = nil
+	end
+	broomHolder = nil
+
+	if broomMountPrompt then
+		broomMountPrompt.ActionText = "Take"
+		broomMountPrompt.ObjectText = "Broom"
+	end
+end
+
+local function holdingBroom(player)
+	local character = player.Character
+	if not character then return false end
+	for _, child in ipairs(character:GetChildren()) do
+		if child:IsA("Tool") and child:GetAttribute("Broom") then
+			return true
+		end
+	end
+	return false
+end
+
+local function setupBroomMount()
+	local mount = firstTaggedPart("BroomMount")
+	if not mount then
+		warn("[Events] no part tagged BroomMount - the Spill event cannot run")
+		return false
+	end
+
+	broomMountPrompt = Instance.new("ProximityPrompt")
+	broomMountPrompt.Name = "TakeBroom"
+	broomMountPrompt.ActionText = "Take"
+	broomMountPrompt.ObjectText = "Broom"
+	broomMountPrompt.HoldDuration = Config.Kitchen.PickupHoldSeconds
+	broomMountPrompt.MaxActivationDistance = Config.Interaction.PromptRangeStuds
+	broomMountPrompt.RequiresLineOfSight = Config.Interaction.PromptRequiresLineOfSight
+	broomMountPrompt.Parent = mount
+
+	broomMountPrompt.Triggered:Connect(function(player)
+		local character = player.Character
+		if not character then return end
+
+		--// The broom only leaves the wall while there is a spill to
+		--// sweep - and it returns there the moment the spill ends, so
+		--// nobody tours the restaurant with cleaning equipment
+		if not spillIsActive() then
+			broomMountPrompt.ObjectText = "No spill right now!"
+			task.delay(1.5, function()
+				if broomMountPrompt then
+					broomMountPrompt.ObjectText = "Broom"
+				end
+			end)
+			return
+		end
+
+		if broomTool then
+			broomMountPrompt.ObjectText = "Broom taken!"
+			task.delay(1.5, function()
+				if broomMountPrompt and not broomTool then
+					broomMountPrompt.ObjectText = "Broom"
+				end
+			end)
+			return
+		end
+
+		local tool = Instance.new("Tool")
+		tool.Name = "Broom"
+		tool.RequiresHandle = true
+		tool.CanBeDropped = false
+		tool:SetAttribute("Broom", true)
+
+		local handle = Instance.new("Part")
+		handle.Name = "Handle"
+		handle.Size = Vector3.new(0.5, 5, 0.5)
+		handle.Color = Color3.fromRGB(170, 120, 70)
+		handle.Material = Enum.Material.Wood
+		handle.Parent = tool
+
+		local brush = Instance.new("Part")
+		brush.Name = "Brush"
+		brush.Size = Vector3.new(2.2, 1, 0.7)
+		brush.Color = Color3.fromRGB(220, 190, 120)
+		brush.Material = Enum.Material.Fabric
+		brush.CanCollide = false
+		brush.Massless = true
+		brush.Parent = tool
+
+		local weld = Instance.new("WeldConstraint")
+		weld.Part0 = handle
+		weld.Part1 = brush
+		weld.Parent = brush
+		brush.CFrame = handle.CFrame * CFrame.new(0, -2.8, 0)
+
+		tool.Parent = character
+		broomTool = tool
+		broomHolder = player
+
+		broomMountPrompt.ObjectText = "Broom taken!"
+		print(("[Events] %s took the broom"):format(player.Name))
+	end)
+
+	print(("[Events] broom mount ready at %s"):format(mount:GetFullName()))
+	return true
+end
+
+Players.PlayerRemoving:Connect(function(player)
+	if broomHolder == player then
+		returnBroom()
+		print("[Events] carrier left - broom returned to the mount")
+	end
+end)
+
+Players.PlayerAdded:Connect(function(player)
+	player.CharacterRemoving:Connect(function()
+		if broomHolder == player then
+			returnBroom()
+			print("[Events] carrier died - broom returned to the mount")
+		end
+	end)
+end)
+
+----------------------------------------------------------------
+-- THE SPILL (owner design, Sep 17 2026 - GLOBAL): a puddle splats near
+-- a random table. Sweep it with the broom inside the fuse and nothing
+-- happens; let it sit and HALF the seated parties lose HALF their
+-- remaining patience (ServiceLoop's SpillPatienceHit bridge), then the
+-- puddle dries itself and the event ends. The roadmap's mess system.
+----------------------------------------------------------------
+local spill = {
+	Active = false,
+	Puddle = nil,
+	Prompt = nil,
+	Gui = nil,
+	Fill = nil,
+	Label = nil,
+	Remaining = 0,
+	Total = 0,
+	Hit = false,        --// the patience cut has landed
+	EvaporateIn = 0,    --// post-hit countdown to self-drying
+}
+
+local stopSpill --// forward: the heartbeat and registry both need it
+local cancelSweepSession --// forward: stopSpill closes any open panel
+local beginSweepSession --// forward: the puddle prompt opens the panel
+
+spillIsActive = function() --// assigns the broom mount's forward local
+	return spill.Active == true
+end
+
+--// One success door for every way of sweeping (hold, panel, SPEED
+--// DIAL rides its own branch): stats, career and the cleanup
+local function sweepSuccess(player)
+	eventStats.SpillsSwept += 1
+	creditStat(player, "EventChannels", 1) --// the Fixer's career
+	print(("[Events] %s swept the spill%s"):format(
+		player.Name, spill.Hit and " (too late for the guests)" or " in time"))
+	stopSpill(player)
+end
+
+local function refreshSpillUi()
+	if not spill.Gui then return end
+	spill.Gui.Enabled = spill.Active
+	if not spill.Active then return end
+	if spill.Hit then
+		spill.Label.Text = "EW! Too late..."
+		spill.Fill.Size = UDim2.fromScale(0, 1)
+	else
+		spill.Label.Text = "SPILL! Sweep it!"
+		spill.Fill.Size = UDim2.fromScale(
+			math.clamp(spill.Remaining / math.max(spill.Total, 1), 0, 1), 1)
+	end
+end
+
+--// The puddle lands near a random tagged table, on the real floor
+local function pickPuddleSpot()
+	local tables = {}
+	for _, instance in ipairs(CollectionService:GetTagged("Table")) do
+		if instance:IsDescendantOf(workspace) then
+			local part = resolvePart(instance)
+			if part then table.insert(tables, part) end
+		end
+	end
+	if #tables == 0 then return nil end
+
+	local anchor = tables[math.random(#tables)]
+	local angle = math.random() * math.pi * 2
+	local at = anchor.Position + Vector3.new(
+		math.cos(angle) * SPILL.PuddleOffsetStuds, 0,
+		math.sin(angle) * SPILL.PuddleOffsetStuds)
+
+	local rp = RaycastParams.new()
+	rp.RespectCanCollide = true
+	local hit = workspace:Raycast(at + Vector3.new(0, 6, 0), Vector3.new(0, -30, 0), rp)
+	return Vector3.new(at.X, (hit and hit.Position.Y or at.Y) + 0.15, at.Z)
+end
+
+local function startSpill()
+	local diff = difficultyBlock()
+	local at = pickPuddleSpot()
+	if not at then
+		warn("[Events] Spill rolled but no tagged Table exists - skipped")
+		return
+	end
+
+	Sfx.Play("SpillAlert")
+
+	spill.Active = true
+	spill.Hit = false
+	spill.Total = diff.SpillFuseSeconds
+	spill.Remaining = spill.Total
+	spill.EvaporateIn = 0
+
+	--// The puddle: a flat glassy blot, named for the arrow client
+	local puddle = Instance.new("Part")
+	puddle.Name = "SpillPuddle"
+	puddle.Shape = Enum.PartType.Cylinder
+	puddle.Size = Vector3.new(0.2, SPILL.PuddleRadiusStuds * 2, SPILL.PuddleRadiusStuds * 2)
+	puddle.CFrame = CFrame.new(at) * CFrame.Angles(0, 0, math.rad(90))
+	puddle.Color = Color3.fromRGB(120, 180, 235)
+	puddle.Material = Enum.Material.Glass
+	puddle.Transparency = 0.35
+	puddle.Anchored = true
+	puddle.CanCollide = false
+	puddle.CanQuery = true
+	puddle.Parent = workspace
+	spill.Puddle = puddle
+
+	--// Fuse billboard, house pattern
+	local gui = Instance.new("BillboardGui")
+	gui.Name = "SpillAlert"
+	gui.Size = UDim2.fromOffset(190, 52)
+	gui.StudsOffsetWorldSpace = Vector3.new(0, 4, 0)
+	gui.AlwaysOnTop = true
+	gui.Parent = puddle
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.fromScale(1, 0.55)
+	label.BackgroundTransparency = 1
+	label.TextScaled = true
+	label.Font = Enum.Font.FredokaOne
+	label.TextColor3 = Color3.fromRGB(150, 210, 255)
+	label.TextStrokeColor3 = Color3.fromRGB(59, 43, 32)
+	label.TextStrokeTransparency = 0
+	label.Parent = gui
+	local back = Instance.new("Frame")
+	back.AnchorPoint = Vector2.new(0.5, 1)
+	back.Position = UDim2.fromScale(0.5, 1)
+	back.Size = UDim2.fromScale(0.92, 0.3)
+	back.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+	back.BorderSizePixel = 0
+	back.Parent = gui
+	local fill = Instance.new("Frame")
+	fill.Size = UDim2.fromScale(1, 1)
+	fill.BackgroundColor3 = Color3.fromRGB(120, 180, 235)
+	fill.BorderSizePixel = 0
+	fill.Parent = back
+	spill.Gui, spill.Label, spill.Fill = gui, label, fill
+
+	--// The sweep entry. Gated difficulties (Interactions.SweepMinigame,
+	--// ON everywhere): E is a PRESS that opens the drag-the-broom panel.
+	--// Ungated fallback per the constitution: the plain channel hold,
+	--// with the Fixer's ChannelMult trimming it (Chef-collect trick).
+	local gated = diff.Interactions and diff.Interactions.SweepMinigame == true
+
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.Name = "Sweep"
+	prompt.ActionText = "Sweep"
+	prompt.ObjectText = "Spill"
+	prompt.HoldDuration = gated and 0 or diff.SweepChannelSeconds
+	prompt.MaxActivationDistance = Config.Interaction.PromptRangeStuds
+	prompt.RequiresLineOfSight = false
+	prompt.Parent = puddle
+	spill.Prompt = prompt
+
+	if not gated then
+		prompt.PromptButtonHoldBegan:Connect(function(player)
+			local mult = player:GetAttribute("ChannelMult") or 1
+			if mult ~= 1 then
+				prompt.HoldDuration = diff.SweepChannelSeconds * mult
+			end
+		end)
+		prompt.PromptButtonHoldEnded:Connect(function()
+			prompt.HoldDuration = diff.SweepChannelSeconds
+		end)
+	end
+
+	prompt.Triggered:Connect(function(player)
+		if not spill.Active then return end
+		if not holdingBroom(player) then
+			prompt.ObjectText = "Need the broom!"
+			task.delay(1.5, function()
+				if prompt.Parent then prompt.ObjectText = "Spill" end
+			end)
+			return
+		end
+		if gated then
+			beginSweepSession(player) --// the panel decides the finish
+		else
+			sweepSuccess(player) --// the hold already elapsed
+		end
+	end)
+
+	refreshSpillUi()
+	publish("Spill", "SPREADING", spill.Remaining, spill.Total,
+		"A spill on the floor! Grab the broom and sweep it!")
+	print(("[Events] spill started - fuse %ds"):format(spill.Total))
+end
+
+--// The fuse ran out: the gut-punch lands ONCE, the puddle lingers
+--// briefly (still sweepable, for pride), then dries by itself
+local function soakSpill()
+	spill.Hit = true
+	spill.EvaporateIn = SPILL.EvaporateAfterHitSeconds
+
+	local bridge = ServerStorage:FindFirstChild("SpillPatienceHit")
+	local hitCount = 0
+	if bridge then
+		hitCount = bridge:Invoke(SPILL.AffectedFraction, SPILL.PatienceCutMult) or 0
+	end
+	if (SPILL.FuseOutRep or 0) ~= 0 then
+		applyRep(SPILL.FuseOutRep, "spill left on the floor")
+	end
+
+	refreshSpillUi()
+	publish("Spill", "SOAKED", 0, spill.Total,
+		"Too late! The guests are grossed out!")
+	print(("[Events] spill soaked in - %d seated part%s lost patience")
+		:format(hitCount, hitCount == 1 and "y" or "ies"))
+end
+
+stopSpill = function(byPlayer)
+	if not spill.Active then return end
+	spill.Active = false
+
+	if cancelSweepSession then
+		cancelSweepSession() --// a vanished puddle closes any open panel
+	end
+	if spill.Puddle then
+		spill.Puddle:Destroy() --// prompt and gui ride along
+		spill.Puddle, spill.Prompt, spill.Gui, spill.Fill, spill.Label =
+			nil, nil, nil, nil, nil
+	end
+	returnBroom()
+
+	--// Stamp the scheduler gap (same reasoning as stopToilet)
+	local elapsed = shiftInfo().Elapsed or 0
+	scheduler.LastEndedAt = elapsed
+	scheduler.NextRollAt = elapsed + SCHEDULER.RollIntervalSeconds
+
+	publish()
+	print(("[Events] spill over (%s)"):format(
+		byPlayer and ("swept by " .. byPlayer.Name) or "dried up"))
+end
+
+----------------------------------------------------------------
+-- THE SWEEP PANEL (gated by Difficulty.Interactions.SweepMinigame -
+-- ON for every difficulty). The square drag-the-broom minigame: the
+-- client reports completed drag PASSES, and the server counts its OWN
+-- strokes - rate-capped against auto-draggers, broom-in-hand and
+-- proximity re-checked every stroke - plunge-tap grammar throughout.
+-- A full count exits through sweepSuccess, same as the ungated hold.
+----------------------------------------------------------------
+local SWEEP = Config.Events.SpillSweep
+
+local sweepRemoteFolder = ReplicatedStorage:FindFirstChild("Remotes")
+if not sweepRemoteFolder then
+	sweepRemoteFolder = Instance.new("Folder")
+	sweepRemoteFolder.Name = "Remotes"
+	sweepRemoteFolder.Parent = ReplicatedStorage
+end
+local sweepRemote = sweepRemoteFolder:FindFirstChild("SpillSweepRemote")
+if not sweepRemote then
+	sweepRemote = Instance.new("RemoteEvent")
+	sweepRemote.Name = "SpillSweepRemote"
+	sweepRemote.Parent = sweepRemoteFolder
+end
+
+local sweepSession = nil --// { Player, Strokes, StrokesNeeded, LastStrokeAt, Token }
+local sweepToken = 0
+
+cancelSweepSession = function()
+	if not sweepSession then return end
+	local session = sweepSession
+	sweepSession = nil
+	if session.Player and session.Player.Parent then
+		sweepRemote:FireClient(session.Player, "Close", session.Token, false)
+	end
+end
+
+beginSweepSession = function(player)
+	--// One sweeper at a time
+	if sweepSession then
+		if sweepSession.Player ~= player and spill.Prompt then
+			spill.Prompt.ObjectText = "Being swept!"
+			task.delay(1.5, function()
+				if spill.Prompt and spill.Prompt.Parent then
+					spill.Prompt.ObjectText = "Spill"
+				end
+			end)
+		end
+		return
+	end
+
+	--// FIXER PASSIVE in stroke grammar: ChannelMult trims the passes
+	local strokesNeeded = math.max(1, math.ceil(
+		SWEEP.StrokesNeeded * (player:GetAttribute("ChannelMult") or 1)))
+
+	sweepToken += 1
+	sweepSession = {
+		Player = player,
+		Strokes = 0,
+		StrokesNeeded = strokesNeeded,
+		LastStrokeAt = 0,
+		Token = sweepToken,
+	}
+
+	sweepRemote:FireClient(player, "Open", {
+		Token = sweepToken,
+		StrokesNeeded = strokesNeeded,
+	})
+
+	--// An abandoned panel must never wedge the puddle
+	local myToken = sweepToken
+	task.delay(SWEEP.TimeoutSeconds, function()
+		if sweepSession and sweepSession.Token == myToken then
+			print("[Events] sweep panel timed out - puddle freed")
+			cancelSweepSession()
+		end
+	end)
+
+	print(("[Events] %s started sweeping (%d passes)"):format(player.Name, strokesNeeded))
+end
+
+sweepRemote.OnServerEvent:Connect(function(player, action, token)
+	local session = sweepSession
+	if not session or session.Token ~= token or session.Player ~= player then return end
+
+	if action == "Abandon" then
+		cancelSweepSession()
+		return
+	end
+	if action ~= "Stroke" then return end
+	if not spill.Active or not spill.Puddle then
+		cancelSweepSession()
+		return
+	end
+
+	--// The broom must still be in hand and the sweeper at the puddle
+	local character = player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	if not holdingBroom(player) or not root
+		or (root.Position - spill.Puddle.Position).Magnitude > SWEEP.WalkAwayStuds + 6 then
+		cancelSweepSession()
+		return
+	end
+
+	--// Rate cap: passes beyond human arm speed simply don't count
+	local now = os.clock()
+	if now - session.LastStrokeAt < 1 / SWEEP.MaxStrokesPerSecond then
+		return
+	end
+	session.LastStrokeAt = now
+	session.Strokes += 1
+
+	if session.Strokes >= session.StrokesNeeded then
+		sweepSession = nil --// before stopSpill so its cancel is a no-op
+		sweepRemote:FireClient(player, "Close", session.Token, true)
+		sweepSuccess(player)
+		return
+	end
+
+	sweepRemote:FireClient(player, "Progress", session.Token,
+		session.Strokes / session.StrokesNeeded)
 end)
 
 ----------------------------------------------------------------
@@ -1796,6 +2284,11 @@ do
 		elseif outage.Active then
 			stopOutage(player)
 			return true
+		elseif spill.Active then
+			eventStats.SpillsSwept += 1
+			creditStat(player, "EventChannels", 1)
+			stopSpill(player)
+			return true
 		end
 		return false, "No emergency right now!"
 	end
@@ -1843,6 +2336,9 @@ RunService.Heartbeat:Connect(function(dt)
 
 	--// Nothing runs outside a live shift, and anything mid-flight is cleared
 	if info.State ~= "RUNNING" then
+		if spill.Active then
+			stopSpill(nil)
+		end
 		if toilet.Active then
 			stopToilet(nil)
 		end
@@ -1870,6 +2366,24 @@ RunService.Heartbeat:Connect(function(dt)
 			if toilet.DrainAccum >= 10 then
 				toilet.DrainAccum -= 10
 				applyRep(-TOILET.FloodRepDrainPer10s, "flooded bathroom")
+			end
+		end
+	end
+
+	--// Tick the spill: fuse down to the gut-punch, then a short self-dry
+	if spill.Active then
+		if not spill.Hit then
+			spill.Remaining -= dt
+			if spill.Remaining <= 0 then
+				soakSpill()
+			else
+				refreshSpillUi()
+				EventState:SetAttribute("FuseRemaining", math.max(0, spill.Remaining))
+			end
+		else
+			spill.EvaporateIn -= dt
+			if spill.EvaporateIn <= 0 then
+				stopSpill(nil)
 			end
 		end
 	end
@@ -2030,6 +2544,16 @@ task.spawn(function()
 			Start = startOutage,
 			Stop = function() stopOutage(nil) end,
 			IsActive = function() return outage.Active end,
+		})
+	end
+
+	--// THE SPILL needs its broom mount (owner places & tags BroomMount
+	--// on each map) and at least one tagged Table to splat beside
+	if setupBroomMount() then
+		registerEvent("Spill", {
+			Start = startSpill,
+			Stop = function() stopSpill(nil) end,
+			IsActive = function() return spill.Active end,
 		})
 	end
 

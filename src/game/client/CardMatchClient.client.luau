@@ -38,6 +38,10 @@ local cardRemote = remotes:WaitForChild("CardMatchRemote")
 
 local CREAM = Color3.fromRGB(255, 246, 233)
 local CREAM_DEEP = Color3.fromRGB(255, 236, 210)
+--// BLUISH WHITE panel ground (owner call, Sep 17) - each minigame
+--// wears its own colour: math is red-white, memory is blue-white
+local SKY = Color3.fromRGB(240, 247, 255)
+local SKY_DEEP = Color3.fromRGB(221, 235, 252)
 local CHOC = Color3.fromRGB(59, 43, 32)
 local MUSTARD = Color3.fromRGB(245, 184, 65)
 local BASIL = Color3.fromRGB(76, 175, 109)
@@ -166,12 +170,12 @@ local function buildPanel(data)
 	panel.AnchorPoint = Vector2.new(0.5, 0.5)
 	panel.Size = UDim2.fromScale(0.46, 0.62)
 	panel.Position = UDim2.fromScale(0.5, 0.46)
-	panel.BackgroundColor3 = CREAM
+	panel.BackgroundColor3 = SKY
 	panel.BorderSizePixel = 0
 	panel.Parent = gui
 	local gradient = Instance.new("UIGradient")
 	gradient.Rotation = 90
-	gradient.Color = ColorSequence.new(CREAM, CREAM_DEEP)
+	gradient.Color = ColorSequence.new(SKY, SKY_DEEP)
 	gradient.Parent = panel
 	local corner = Instance.new("UICorner")
 	corner.CornerRadius = UDim.new(0.06, 0)
