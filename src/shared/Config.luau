@@ -2043,7 +2043,11 @@ Config.Pass = {
 	--// Where a served plate lands: 0 = table centre, 1 = the customer's seat
 	--// position. Just past halfway puts it in front of them, on the table.
 	TablePlateInset = 0.55,
-	TablePlateLiftStuds = 0.05,
+	--// Sits the plate this far ABOVE the wood. Raise it if a plate looks
+	--// sunk (a mesh plate whose crockery dips below its own bounding box,
+	--// like Yamasaki's - the flush calc rests the BOX on the wood, so the
+	--// dip needs covering here). Lower it if plates float.
+	TablePlateLiftStuds = 0.35,
 
 	--// Keeps a served plate off the very edge of the table. Raise it if plates
 	--// look like they are about to slide off.
@@ -2190,6 +2194,11 @@ Config.StudioSpawnBurst = 4 --// TEMP: plate-vs-cup placement test at Yamasaki (
 --// STUDIO-ONLY: every rolled order becomes this dish, so serve tests
 --// need no guessing. "" = normal menu rolls. Ignored on live servers.
 Config.StudioForceDish = "TempuraShrimp" --// TEMP: Chef serve test (Sep 19)
+
+--// STUDIO-ONLY: the NPC Helper stays home, so solo Studio tests are
+--// pure player POV. Ignored on live servers (short-handed shifts keep
+--// their coworker there).
+Config.StudioNoHelper = true --// TEMP: Chef serve test (Sep 19)
 
 --// TEMP (Sep 18, live-ignored): full self-running service in Studio -
 --// seats, orders and serves everything so tables fill with plates

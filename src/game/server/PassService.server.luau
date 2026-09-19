@@ -817,6 +817,17 @@ bridge("PassPlaceOnTable", function(slotId, cframe)
 	--// which way this particular union has to be turned to lie flat - forcing
 	--// an identity rotation stands it on its edge.
 	slot.Root:PivotTo(CFrame.new(cframe.Position) * slot.Home.Rotation)
+
+	--// The caller's point is the SURFACE. PivotTo plants the plate's
+	--// PIVOT there - centred on a built union, but wherever the import
+	--// baked it on a MeshPart plate (Yamasaki's sank half under the
+	--// wood). Measure where the plate's real bottom landed and lift the
+	--// whole thing flush.
+	local bottom = slot.Part.Position.Y - worldHalfHeight(slot.Part)
+	local sink = cframe.Position.Y - bottom
+	if math.abs(sink) > 0.01 then
+		slot.Root:PivotTo(slot.Root:GetPivot() + Vector3.new(0, sink, 0))
+	end
 	attachFood(slot, slot.Dish)
 	setShown(slot, true)
 	slot.Prompt.Enabled = false --// nothing to do with a plate mid-meal
