@@ -2672,9 +2672,6 @@ local function resolveDialogue(dlg, pickedKey, notifyClient)
 		scoreOnly(dlg.Player, "OrdersTaken", 1)
 	end
 
-	--// The greeting beat: the party has just told you what they want
-	Sfx.Play("OrderTaken", party.Pawn)
-
 	nextOrderNumber += 1
 	party.OrderNumber = nextOrderNumber --// the board's ticket number
 
@@ -2733,6 +2730,11 @@ local function beginDialogue(player, party, tableId)
 	local dlg = { Player = player, Party = party, Token = token, Flow = flow }
 	party.Dialogue = dlg
 	dialogueByToken[token] = dlg
+
+	--// The greeting beat plays the MOMENT you press E on the table (owner
+	--// ask, Sep 19), not when the order finally resolves - the "hi!" is
+	--// the party turning to greet you as you walk up.
+	Sfx.Play("OrderTaken", party.Pawn)
 
 	--// The server picks every phrase; the client only renders, substituting
 	--// {DISH} with DishText (direct) or the picked dish's display (recommend)

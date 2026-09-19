@@ -2366,15 +2366,15 @@ Config.Sfx = {
 		--// EMERGENCIES ---------------------------------------------------
 		--// Alerts carry across the whole restaurant - the point is that
 		--// nobody can miss them - so they are global.
-		ToiletAlert = { Id = "", Volume = 0.7, Global = true },
-		FireAlert   = { Id = "133849873643710", Volume = 0.8, Global = true },
-		PowerAlert  = { Id = "", Volume = 1, Global = true }, -- owner: louder.
-		SpillAlert  = { Id = "", Volume = 0.7, Global = true }, -- the splat (owner: id pending)
+		ToiletAlert = { Id = "", Volume = 0.9, Global = true },
+		FireAlert   = { Id = "133849873643710", Volume = 0.7, Global = true },
+		PowerAlert  = { Id = "", Volume = 0.7, Global = true }, -- owner: louder.
+		SpillAlert  = { Id = "", Volume = 0.9, Global = true }, -- the splat (owner: id pending)
 
 		--// Mopping it up. Positional and looping, like the other fixes, so
 		--// the room can hear someone dealing with it.
 		MopSweep = {
-			Id = "86605317124827", Volume = 0.6, Loop = true,
+			Id = "86605317124827", Volume = 0.9, Loop = true,
 			MinStuds = 6, MaxStuds = 30,
 		},
 
@@ -2384,52 +2384,55 @@ Config.Sfx = {
 		--// and four people answering at once should not stack. Shared by all
 		--// three games: the maths quiz, the card match, and the cook timing
 		--// bar (green = right, red = wrong).
-		AnswerRight = { Id = "100414462804328", Volume = 0.6 },
-		AnswerWrong = { Id = "96876122441863", Volume = 0.6 },
+		AnswerRight = { Id = "100414462804328", Volume = 0.9 },
+		AnswerWrong = { Id = "96876122441863", Volume = 0.9 },
 		                              -- NOTE: Id still empty = silent until set!
 
 		--// The FIXES are positional: you hear them where the work is.
 		ToiletFix = {
-			Id = "", Volume = 0.6, Loop = true,
+			Id = "", Volume = 0.9, Loop = true,
 			MinStuds = 6, MaxStuds = 30,
 		},
 		BreakerFix = {
 			--// UNWIRED since the owner ruling (Sep 2026): the wire fix
 			--// sounds per CONNECTION (WireConnect below), not per session
-			Id = "87055568032543", Volume = 0.6, Loop = true,
+			Id = "87055568032543", Volume = 0.9, Loop = true,
 			MinStuds = 6, MaxStuds = 30,
 		},
 		--// Client-local one-shot: a little zap each time a wire seats
 		--// (played by WireFixClient directly, not the server module)
-		WireConnect = { Id = "87055568032543", Volume = 0.6 },
+		WireConnect = { Id = "87055568032543", Volume = 0.9 },
 		FireExtinguish = {
-			Id = "84243999556475", Volume = 0.7, Loop = true,
+			Id = "84243999556475", Volume = 0.9, Loop = true,
 			MinStuds = 8, MaxStuds = 40,
 		},
 
 		--// Relief beat when the lights come back. Global - everyone was in
 		--// the dark together.
-		PowerRestored = { Id = "", Volume = 0.7, Global = true },
+		PowerRestored = { Id = "", Volume = 0.9, Global = true },
 
 		--// CUSTOMERS -----------------------------------------------------
 		--// The greeting when a party gives you their order - the "hi!" beat
 		--// Work at a Pizza Place uses. At the table, so a busy room still
 		--// tells you WHICH party just ordered.
 		OrderTaken = {
-			Id = "118548572543142", Volume = 0.7,
-			MinStuds = 10, MaxStuds = 45,
+			--// Well above 1.0 (Roblox allows up to 10): the source clip is
+			--// a quiet recording, so the number has to carry it (owner, Sep 19)
+			Id = "118548572543142", Volume = 3.0,
+			MinStuds = 12, MaxStuds = 45,
 		},
 
 		--// The whole party finally has everything they asked for. Plays on
 		--// the LAST dish only, not on every plate - it is the payoff beat.
 		PartyServed = {
-			Id = "115870238254338", Volume = 0.7,
-			MinStuds = 10, MaxStuds = 50,
+			--// Well above 1.0: quiet source clip, the payoff beat must land (Sep 19)
+			Id = "115870238254338", Volume = 3.0,
+			MinStuds = 12, MaxStuds = 50,
 		},
 
 		--// At the customer, so you can tell WHICH table just gave up.
 		CustomerAngry = {
-			Id = "119046821634222", Volume = 0.7,
+			Id = "119046821634222", Volume = 0.9,
 			MinStuds = 10, MaxStuds = 55,
 		},
 
@@ -2437,18 +2440,18 @@ Config.Sfx = {
 		--// The order confirmation plays at the board you just used; the
 		--// arrival plays at the truck so it pulls your attention outside.
 		SupplyOrdered = {
-			Id = "", Volume = 0.6,
+			Id = "", Volume = 0.9,
 			MinStuds = 8, MaxStuds = 35,
 		},
 		TruckArrived = {
-			Id = "110342333875026", Volume = 0.8,
+			Id = "110342333875026", Volume = 0.9,
 			MinStuds = 15, MaxStuds = 90,
 		},
 
 		--// SHIFT ---------------------------------------------------------
 		--// Everyone hears these together, wherever they happen to be.
-		ShiftStart = { Id = "", Volume = 0.8, Global = true },
-		ShiftEnd   = { Id = "", Volume = 0.8, Global = true },
+		ShiftStart = { Id = "", Volume = 0.9, Global = true },
+		ShiftEnd   = { Id = "", Volume = 0.9, Global = true },
 	},
 }
 
@@ -2463,7 +2466,7 @@ Config.Music = {
 
 	--// 0..1. Background music should sit UNDER the prompts and event stings -
 	--// if players turn it off to hear the game, it is too loud.
-	Volume = 0.95,
+	Volume = 0.65, --// dropped 0.1 so it sits further under the louder SFX (Sep 19)
 
 	--// Seconds to fade between tracks. Long enough not to jolt, short enough
 	--// that a phase change still reads as a change.
