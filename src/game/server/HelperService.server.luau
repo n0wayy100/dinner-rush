@@ -527,8 +527,13 @@ ShiftState:GetAttributeChangedSignal("State"):Connect(function()
 	if state == "RUNNING" and lastState ~= "RUNNING" then
 		--// TUTORIAL: no Helper - he would seat and serve Bruno's whole
 		--// lesson himself before the rookie moved a muscle
+		--// STUDIO KNOB (live-ignored): keep the Helper home so solo
+		--// Studio tests stay pure player POV (Config.StudioNoHelper)
+		local studioBenched = game:GetService("RunService"):IsStudio()
+			and Config.StudioNoHelper == true
 		if #Players:GetPlayers() <= HELPER.MaxPlayersForHelper
-			and workspace:GetAttribute("MatchMode") ~= "TUTORIAL" then
+			and workspace:GetAttribute("MatchMode") ~= "TUTORIAL"
+			and not studioBenched then
 			spawnHelper()
 		end
 	elseif state ~= "RUNNING" and state ~= "CLOSING" then
