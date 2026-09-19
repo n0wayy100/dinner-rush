@@ -2468,6 +2468,9 @@ local function resolveDialogue(dlg, pickedKey, notifyClient)
 		scoreOnly(dlg.Player, "OrdersTaken", 1)
 	end
 
+	--// The greeting beat: the party has just told you what they want
+	Sfx.Play("OrderTaken", party.Pawn)
+
 	nextOrderNumber += 1
 	party.OrderNumber = nextOrderNumber --// the board's ticket number
 
@@ -2486,6 +2489,8 @@ end
 local function takeOrderDirect(party)
 	if party.State ~= STATE.SEATED or not serviceOpen() then return false end
 	if party.Dialogue then return false end
+
+	Sfx.Play("OrderTaken", party.Pawn)
 
 	nextOrderNumber += 1
 	party.OrderNumber = nextOrderNumber
@@ -2648,6 +2653,10 @@ local function serveDishToParty(party, tableId, dishName, quality, plateSlot, se
 		extendBar(party, Config.Customers.PerDishServeBonus, "dish landed")
 		refreshTablePrompt(tableId)
 	else
+		--// Everything they asked for is on the table. The payoff beat, so
+		--// it fires once per party rather than once per plate.
+		Sfx.Play("PartyServed", party.Pawn)
+
 		-- LAST dish: the seated bar dies here, per spec
 		if party.IsCritic then
 			party.CriticServeFraction = math.clamp(

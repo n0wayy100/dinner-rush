@@ -2232,7 +2232,7 @@ Config.Sfx = {
 		--// The ramen cooker's bubbling broth. Id pending the sound
 		--// person - "" is silent, same as every unset sound here.
 		CookRamen = {
-			Id = "", Volume = 0.5, Loop = true,
+			Id = "106600879170754", Volume = 0.5, Loop = true,
 			MinStuds = 8, MaxStuds = 25,
 		},
 		CookGrill = {
@@ -2272,6 +2272,21 @@ Config.Sfx = {
 		PowerRestored = { Id = "", Volume = 0.7, Global = true },
 
 		--// CUSTOMERS -----------------------------------------------------
+		--// The greeting when a party gives you their order - the "hi!" beat
+		--// Work at a Pizza Place uses. At the table, so a busy room still
+		--// tells you WHICH party just ordered.
+		OrderTaken = {
+			Id = "118548572543142", Volume = 0.7,
+			MinStuds = 10, MaxStuds = 45,
+		},
+
+		--// The whole party finally has everything they asked for. Plays on
+		--// the LAST dish only, not on every plate - it is the payoff beat.
+		PartyServed = {
+			Id = "115870238254338", Volume = 0.7,
+			MinStuds = 10, MaxStuds = 50,
+		},
+
 		--// At the customer, so you can tell WHICH table just gave up.
 		CustomerAngry = {
 			Id = "119046821634222", Volume = 0.7,
@@ -2340,6 +2355,65 @@ Config.Music = {
 			"rbxassetid://88152996529508",
 		},
 	},
+
+	--// RESTAURANT SOUNDTRACKS - one set per map, keyed by the map's Id in
+	--// Config.Maps. Played by ShiftMusicClient, following the shift clock:
+	--//
+	--//   Calm       0:00-2:00   phase 1, shift start
+	--//   Building   2:00-5:00   phase 2, mid shift
+	--//   Crescendo  5:00-end    phase 3, busy - and it keeps playing through
+	--//                          closing until the last table has left
+	--//
+	--// Every track LOOPS seamlessly (Sound.Looped), so a track shorter than
+	--// its play time just goes round again with no cut.
+	--//
+	--// PlaySeconds = how long the phase's track plays before it starts to
+	--// fade out. Leave it out to loop until the shift ends.
+	--//
+	--// Paste ids between the quotes. An empty Id is silence for that phase,
+	--// never an error. A map with no entry here has no shift music.
+	--// To hear a map in Studio, point Config.StudioMapId at it.
+	MapSoundtracks = {
+		Sushi = {
+			Calm = {
+				Id = "99467510202385",
+				PlaySeconds = 100,   -- 1:40 of the 2:00 phase, then fades
+			},
+			Building = {
+				Id = "108056046088233",
+				PlaySeconds = 160,   -- 2:40 of the 3:00 phase, then fades
+			},
+			Crescendo = {
+				--// TWO PARTS. The intro plays ONCE and is never looped - it is
+				--// the slow-tempo opening that winds up to speed. The instant
+				--// it finishes, Id takes over and loops until the last table
+				--// leaves. The handover is butt-joined, not crossfaded, so the
+				--// tempo lands where the composer put it.
+				--//
+				--// Leave IntroId empty to just loop Id from the start.
+				IntroId = "118748463664902",
+				Id = "126450480293212",
+				--// no PlaySeconds: loops until the last table leaves
+			},
+		},
+	},
+
+	--// How the shift music moves between states
+	ShiftFadeInSeconds = 2,      -- a phase track rises in rather than cutting on
+	ShiftFadeOutSeconds = 6,     -- "slowly fade out" at the end of PlaySeconds,
+	                             -- and when the shift ends
+	ShiftVolume = 0.6,           -- sits under prompts and event alerts
+
+	--// Intro -> loop handover. The loop starts this long before the intro
+	--// actually ends, so they butt together instead of leaving a hole. Small
+	--// enough that the overlap is inaudible; 0 would risk a gap.
+	ShiftIntroHandoffSeconds = 0.05,
+
+	--// Someone joining mid-phase has missed the wind-up, so past this many
+	--// seconds into a phase the intro is skipped and the loop starts straight
+	--// away. Without it, a late joiner would hear the slow opening while
+	--// everyone else is already at full tempo.
+	ShiftIntroSkipAfterSeconds = 3,
 }
 
 ----------------------------------------------------------------
