@@ -1202,6 +1202,20 @@ local function surfaceYAt(x, z, startY)
 	for _, plate in ipairs(CollectionService:GetTagged("PassSlot")) do
 		table.insert(ignore, plate)
 	end
+	--// Invisible scaffolding must never read as a surface: table anchors
+	--// (raycastable boxes whose tops rarely match the visible wood - the
+	--// Sep 19 probe found one a stud under its tabletop and one shadowing
+	--// it), route markers and queue pads (one Yamasaki waypoint floats
+	--// right over a table), and the TEMP ghost-plate discs.
+	for _, tag in ipairs({ "Table", "Waypoint", "QueueSpot" }) do
+		for _, scaffold in ipairs(CollectionService:GetTagged(tag)) do
+			table.insert(ignore, scaffold)
+		end
+	end
+	local ghosts = workspace:FindFirstChild("GhostPlates")
+	if ghosts then
+		table.insert(ignore, ghosts)
+	end
 	for _, party in pairs(parties) do
 		if party.Members then
 			for _, member in ipairs(party.Members) do
@@ -1224,7 +1238,8 @@ local function surfaceYAt(x, z, startY)
 		Vector3.new(0, -24, 0),
 		params)
 
-	return hit and hit.Position.Y or nil
+	return hit and hit.Position.Y or nil,
+		hit and hit.Instance and hit.Instance.Name or "nothing"
 end
 
 --// Where a served plate lands: on the table, in front of the customer whose
@@ -1249,9 +1264,11 @@ local function platePlacement(tableId, seatIndex)
 	local decorTolerance = Config.Pass.TablePlateDecorToleranceStuds
 
 	if distance < 0.01 then
+		--// centre fallback: with scaffolding excluded the ray reaches the
+		--// real wood, which can sit a stud off the anchor's box - trust it
+		--// within a broad two-stud sanity band, not the decor tolerance
 		local y = surfaceYAt(centre.X, centre.Z, boxTop)
-		--// a hit far off the table's own top is decor or floor, not tabletop
-		if not y or math.abs(y - boxTop) > decorTolerance then
+		if not y or math.abs(y - boxTop) > 2 then
 			y = boxTop
 		end
 		return CFrame.new(Vector3.new(centre.X, y + lift, centre.Z))
@@ -1276,14 +1293,43 @@ local function platePlacement(tableId, seatIndex)
 	--// set a plate. Slide sideways until a clear patch of actual
 	--// tabletop answers; the measured box top is the final fallback.
 	local sideways = Vector3.new(-direction.Z, 0, direction.X)
+
+	--// THE TRUSTED TABLETOP is the MEDIAN of the sample rays, not the
+	--// anchor's box: anchors are hand-placed scaffolding and the Sep 19
+	--// probe found their tops a stud off the visible wood in both
+	--// directions. With scaffolding excluded from the rays, most samples
+	--// hit bare tabletop - the median IS the wood, and a cup (above it)
+	--// or a past-the-edge floor hit (below it) lands off-median and gets
+	--// skipped. First candidate near the median wins; the median itself
+	--// is the fallback spot.
+	local candidates = {}
+	local heights = {}
 	for _, nudge in ipairs({ 0, 0.7, -0.7, 1.3, -1.3 }) do
 		local candidate = spot + sideways * nudge
-		local y = surfaceYAt(candidate.X, candidate.Z, boxTop)
-		if y and math.abs(y - boxTop) <= decorTolerance then
-			return CFrame.new(Vector3.new(candidate.X, y + lift, candidate.Z))
+		local y, hitName = surfaceYAt(candidate.X, candidate.Z, boxTop)
+		table.insert(candidates, { Point = candidate, Y = y, Hit = hitName })
+		if y then
+			table.insert(heights, y)
 		end
 	end
-	return CFrame.new(Vector3.new(spot.X, boxTop + lift, spot.Z))
+	table.sort(heights)
+	local reference = heights[math.ceil(#heights / 2)] or boxTop
+
+	--// TEMP plate-placement diagnostic (Claude) - remove after the hunt
+	print(("[PlateDiag] table %d boxTop=%.2f median=%.2f")
+		:format(tableId, boxTop, reference))
+	for _, c in ipairs(candidates) do
+		print(("[PlateDiag]  hit %s Y=%s (vs median %s)")
+			:format(c.Hit, c.Y and ("%.2f"):format(c.Y) or "none",
+				c.Y and ("%+.2f"):format(c.Y - reference) or "-"))
+	end
+
+	for _, c in ipairs(candidates) do
+		if c.Y and math.abs(c.Y - reference) <= decorTolerance then
+			return CFrame.new(Vector3.new(c.Point.X, c.Y + lift, c.Point.Z))
+		end
+	end
+	return CFrame.new(Vector3.new(spot.X, reference + lift, spot.Z))
 end
 
 local function findTicketDish(player, party)
@@ -3366,6 +3412,14 @@ local function spawnParty(options)
 			table.insert(party.Ticket,
 				Config.RollDish(Config.MenuForMap(workspace:GetAttribute("MatchMapId"))))
 		end
+		--// STUDIO KNOB (live-ignored): pin every rolled order to one dish
+		--// so serve tests need no guessing (Config.StudioForceDish)
+		if RunService:IsStudio() and (Config.StudioForceDish or "") ~= ""
+			and Config.Recipes[Config.StudioForceDish] then
+			for i = 1, #party.Ticket do
+				party.Ticket[i] = Config.StudioForceDish
+			end
+		end
 	end
 	party.DishesRemaining = dishCount
 
@@ -3925,3 +3979,53 @@ task.spawn(function()
 		end
 	end
 end)
+
+--// TEMP (Sep 18, Claude): STUDIO AUTO-SERVICE for the plate-placement
+--// review - seats the queue, takes every order and serves every dish
+--// (Perfect, plateless) by itself, one dish per table per second, so
+--// tables fill with plates hands-free. Studio-only via the knob;
+--// delete this block together with Config.StudioAutoServe.
+if RunService:IsStudio() and Config.StudioAutoServe then
+	print("[Service] STUDIO AUTO-SERVICE is on (Config.StudioAutoServe)")
+
+	--// a pass slot not currently sitting on any table - so every serve
+	--// carries a REAL plate and the true placement path runs
+	local function freePlateSlot()
+		local stats = passBridge("PassStats")
+		local info = stats and stats:Invoke()
+		for id = 1, (info and info.Total) or 0 do
+			local used = false
+			for _, held in pairs(platesByTable) do
+				if table.find(held, id) then
+					used = true
+					break
+				end
+			end
+			if not used then
+				return id
+			end
+		end
+		return nil --// all plates out: serve plateless rather than stall
+	end
+
+	task.spawn(function()
+		while true do
+			task.wait(1)
+			if shift.State == "RUNNING" then
+				for _, party in pairs(parties) do
+					if party.State == STATE.QUEUED and not party.Seating
+						and partyAtFront(party) then
+						seatParty(party, nil)
+					elseif party.State == STATE.SEATED
+						and not party.Dialogue and not party.DashWarning then
+						takeOrderDirect(party)
+					elseif party.State == STATE.WAITING_FOOD
+						and party.Ticket and party.Ticket[1] then
+						serveDishToParty(party, party.TableId,
+							party.Ticket[1], "Perfect", freePlateSlot(), nil)
+					end
+				end
+			end
+		end
+	end)
+end

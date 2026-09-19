@@ -1832,8 +1832,8 @@ Config.Ultimates = {
 	--// Ignored on live servers. Set StudioFullCharge = false (and the
 	--// key "") when ultimate testing ends, or charge earning can never
 	--// be playtested in Studio.
-	StudioFullCharge = false, --// banner testing done (Sep 17)
-	StudioClassKey = "Charmer",
+	StudioFullCharge = true, --// ON: Chef serve test (Sep 19) - revert after
+	StudioClassKey = "Chef",
 
 	--// THE CAST BANNER (Sep 2026). Cosmetic only - nothing here touches
 	--// charge, abilities or THE LAW. Caster sees their own avatar posed
@@ -2185,7 +2185,16 @@ Config.StudioMapId = "Sushi" --// reviewing the ramen shift bar (Sep 18)
 --// shift goes RUNNING, so route/seating tests need no command bar.
 --// The normal spawn trickle continues after the burst. 0 = off (normal
 --// opening). Ignored on live servers - set 0 anyway when map testing ends.
-Config.StudioSpawnBurst = 0 --// crowd tests done (Sep 17)
+Config.StudioSpawnBurst = 4 --// TEMP: plate-vs-cup placement test at Yamasaki (Sep 18) - revert to 0
+
+--// STUDIO-ONLY: every rolled order becomes this dish, so serve tests
+--// need no guessing. "" = normal menu rolls. Ignored on live servers.
+Config.StudioForceDish = "TempuraShrimp" --// TEMP: Chef serve test (Sep 19)
+
+--// TEMP (Sep 18, live-ignored): full self-running service in Studio -
+--// seats, orders and serves everything so tables fill with plates
+--// hands-free. Delete together with the block at ServiceLoop's end.
+Config.StudioAutoServe = false --// OFF: owner serving by hand (Sep 19)
 
 --// Whether a given id is a real, playable map. The lobby server gates every
 --// party on this - never trust a MapId that arrived from a client.
