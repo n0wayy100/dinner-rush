@@ -2377,6 +2377,20 @@ Config.Sfx = {
 		--// bar (green = right, red = wrong).
 		AnswerRight = { Id = "100414462804328", Volume = 0.6 },
 		AnswerWrong = { Id = "96876122441863", Volume = 0.6 },
+
+		--// ULTIMATES --------------------------------------------------------
+		--// The bar hitting 100%. LOCAL, for that player only - it is a
+		--// private "you can fire now", and four bars filling during a busy
+		--// Crescendo should not all sound across the room.
+		UltimateReady = { Id = "127718379694875", Volume = 0.7 },
+
+		--// Firing it. Positional at the caster with a wide radius, so the
+		--// team hears WHO just did something big without it being a global
+		--// blast every single time.
+		UltimateUsed = {
+			Id = "84105506913051", Volume = 0.85,
+			MinStuds = 12, MaxStuds = 80,
+		},
 		                              -- NOTE: Id still empty = silent until set!
 
 		--// The FIXES are positional: you hear them where the work is.

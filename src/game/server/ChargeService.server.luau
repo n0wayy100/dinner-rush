@@ -38,6 +38,8 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
 
+local Sfx = require(ServerStorage:WaitForChild("Shared"):WaitForChild("Sfx"))
+
 local sharedFolder = ReplicatedStorage:WaitForChild("Shared", 10)
 assert(sharedFolder, "[Charge] ReplicatedStorage.Shared not found")
 local Config = require(sharedFolder:WaitForChild("Config", 10))
@@ -335,6 +337,12 @@ ultimateRemote.OnServerEvent:Connect(function(player, action)
 	local ok, reason = ability(player)
 	if ok then
 		player:SetAttribute("UltimateCharge", 0) --// spent only on success
+
+		--// At the caster, not global: the team hears WHO just did something
+		--// big. Fires only after the ability actually succeeded, so a denied
+		--// press stays silent.
+		Sfx.Play("UltimateUsed", player.Character)
+
 		ultimateRemote:FireClient(player, "Result", true)
 		--// Everyone hears about it - ultimates are social moments. Sent
 		--// only after the ability SUCCEEDED, so no client can show a
