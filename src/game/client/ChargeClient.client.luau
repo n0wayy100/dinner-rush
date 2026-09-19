@@ -25,6 +25,7 @@ local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 
 local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
+local SfxLocal = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SfxLocal"))
 local ultimateRemote = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("UltimateRemote")
 
 local ULT = Config.Ultimates
@@ -161,6 +162,7 @@ UserInputService.LastInputTypeChanged:Connect(applyLayout)
 ----------------------------------------------------------------
 local fillTween = TweenInfo.new(ULT.BarTweenSeconds, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 local pulseTween = nil
+local wasReady = false --// so the ready blip fires on the edge, not every frame
 local hintSerial = 0
 
 local function classInfo()
@@ -224,6 +226,15 @@ local function render()
 	percent.Text = ("%d%%"):format(math.floor(fraction * 100))
 
 	local ready = fraction >= 1
+
+	--// Only the MOMENT it fills, not every render while it sits full -
+	--// render runs on every charge change, so without this it would blip
+	--// on each one. Firing resets charge to 0, which re-arms it.
+	if ready and not wasReady then
+		SfxLocal.Play("UltimateReady")
+	end
+	wasReady = ready
+
 	setPulsing(ready)
 	if ready then
 		hintSerial += 1 --// a ready banner outranks a stale denial
