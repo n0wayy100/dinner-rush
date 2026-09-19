@@ -28,6 +28,7 @@ local ContextActionService = game:GetService("ContextActionService")
 local TweenService = game:GetService("TweenService")
 
 local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
+local SfxLocal = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SfxLocal"))
 local CARDS = Config.CardMatch
 if not CARDS then return end
 
@@ -374,12 +375,14 @@ cardRemote.OnClientEvent:Connect(function(action, a, b, c)
 			end
 		end
 		session.PairsLabel.Text = ("%d/%d pairs"):format(b.Pairs, session.PairsTotal)
+		SfxLocal.Play("AnswerRight")
 		popText(session.Panel, "PAIR!", BASIL)
 
 	elseif action == "Mismatch" then
 		--// payload rides arg THREE (b) - ("Mismatch", token, {A,B})
 		if not session or session.Token ~= a then return end
 		local myToken = session.Token
+		SfxLocal.Play("AnswerWrong")
 		local wrongPair = { b.A, b.B }
 		--// both wrong cards sit readable for the lock, then turn back
 		task.delay(CARDS.MismatchLockSeconds, function()

@@ -2319,6 +2319,7 @@ RunService.Heartbeat:Connect(function(dt)
 	--// (No breaker loop - owner ruling: the wire fix sounds per wire
 	--// CONNECTION, client-side in WireFixClient.)
 	syncFixLoop("Toilet", plungeSession ~= nil, "ToiletFix", toilet.Part)
+	syncFixLoop("Spill", sweepSession ~= nil, "MopSweep", spill.Puddle)
 	syncFixLoop("Fire", fire.Dousing ~= nil, "FireExtinguish",
 		fire.Dousing and fire.Dousing.Target and fire.Dousing.Target.Part or nil)
 

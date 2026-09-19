@@ -23,6 +23,7 @@ local RunService = game:GetService("RunService")
 local ContextActionService = game:GetService("ContextActionService")
 
 local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
+local SfxLocal = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SfxLocal"))
 local timingRemote = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("CookTimingRemote")
 
 local TIMING = Config.CookTiming
@@ -260,6 +261,14 @@ timingRemote.OnClientEvent:Connect(function(action, a, b, c, d)
 	elseif action == "Result" then
 		--// a = token, b = zone, c = final quality (nil = more swings coming)
 		if not current or current.Token ~= a then return end
+		--// Green is a hit, red is a miss. Yellow is the shoulder - a GOOD
+		--// swing that still counts, so it gets neither blip.
+		if b == "green" then
+			SfxLocal.Play("AnswerRight")
+		elseif b == "red" then
+			SfxLocal.Play("AnswerWrong")
+		end
+
 		local look = ZONE_LABEL[b]
 		if look then
 			caption.Text = c and (c == "Good" and "GOOD!" or look.Text) or look.Text

@@ -5,6 +5,7 @@
 	The restaurant soundtrack. Each map can have three tracks, one per shift
 	phase, set in Config.Music.MapSoundtracks:
 
+	  Tutorial   one track, looping for the whole lesson (Config.Music.TutorialTrack)
 	  Calm       plays PlaySeconds (1:40), then slowly fades out
 	  Building   plays PlaySeconds (2:40), then slowly fades out
 	  Crescendo  loops until the last table leaves, then fades out
@@ -132,6 +133,13 @@ end
 --// Which phase's track belongs to this moment of the shift.
 local function stageNow()
 	local state = shiftState:GetAttribute("State")
+
+	--// A TUTORIAL server has no phases to score: the shift clock is frozen
+	--// and the night never turns. One track loops through the whole lesson,
+	--// from before the doors open until the shift is over.
+	if workspace:GetAttribute("MatchMode") == "TUTORIAL" then
+		return state ~= "ENDED" and "Tutorial" or nil
+	end
 
 	if state == "RUNNING" then
 		return shiftState:GetAttribute("Phase") --// Calm / Building / Crescendo
@@ -332,12 +340,17 @@ local function refresh()
 
 	local mapId = workspace:GetAttribute("MatchMapId") or Config.DefaultMapId
 	local set = SOUNDTRACKS[mapId]
-	local track = set and set[stage]
+
+	--// The tutorial has one track of its own rather than a per-map set
+	local track = (stage == "Tutorial") and MUSIC.TutorialTrack or (set and set[stage])
 	local assetId = track and normaliseId(track.Id)
 
 	if not assetId then
 		--// No music for this phase on this map. Quiet, not broken.
-		if set and track then
+		if stage == "Tutorial" then
+			warnOnce("empty:tutorial",
+				"[ShiftMusic] Config.Music.TutorialTrack has no id yet - tutorial is silent")
+		elseif set and track then
 			warnOnce("empty:" .. mapId .. stage,
 				("[ShiftMusic] %s has no %s track id yet - silent for this phase"):format(mapId, stage))
 		end
@@ -373,6 +386,12 @@ shiftState:GetAttributeChangedSignal("Phase"):Connect(refresh)
 --// The map is settled when the first player arrives, which can be after
 --// this script starts. Re-decide from scratch once it is known.
 workspace:GetAttributeChangedSignal("MatchMapId"):Connect(function()
+	currentStage = false
+	refresh()
+end)
+
+--// MatchMode lands at the same moment, and decides tutorial vs a real shift
+workspace:GetAttributeChangedSignal("MatchMode"):Connect(function()
 	currentStage = false
 	refresh()
 end)

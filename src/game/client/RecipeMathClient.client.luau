@@ -28,6 +28,7 @@ local ContextActionService = game:GetService("ContextActionService")
 local TweenService = game:GetService("TweenService")
 
 local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
+local SfxLocal = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SfxLocal"))
 local MATHQ = Config.RecipeMath
 if not MATHQ then return end
 
@@ -354,6 +355,9 @@ mathRemote.OnClientEvent:Connect(function(action, a, b, c)
 		if not session or session.Token ~= a then return end
 		local r = b
 		session.Locked = true
+
+		--// Local, not global: this panel is on your screen alone
+		SfxLocal.Play(r.WasCorrect and "AnswerRight" or "AnswerWrong")
 		--// the TRUE answer always glows basil; a wrong pick goes tomato
 		for i, entry in ipairs(session.Buttons) do
 			if i == r.CorrectIndex then

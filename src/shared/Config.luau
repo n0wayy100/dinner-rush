@@ -2361,6 +2361,22 @@ Config.Sfx = {
 		FireAlert   = { Id = "133849873643710", Volume = 0.8, Global = true },
 		PowerAlert  = { Id = "", Volume = 1, Global = true }, -- owner: louder.
 		SpillAlert  = { Id = "", Volume = 0.7, Global = true }, -- the splat (owner: id pending)
+
+		--// Mopping it up. Positional and looping, like the other fixes, so
+		--// the room can hear someone dealing with it.
+		MopSweep = {
+			Id = "86605317124827", Volume = 0.6, Loop = true,
+			MinStuds = 6, MaxStuds = 30,
+		},
+
+		--// MINIGAME FEEDBACK -----------------------------------------------
+		--// Played LOCALLY, only for the player who answered - a blip about a
+		--// panel nobody else can see should not carry across the restaurant,
+		--// and four people answering at once should not stack. Shared by all
+		--// three games: the maths quiz, the card match, and the cook timing
+		--// bar (green = right, red = wrong).
+		AnswerRight = { Id = "100414462804328", Volume = 0.6 },
+		AnswerWrong = { Id = "96876122441863", Volume = 0.6 },
 		                              -- NOTE: Id still empty = silent until set!
 
 		--// The FIXES are positional: you hear them where the work is.
@@ -2488,6 +2504,14 @@ Config.Music = {
 	--// Paste ids between the quotes. An empty Id is silence for that phase,
 	--// never an error. A map with no entry here has no shift music.
 	--// To hear a map in Studio, point Config.StudioMapId at it.
+	--// THE TUTORIAL'S OWN TRACK. A tutorial server has no phases worth
+	--// scoring - the clock is frozen and the night never turns - so this one
+	--// track loops for the whole lesson, whatever map it runs on, and takes
+	--// priority over MapSoundtracks below. Empty = silence, never an error.
+	TutorialTrack = {
+		Id = "99467510202385",
+	},
+
 	MapSoundtracks = {
 		Sushi = {
 			Calm = {
