@@ -141,10 +141,11 @@ hint.Parent = button
 local function applyLayout()
 	local touchOnly = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
 	if touchOnly then
-		--// Right side, above the jump/sprint cluster - the joystick owns
-		--// the bottom-left, so the button stays far away from it
-		button.AnchorPoint = Vector2.new(1, 1)
-		button.Position = UDim2.fromScale(0.93, 0.68)
+		--// LEFT side, above the joystick (owner call, Sep 18): the right
+		--// edge belongs to jump/sprint, so the ultimate thumb is the left
+		--// - flush against the screen edge (owner tweak, same day)
+		button.AnchorPoint = Vector2.new(0, 1)
+		button.Position = UDim2.fromScale(0.02, 0.66)
 	else
 		--// Right on top of the stamina bar (which sits at 0.03 / 0.95)
 		button.AnchorPoint = Vector2.new(0, 1)

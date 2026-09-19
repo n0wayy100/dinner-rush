@@ -106,7 +106,9 @@ skipStroke.Color = CHOC
 skipStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border --// box, not glyphs
 skipStroke.Parent = skip
 
+local skipClicked = false
 skip.Activated:Connect(function()
+	skipClicked = true
 	tutorialRemote:FireServer("Skip")
 	skip.Visible = false
 end)
@@ -290,6 +292,223 @@ State:GetAttributeChangedSignal("Dialogue"):Connect(function()
 end)
 
 ----------------------------------------------------------------
+-- MINIGAME PICTURES (owner spec, Sep 18 2026): while Bruno explains
+-- a cooking game, a code-drawn mock of its panel floats mid-screen -
+-- State.ShowGame picks it (1 arrow / 2 math / 3 cards / 4 all three).
+-- FOCUS MODE: while a picture is up, every OTHER ScreenGui hides so
+-- only Bruno's card and the picture remain (Roblox chat is core UI
+-- and stays). Everything restores the moment ShowGame returns to 0.
+----------------------------------------------------------------
+local WHITE = Color3.fromRGB(255, 255, 255)
+local SNOW = Color3.fromRGB(255, 241, 239)      --// recipe math's panel
+local RED_DEEP = Color3.fromRGB(198, 52, 58)
+local SKY = Color3.fromRGB(240, 247, 255)       --// card match's panel
+local PICTURE_RED = Color3.fromRGB(214, 68, 60) --// timing track ends
+local PICTURE_YEL = Color3.fromRGB(244, 200, 90)
+
+local showcase = Instance.new("Frame")
+showcase.Name = "GameShowcase"
+showcase.Active = false
+showcase.AnchorPoint = Vector2.new(0.5, 0.5)
+showcase.Position = UDim2.fromScale(0.5, 0.42)
+showcase.BackgroundTransparency = 1
+showcase.Visible = false
+showcase.Parent = gui
+
+local function roundStroke(parent, color, radius)
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(radius or 0.08, 0)
+	c.Parent = parent
+	local s = Instance.new("UIStroke")
+	s.Thickness = 3
+	s.Color = color
+	s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border --// box, not glyphs
+	s.Parent = parent
+	return s
+end
+
+local function label(parent, text, color, pos, size, maxSize)
+	local l = Instance.new("TextLabel")
+	l.Active = false
+	l.BackgroundTransparency = 1
+	l.Font = Enum.Font.FredokaOne
+	l.TextScaled = true
+	l.Text = text
+	l.TextColor3 = color
+	l.Position = pos
+	l.Size = size
+	l.Parent = parent
+	local cap = Instance.new("UITextSizeConstraint")
+	cap.MaxTextSize = maxSize or 22
+	cap.Parent = l
+	return l
+end
+
+--// One mock panel per game, all pure UI - no screenshots to upload,
+--// and a re-theme of the real panels re-themes nothing here by design
+--// (these are pictures, close is good enough)
+local function makeGamePanel(gameId)
+	local panel = Instance.new("Frame")
+	panel.Active = false
+	panel.Size = UDim2.fromScale(1, 1)
+	local ratio = Instance.new("UIAspectRatioConstraint")
+	ratio.AspectRatio = 1.3
+	ratio.Parent = panel
+
+	if gameId == 1 then --// THE TIMING ARROW
+		panel.BackgroundColor3 = CREAM
+		roundStroke(panel, CHOC)
+		label(panel, "TIMING", CHOC, UDim2.fromScale(0.1, 0.06), UDim2.fromScale(0.8, 0.16), 24)
+		--// the track: red ends, yellow shoulders, one green window
+		local track = Instance.new("Frame")
+		track.Active = false
+		track.Position = UDim2.fromScale(0.08, 0.42)
+		track.Size = UDim2.fromScale(0.84, 0.18)
+		track.BackgroundColor3 = PICTURE_RED
+		track.ClipsDescendants = true
+		track.Parent = panel
+		roundStroke(track, CHOC, 0.35)
+		local segments = {
+			{ 0.15, 0.24, PICTURE_YEL }, { 0.39, 0.2, BASIL },
+			{ 0.59, 0.24, PICTURE_YEL },
+		}
+		for _, seg in ipairs(segments) do
+			local f = Instance.new("Frame")
+			f.Active = false
+			f.BorderSizePixel = 0
+			f.Position = UDim2.fromScale(seg[1], 0)
+			f.Size = UDim2.fromScale(seg[2], 1)
+			f.BackgroundColor3 = seg[3]
+			f.Parent = track
+		end
+		local pointer = label(panel, "▼", MUSTARD, UDim2.fromScale(0.37, 0.24), UDim2.fromScale(0.16, 0.16), 26)
+		pointer.TextStrokeColor3 = CHOC
+		pointer.TextStrokeTransparency = 0
+		label(panel, "Stop on GREEN for a perfect cook!", CHOC,
+			UDim2.fromScale(0.06, 0.68), UDim2.fromScale(0.88, 0.22), 18)
+
+	elseif gameId == 2 then --// RECIPE MATH
+		panel.BackgroundColor3 = SNOW
+		roundStroke(panel, RED_DEEP)
+		local band = Instance.new("Frame")
+		band.Active = false
+		band.BorderSizePixel = 0
+		band.Position = UDim2.fromScale(0, 0)
+		band.Size = UDim2.fromScale(1, 0.24)
+		band.BackgroundColor3 = TOMATO
+		band.Parent = panel
+		local bandCorner = Instance.new("UICorner")
+		bandCorner.CornerRadius = UDim.new(0.3, 0)
+		bandCorner.Parent = band
+		label(band, "🧮 RECIPE MATH", WHITE, UDim2.fromScale(0.05, 0.1), UDim2.fromScale(0.9, 0.8), 22)
+		label(panel, "3 + 4 = ?", CHOC, UDim2.fromScale(0.1, 0.32), UDim2.fromScale(0.8, 0.26), 30)
+		for n, answer in ipairs({ "6", "7", "8" }) do
+			local btn = Instance.new("Frame")
+			btn.Active = false
+			btn.Position = UDim2.fromScale(0.08 + (n - 1) * 0.3, 0.64)
+			btn.Size = UDim2.fromScale(0.24, 0.24)
+			btn.BackgroundColor3 = WHITE
+			btn.Parent = panel
+			roundStroke(btn, TOMATO, 0.25)
+			label(btn, answer, CHOC, UDim2.fromScale(0.1, 0.1), UDim2.fromScale(0.8, 0.8), 24)
+		end
+
+	else --// THE CARD MATCH
+		panel.BackgroundColor3 = SKY
+		roundStroke(panel, CHOC)
+		label(panel, "MEMORY", CHOC, UDim2.fromScale(0.1, 0.05), UDim2.fromScale(0.8, 0.15), 24)
+		local grid = Instance.new("Frame")
+		grid.Active = false
+		grid.BackgroundTransparency = 1
+		grid.Position = UDim2.fromScale(0.08, 0.24)
+		grid.Size = UDim2.fromScale(0.84, 0.5)
+		grid.Parent = panel
+		local layout = Instance.new("UIGridLayout")
+		layout.CellSize = UDim2.fromScale(0.22, 0.46)
+		layout.CellPadding = UDim2.fromScale(0.04, 0.08)
+		layout.Parent = grid
+		for n = 1, 8 do
+			local faceUp = n == 2 or n == 7 --// one matched pair showing
+			local cardFrame = Instance.new("Frame")
+			cardFrame.Active = false
+			cardFrame.BackgroundColor3 = faceUp and WHITE or MUSTARD
+			cardFrame.Parent = grid
+			roundStroke(cardFrame, faceUp and BASIL or CHOC, 0.2)
+			label(cardFrame, faceUp and "🍔" or "?",
+				faceUp and CHOC or CREAM,
+				UDim2.fromScale(0.1, 0.1), UDim2.fromScale(0.8, 0.8), 22)
+		end
+		label(panel, "Match the pairs you peeked!", CHOC,
+			UDim2.fromScale(0.06, 0.78), UDim2.fromScale(0.88, 0.16), 18)
+	end
+	return panel
+end
+
+--// FOCUS MODE bookkeeping: remember exactly which guis WE disabled so
+--// a panel someone else keeps hidden never pops on by mistake
+local hiddenGuis = {}
+local backpackWasOn = nil --// core hotbar state before focus took it
+local function setFocus(on)
+	--// loop-driven guis (HudClient's bars re-enable every ShiftState
+	--// tick) check this attribute themselves; the sweep below catches
+	--// every one-shot panel
+	playerGui:SetAttribute("TutorialFocus", on)
+
+	--// the INVENTORY hotbar is CoreGui, out of the sweep's reach - park
+	--// it too (the carried tool stays in hand, only the strip hides);
+	--// chat is the one core element deliberately left alone
+	local StarterGui = game:GetService("StarterGui")
+	if on then
+		if backpackWasOn == nil then
+			backpackWasOn = StarterGui:GetCoreGuiEnabled(Enum.CoreGuiType.Backpack)
+		end
+		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false)
+	elseif backpackWasOn ~= nil then
+		StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, backpackWasOn)
+		backpackWasOn = nil
+	end
+
+	if on then
+		for _, other in ipairs(playerGui:GetChildren()) do
+			if other:IsA("ScreenGui") and other ~= gui and other.Enabled then
+				hiddenGuis[other] = true
+				other.Enabled = false
+			end
+		end
+		skip.Visible = false
+		banner.Visible = false
+	else
+		for other in pairs(hiddenGuis) do
+			if other.Parent then other.Enabled = true end
+		end
+		hiddenGuis = {}
+		skip.Visible = not skipClicked and State:GetAttribute("Active") == true
+		banner.Visible = (State:GetAttribute("Objective") or "") ~= ""
+	end
+end
+
+local function refreshShowcase()
+	local mode = State:GetAttribute("ShowGame") or 0
+	for _, child in ipairs(showcase:GetChildren()) do
+		child:Destroy()
+	end
+	if mode == 0 or State:GetAttribute("Active") ~= true then
+		showcase.Visible = false
+		setFocus(false)
+		return
+	end
+
+	--// one game, one picture (owner call, Sep 18: no all-three preview)
+	showcase.Size = UDim2.fromScale(0.4, 0.34)
+	makeGamePanel(math.clamp(mode, 1, 3)).Parent = showcase
+
+	showcase.Visible = true
+	setFocus(true)
+end
+
+State:GetAttributeChangedSignal("ShowGame"):Connect(refreshShowcase)
+
+----------------------------------------------------------------
 -- THE GUIDE LINE (owner spec, Sep 2026: "an actual line arrow"): a
 -- mustard beam from the player's feet to the current target, plus a
 -- bobbing ⬇ marker floating over it. Render-only, all client-side
@@ -432,6 +651,8 @@ State:GetAttributeChangedSignal("Step"):Connect(refresh)
 --// Wrap-up: a green flourish, then everything melts away
 State:GetAttributeChangedSignal("Active"):Connect(function()
 	if State:GetAttribute("Active") ~= false then return end
+	showcase.Visible = false
+	setFocus(false) --// give every hidden panel back before the goodbye
 	skip.Visible = false
 	hideBox()
 	clearGuide()

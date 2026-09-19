@@ -63,7 +63,13 @@ gui.Parent = playerGui
 local bar = Instance.new("CanvasGroup")
 bar.Name = "StaminaBar"
 bar.AnchorPoint = Vector2.new(0, 1)
-bar.Position = UDim2.fromScale(0.03, 0.95) --// bottom-left corner
+--// bottom-left corner; on touch it hugs the true bottom edge so the
+--// floating joystick never sits on top of it (owner tweak, Sep 18)
+local touchOnly = game:GetService("UserInputService").TouchEnabled
+	and not game:GetService("UserInputService").KeyboardEnabled
+bar.Position = touchOnly
+	and UDim2.fromScale(0.02, 0.99)
+	or UDim2.fromScale(0.03, 0.95)
 bar.Size = UDim2.fromScale(0.16, 0.018)
 bar.BackgroundColor3 = CREAM
 bar.GroupTransparency = 1 --// starts hidden: stamina starts full
@@ -257,7 +263,21 @@ end
 
 ContextActionService:BindAction(ACTION, onSprintAction, true,
 	Enum.KeyCode.W, Enum.KeyCode.ButtonL3)
-ContextActionService:SetTitle(ACTION, "SPRINT")
+--// Owner's runner icon when uploaded (Config.Sprint.TouchButtonImage),
+--// SPRINT text until then - an image with a text label over it reads
+--// as neither, so it is one or the other
+if (Sprint.TouchButtonImage or "") ~= "" then
+	--// the touch button is created a beat after BindAction on some
+	--// devices, and SetImage on a button that is not there yet silently
+	--// does nothing - so the icon is re-applied a few times after spawn
+	for _, delaySeconds in ipairs({ 0, 2, 6 }) do
+		task.delay(delaySeconds, function()
+			ContextActionService:SetImage(ACTION, Sprint.TouchButtonImage)
+		end)
+	end
+else
+	ContextActionService:SetTitle(ACTION, "SPRINT")
+end
 --// Inside the touch-button frame (bottom-right cluster): roughly above the
 --// jump button. Nudge to taste in the Device emulator.
 ContextActionService:SetPosition(ACTION, UDim2.new(0.75, 0, 0.05, 0))

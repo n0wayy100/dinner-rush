@@ -330,7 +330,7 @@ Config.CardMatch = {
 Config.Tutorial = {
 	--// STUDIO KNOB (live-ignored): boot Studio playtests straight
 	--// into the tutorial for testing. REVERT to false when done.
-	StudioTutorial = false, --// OFF while route-fixing the Diner (Sep 17) - flip back for tutorial work
+	StudioTutorial = false, --// OFF: tutorial polish pass done (Sep 18)
 
 	--// STUDIO KNOB (live-ignored): sprint silently past the main
 	--// lesson straight to the finale (fire drill + critic) - no boxes,
@@ -450,17 +450,23 @@ Config.Tutorial = {
 				Objective = "Cook {DISH}, match the pairs!",
 			},
 		},
-		Serve = {
+		Plate = { --// arrow at the pass until a plated dish is in hand
 			Bruno = {
 				"Smells amazing! But no bare hands service in my restaurant.",
 				"Take the dish to the pass counter and set it on a plate first.",
-				"Then carry the plate to the table and hand it over!",
 			},
-			Objective = "Plate {DISH} at the pass, then serve it!",
+			Objective = "Plate {DISH} at the pass!",
 		},
-		ServeAgain = { --// dishes after the first: the plate rule, short
-			Bruno = { "Plate it at the pass, then run it to the table!" },
-			Objective = "Plate {DISH} at the pass, then serve it!",
+		Serve = { --// arrow jumps to the customer once the plate is picked up
+			Bruno = { "Now carry the plate to the table and hand it over!" },
+			Objective = "Serve {DISH} to the table!",
+		},
+		PlateAgain = { --// dishes after the first: the plate rule, short
+			Bruno = { "Plate it at the pass first!" },
+			Objective = "Plate {DISH} at the pass!",
+		},
+		ServeAgain = { --// no box - the arrow simply moves to the table
+			Objective = "Serve {DISH} to the table!",
 		},
 		Seat2 = {
 			Bruno = {
@@ -470,7 +476,10 @@ Config.Tutorial = {
 			Objective = "Seat the new customer!",
 		},
 		Order2 = {
-			Bruno = { "Take their order too. Every table wants something!" },
+			Bruno = {
+				"Take their order too. Every table wants something!",
+				"This one cannot decide. They will ask what you recommend, so pick a dish for them!",
+			},
 			Objective = "Take the order!",
 		},
 		Collect = {
@@ -1096,6 +1105,10 @@ Config.Sprint = {
 	--// shift-lock toggle, so binding sprint to it fought the camera.
 	DoubleTapSeconds = 0.35,      -- max gap between the two W presses
 	StopOnRelease = true,         -- letting go of W ends the sprint
+
+	--// The touch sprint button's icon (owner's runner art, Sep 18).
+	--// "" falls back to the SPRINT text label.
+	TouchButtonImage = "rbxassetid://135068780639329",
 
 	--// 1.5x Roblox's default 16. The restaurant is big enough that stock
 	--// walking made every trip feel like a chore; sprint keeps its 1.5x
@@ -2036,6 +2049,11 @@ Config.Pass = {
 	--// look like they are about to slide off.
 	TablePlateEdgeMargin = 0.9,
 
+	--// A landing ray that stops THIS far above the table's own top hit
+	--// DECOR (a cup, a vase), not tabletop - the plate slides sideways to
+	--// a clear patch instead of perching on it (Yamasaki's matcha cups).
+	TablePlateDecorToleranceStuds = 0.4,
+
 	--// THE PLATE ECONOMY. However many PassSlot models exist is how many
 	--// dishes can be in flight at once. A plate is only free again once its
 	--// table's payment has been collected (owner's ruling), so an uncollected
@@ -2065,6 +2083,7 @@ Config.Maps = {
 		--// so a map without art yet is still a correct-looking card.
 		ImageId = "rbxassetid://126553494895194",
 		Available = true,
+		ShiftBarIcon = "🍔", --// the traveller on the HUD's shift bar
 		--// THE MENU: what this restaurant's customers order (dish -> roll
 		--// weight), and through it which ingredients its kitchen stocks -
 		--// the recommend picker and the fridge/shelf menus follow this
@@ -2076,6 +2095,7 @@ Config.Maps = {
 		Display = "Yamasaki Ramen", --// matches the banner art (owner, Sep 17)
 		ImageId = "rbxassetid://130991090145749", --// owner's banner, de-bordered (Sep 17 2026)
 		Available = true, --// LIVE (Sep 17 2026): pickable in the lobby
+		ShiftBarIcon = "🍜", --// the ramen bowl walks Yamasaki's shift bar
 		--// Full Japanese - no diner carry-overs (owner ruling, Sep 2026).
 		Menu = { Karaage = 5, TempuraShrimp = 4, Ramen = 3 },
 		--// Seated guests DISSOLVE at the table instead of walking back
@@ -2110,12 +2130,56 @@ Config.LoadMapOnStart = true --// ON (Sep 17 2026): MatchServer clones
 
 Config.DefaultMapId = "Diner"
 
+--// THE TUTORIAL GUIDE (lobby NPC, Sep 18 2026): a rig tagged
+--// TutorialGuide offers the guided first shift. First E asks, a second
+--// E within ConfirmSeconds reserves a PRIVATE solo server and
+--// teleports with Mode = "TUTORIAL" - MatchServer reads that on the
+--// game side. Numbers only; the script is the lobby's TutorialGuide.
+Config.TutorialPortal = {
+	TagMaxDistanceStuds = 60, -- the HOW TO PLAY sign fades past this
+	BubbleSeconds = 5,        -- speech bubble linger
+	ConfirmRangeStuds = 16,   -- a YES from farther away than this is stale
+	Difficulty = "EASY",      -- the training shift runs gentle
+	MapId = "Diner",          -- Bruno teaches at the Diner
+	Greetings = {
+		"New here? I can get you trained!",
+		"The best training shift in town!",
+		"Every great cook started somewhere!",
+	},
+	AskTitle = "TRAINING SHIFT",
+	AskLine = "Do you want to play the tutorial?",
+	YesLabel = "YES!",
+	NoLabel = "NO",
+	StudioLine = "Teleports do not run in Studio!",
+	SendLine = "Off you go! Your trainer is waiting!",
+	FailLine = "Hmm, the door is stuck. Try again!",
+}
+
+--// PHASE BANNERS (owner spec, Sep 18 2026): big animated centre-screen
+--// announcements when the shift changes stage, each with its own
+--// entrance (drop / slide / slam / fade) and a brief screen dim.
+--// Pure UI animation - PhaseBannerClient. Keys match shift.Phase.
+Config.PhaseBanner = {
+	StudioParade = false,   -- STUDIO KNOB (live-ignored): play all four
+	                        -- banners back to back shortly after joining,
+	                        -- for review without a full shift.
+	DimTransparency = 0.45, -- how dark the room gets behind the words
+	DimSeconds = 0.25,      -- dim fade in/out time
+	HoldSeconds = 1.4,      -- how long the words sit before leaving
+	Labels = {
+		Calm = "OPENING!",
+		Building = "MID SHIFT!",
+		Crescendo = "RUSH!",
+		Closing = "CLOSING!",
+	},
+}
+
 --// STUDIO-ONLY map override: while building a map, point every Studio
 --// playtest at it - customers order ITS menu, the kitchen stocks ITS
 --// ingredients - without the lobby handoff or a per-test command line.
 --// "" falls back to DefaultMapId. Live servers ignore this completely:
 --// the lobby's teleport data always wins there.
-Config.StudioMapId = "Sushi" --// Studio tests at Yamasaki (Sep 17)
+Config.StudioMapId = "Sushi" --// reviewing the ramen shift bar (Sep 18)
 
 --// STUDIO-ONLY spawn burst: this many parties march in the moment the
 --// shift goes RUNNING, so route/seating tests need no command bar.

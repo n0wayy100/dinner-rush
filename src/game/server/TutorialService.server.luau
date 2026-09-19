@@ -57,6 +57,8 @@ State:SetAttribute("TargetTag", "")
 State:SetAttribute("TargetMethod", "")
 State:SetAttribute("Dialogue", "")   --// Bruno's current box ("" = none)
 State:SetAttribute("DialogueId", 0)  --// bumps per box, drives the client
+State:SetAttribute("ShowGame", 0)    --// minigame picture while Bruno
+                                     --// explains: 0 none, 1..3 that game
 State.Parent = ReplicatedStorage
 
 --// THE ACTION GATE (owner spec, Sep 2026): on tutorial servers this
@@ -118,6 +120,23 @@ end
 
 local function cookedTotal()
 	return stat("PerfectCooks") + stat("GoodCooks") + stat("OvercookedCooks")
+end
+
+--// A plated dish (a PassService tool) in anyone's hands or backpack -
+--// how the serve step knows the arrow may leave the pass for the table
+local function anyPlayerCarriesPlated()
+	for _, plr in ipairs(Players:GetPlayers()) do
+		for _, container in ipairs({ plr.Character, plr:FindFirstChildOfClass("Backpack") }) do
+			if container then
+				for _, tool in ipairs(container:GetChildren()) do
+					if tool:IsA("Tool") and tool:GetAttribute("PlateSlot") ~= nil then
+						return true
+					end
+				end
+			end
+		end
+	end
+	return false
 end
 
 --// A raw of this exact ingredient in anyone's hands (or backpack)
@@ -303,7 +322,11 @@ task.spawn(function()
 		end)
 
 		local cookText = TUT.Text.Cook[i] or TUT.Text.Cook[#TUT.Text.Cook]
+		--// the picture of the game being taught stays up while Bruno's
+		--// boxes explain it (setStep returns at the last click), then drops
+		State:SetAttribute("ShowGame", TUT.CookGameOrder[i] or 0)
 		setStep(cookText, dishName, "CookStation", recipe.Method, "Cook")
+		State:SetAttribute("ShowGame", 0)
 		waitUntil(function() return cookedTotal() >= i end)
 
 		--// pin the NEXT teaching game the moment this cook lands, so
@@ -314,7 +337,16 @@ task.spawn(function()
 			workspace:SetAttribute("TutorialForceGame", nil)
 		end
 
-		--// full plate lesson on the first serve, a one-liner after
+		--// full plate lesson on the first serve, a one-liner after. The
+		--// arrow visits the PASS first (owner spec, Sep 18) and only
+		--// jumps to the customer once a plated dish is in hand
+		local plateText = i == 1 and TUT.Text.Plate
+			or (TUT.Text.PlateAgain or TUT.Text.Plate)
+		setStep(plateText, dishName, "PassSlot", nil, "Serve")
+		waitUntil(function()
+			return anyPlayerCarriesPlated() or stat("DishesServed") >= i
+		end)
+
 		local serveText = i == 1 and TUT.Text.Serve
 			or (TUT.Text.ServeAgain or TUT.Text.Serve)
 		setStep(serveText, dishName, "CustomerParty", nil, "Serve")
@@ -329,9 +361,11 @@ task.spawn(function()
 	--// Party one: a pair, plain (never VIP/critic/dash), through the
 	--// real spawn path (fast-forward spawns nobody - the finale needs
 	--// an empty floor)
+	--// Flow "direct": a recommend roll would let the player overwrite
+	--// the scripted ticket the lessons wait on (owner-found bug, Sep 18)
 	if spawner and not skipRequested and not ffwd then
 		spawner:Invoke({ Plain = true, Size = sizes[1] or #firstTicket,
-			Ticket = firstTicket })
+			Ticket = firstTicket, Flow = "direct" })
 	end
 	--// Pin the first teaching cook before anyone touches a pan
 	workspace:SetAttribute("TutorialForceGame", TUT.CookGameOrder[1])
@@ -360,6 +394,8 @@ task.spawn(function()
 
 	--// 6: COOKING INTRO - the three-game surprise, explained BEFORE
 	--// the first kitchen trip (owner spec); pure dialogue
+	--// no picture on the overview (owner call, Sep 18) - each game's
+	--// mock shows only while ITS lesson is being explained
 	setStep(TUT.Text.Cooking)
 	waitSeconds(TUT.StepSettleSeconds)
 
@@ -370,9 +406,13 @@ task.spawn(function()
 
 	--// THE SECOND TABLE: a solo customer arrives for the last dish
 	if tableCount == 2 and spawner then
+		--// the solo guest IS the recommend lesson: they always ask, and
+		--// the menu offers only the scripted dish - so the pick teaches
+		--// the flow without derailing the cook that follows
 		if not skipRequested and not ffwd then
 			spawner:Invoke({ Plain = true, Size = sizes[2] or #secondTicket,
-				Ticket = secondTicket })
+				Ticket = secondTicket, Flow = "recommend",
+				RecommendOnly = { secondTicket[1] } })
 		end
 
 		setStep(TUT.Text.Seat2, nil, "CustomerParty", nil, "Seat")

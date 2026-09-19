@@ -188,12 +188,22 @@ end
 --// in Studio whenever; nothing reads from it any more.
 local moneyReadout = nil --// only set when we had to build our own
 
+--// TUTORIAL FOCUS (Sep 18 2026): while the tutorial shows a minigame
+--// picture, TutorialClient stamps this attribute on PlayerGui - the
+--// loop-driven HUD guis yield the screen for that moment (they re-
+--// enable themselves every ShiftState tick, so a one-shot hide from
+--// outside cannot win; this check makes the loops themselves agree)
+local function focusHidden()
+	return playerGui:GetAttribute("TutorialFocus") == true
+end
+
 local function setHudVisible(visible)
 	if hudGui then
 		hudGui.Enabled = false
 	end
 	if moneyReadout then
-		moneyReadout.Enabled = visible --// hidden during prep, like the rest
+		--// hidden during prep, like the rest
+		moneyReadout.Enabled = visible and not focusHidden()
 	end
 end
 
@@ -215,7 +225,10 @@ if not ui.till then
 	local label = Instance.new("TextLabel")
 	label.Name = "TillLabel"
 	label.AnchorPoint = Vector2.new(0, 0)
-	label.Position = UDim2.fromScale(0.02, 0.16)
+	--// touch: follows the REP pill down below the mobile unibar
+	local touchOnly = game:GetService("UserInputService").TouchEnabled
+		and not game:GetService("UserInputService").KeyboardEnabled
+	label.Position = UDim2.fromScale(0.02, touchOnly and 0.25 or 0.16)
 	label.Size = UDim2.fromScale(0.2, 0.05)
 	label.BackgroundTransparency = 1
 	label.Font = Enum.Font.FredokaOne
@@ -332,7 +345,16 @@ do
 	marker.BackgroundTransparency = 1
 	marker.Font = Enum.Font.FredokaOne
 	marker.TextScaled = true
-	marker.Text = "🍔"
+	--// per-map traveller (owner ask, Sep 18): the burger walks the
+	--// Diner, the ramen bowl walks Yamasaki - and a late MatchMapId
+	--// arrival (map loads after this client) re-skins it on the spot
+	local function applyMapIcon()
+		local row = Config.MapById
+			and Config.MapById(workspace:GetAttribute("MatchMapId") or "")
+		marker.Text = (row and row.ShiftBarIcon) or "🍔"
+	end
+	applyMapIcon()
+	workspace:GetAttributeChangedSignal("MatchMapId"):Connect(applyMapIcon)
 	marker.TextStrokeColor3 = CHOC
 	marker.TextStrokeTransparency = 0.6
 	marker.ZIndex = 6
@@ -369,7 +391,7 @@ local lastPaintedLength = nil
 
 local function updateShiftBar(state)
 	local onDuty = state == "RUNNING" or state == "CLOSING"
-	shiftBarGui.Enabled = onDuty
+	shiftBarGui.Enabled = onDuty and not focusHidden()
 	if not onDuty then return end
 
 	local length = attr("Length", 0)
@@ -420,8 +442,12 @@ do
 	local panel = Instance.new("Frame")
 	panel.AnchorPoint = Vector2.new(0, 0)
 	--// Below Roblox's own chat/mic buttons (top-left corner) and above
-	--// the money readout at 0.16 - the one strip of left edge nobody owns
-	panel.Position = UDim2.fromScale(0.02, 0.1)
+	--// the money readout at 0.16 - the one strip of left edge nobody owns.
+	--// TOUCH (Sep 18): the mobile unibar is a much taller pill, so the
+	--// whole left stack drops below it (money slides down to match)
+	local touchOnly = game:GetService("UserInputService").TouchEnabled
+		and not game:GetService("UserInputService").KeyboardEnabled
+	panel.Position = UDim2.fromScale(0.02, touchOnly and 0.19 or 0.1)
 	panel.Size = UDim2.fromScale(0.16, 0.045)
 	panel.BackgroundColor3 = CREAM
 	panel.Parent = gui
@@ -478,7 +504,7 @@ end
 
 local function updateRepMeter(state, rep, repMax)
 	local onDuty = state == "RUNNING" or state == "CLOSING"
-	repMeterGui.Enabled = onDuty
+	repMeterGui.Enabled = onDuty and not focusHidden()
 	if not onDuty then return end
 
 	local fraction = math.clamp(rep / math.max(repMax, 1), 0, 1)

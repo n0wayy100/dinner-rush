@@ -1246,8 +1246,14 @@ local function platePlacement(tableId, seatIndex)
 	local distance = flat.Magnitude
 	local lift = Config.Pass.TablePlateLiftStuds
 
+	local decorTolerance = Config.Pass.TablePlateDecorToleranceStuds
+
 	if distance < 0.01 then
-		local y = surfaceYAt(centre.X, centre.Z, boxTop) or boxTop
+		local y = surfaceYAt(centre.X, centre.Z, boxTop)
+		--// a hit far off the table's own top is decor or floor, not tabletop
+		if not y or math.abs(y - boxTop) > decorTolerance then
+			y = boxTop
+		end
 		return CFrame.new(Vector3.new(centre.X, y + lift, centre.Z))
 	end
 	local direction = flat / distance
@@ -1264,9 +1270,20 @@ local function platePlacement(tableId, seatIndex)
 	local out = math.min(distance * Config.Pass.TablePlateInset, limit)
 	local spot = centre + direction * out
 
-	--// Ray first, measured box as the fallback if nothing was hit
-	local y = surfaceYAt(spot.X, spot.Z, boxTop) or boxTop
-	return CFrame.new(Vector3.new(spot.X, y + lift, spot.Z))
+	--// Ray per candidate spot. A hit well ABOVE the table's own top is
+	--// DECOR sitting on it (Yamasaki's matcha cups taught us this), and
+	--// one well below is the floor past the edge - neither is a place to
+	--// set a plate. Slide sideways until a clear patch of actual
+	--// tabletop answers; the measured box top is the final fallback.
+	local sideways = Vector3.new(-direction.Z, 0, direction.X)
+	for _, nudge in ipairs({ 0, 0.7, -0.7, 1.3, -1.3 }) do
+		local candidate = spot + sideways * nudge
+		local y = surfaceYAt(candidate.X, candidate.Z, boxTop)
+		if y and math.abs(y - boxTop) <= decorTolerance then
+			return CFrame.new(Vector3.new(candidate.X, y + lift, candidate.Z))
+		end
+	end
+	return CFrame.new(Vector3.new(spot.X, boxTop + lift, spot.Z))
 end
 
 local function findTicketDish(player, party)
@@ -2585,6 +2602,13 @@ local function resolveDialogue(dlg, pickedKey, notifyClient)
 	--// Shift over / party gone: nothing left to order
 	if party.State ~= STATE.SEATED or not serviceOpen() then return end
 
+	--// tutorial lesson: a pick outside the allowed list (impossible from
+	--// the real panel, cheap from an exploiter) counts as no pick at all
+	if pickedKey and party.RecommendOnly
+		and not table.find(party.RecommendOnly, pickedKey) then
+		pickedKey = nil
+	end
+
 	if pickedKey and dlg.Flow == "recommend" then
 		party.Ticket[1] = pickedKey
 		if dlg.Player and dlg.Player.Parent then
@@ -2648,6 +2672,12 @@ local function beginDialogue(player, party, tableId)
 	nextDialogueToken += 1
 	local token = nextDialogueToken
 	local flow = (math.random() < Config.Dialogue.RecommendChance) and "recommend" or "direct"
+	--// TUTORIAL (owner spec, Sep 18): scripted tickets must survive the
+	--// order, so chance never decides there - the spawner pins the flow
+	--// ("direct" for scripted tables, "recommend" for the lesson)
+	if party.ForceFlow then
+		flow = party.ForceFlow
+	end
 
 	local dlg = { Player = player, Party = party, Token = token, Flow = flow }
 	party.Dialogue = dlg
@@ -2681,7 +2711,11 @@ local function beginDialogue(player, party, tableId)
 		payload.Dishes = {}
 		for dishName in pairs(Config.MenuForMap(workspace:GetAttribute("MatchMapId"))) do
 			local recipe = Config.Recipes[dishName]
-			if recipe then
+			--// tutorial lesson: only the scripted dish is on offer -
+			--// live parties have no RecommendOnly and see the full menu
+			local allowed = not party.RecommendOnly
+				or table.find(party.RecommendOnly, dishName) ~= nil
+			if recipe and allowed then
 				table.insert(payload.Dishes, {
 					Key = dishName,
 					Display = recipe.Display,
@@ -3313,6 +3347,11 @@ local function spawnParty(options)
 		dishCount = math.random(CRITIC.MinDishes, CRITIC.MaxDishes)
 		party.BillUnits = dishCount
 	end
+	--// TUTORIAL (Sep 18): Flow pins the order dialogue ("direct" keeps a
+	--// scripted ticket safe, "recommend" runs the lesson), RecommendOnly
+	--// narrows the lesson's menu to the scripted dish. Nil on live spawns.
+	party.ForceFlow = options.Flow
+	party.RecommendOnly = options.RecommendOnly
 	if options.Ticket and #options.Ticket > 0 then
 		--// the tutor's forced ticket replaces the roll entirely - and
 		--// a forced-ticket critic bills for exactly what they ordered
