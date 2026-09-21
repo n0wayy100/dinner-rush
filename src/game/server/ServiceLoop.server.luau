@@ -1205,16 +1205,12 @@ local function surfaceYAt(x, z, startY)
 	--// Invisible scaffolding must never read as a surface: table anchors
 	--// (raycastable boxes whose tops rarely match the visible wood - the
 	--// Sep 19 probe found one a stud under its tabletop and one shadowing
-	--// it), route markers and queue pads (one Yamasaki waypoint floats
-	--// right over a table), and the TEMP ghost-plate discs.
-	for _, tag in ipairs({ "Table", "Waypoint", "QueueSpot" }) do
+	--// it), plus route markers and queue pads (one Yamasaki waypoint floats
+	--// right over a table).
+	for _, tag in ipairs({ "Table", "Waypoint", "QueueSpot", "ServedPlate" }) do
 		for _, scaffold in ipairs(CollectionService:GetTagged(tag)) do
 			table.insert(ignore, scaffold)
 		end
-	end
-	local ghosts = workspace:FindFirstChild("GhostPlates")
-	if ghosts then
-		table.insert(ignore, ghosts)
 	end
 	for _, party in pairs(parties) do
 		if party.Members then
@@ -1238,8 +1234,7 @@ local function surfaceYAt(x, z, startY)
 		Vector3.new(0, -24, 0),
 		params)
 
-	return hit and hit.Position.Y or nil,
-		hit and hit.Instance and hit.Instance.Name or "nothing"
+	return hit and hit.Position.Y or nil
 end
 
 --// Where a served plate lands: on the table, in front of the customer whose
@@ -1306,23 +1301,14 @@ local function platePlacement(tableId, seatIndex)
 	local heights = {}
 	for _, nudge in ipairs({ 0, 0.7, -0.7, 1.3, -1.3 }) do
 		local candidate = spot + sideways * nudge
-		local y, hitName = surfaceYAt(candidate.X, candidate.Z, boxTop)
-		table.insert(candidates, { Point = candidate, Y = y, Hit = hitName })
+		local y = surfaceYAt(candidate.X, candidate.Z, boxTop)
+		table.insert(candidates, { Point = candidate, Y = y })
 		if y then
 			table.insert(heights, y)
 		end
 	end
 	table.sort(heights)
 	local reference = heights[math.ceil(#heights / 2)] or boxTop
-
-	--// TEMP plate-placement diagnostic (Claude) - remove after the hunt
-	print(("[PlateDiag] table %d boxTop=%.2f median=%.2f")
-		:format(tableId, boxTop, reference))
-	for _, c in ipairs(candidates) do
-		print(("[PlateDiag]  hit %s Y=%s (vs median %s)")
-			:format(c.Hit, c.Y and ("%.2f"):format(c.Y) or "none",
-				c.Y and ("%+.2f"):format(c.Y - reference) or "-"))
-	end
 
 	for _, c in ipairs(candidates) do
 		if c.Y and math.abs(c.Y - reference) <= decorTolerance then
@@ -2842,14 +2828,24 @@ local function serveDishToParty(party, tableId, dishName, quality, plateSlot, se
 			held = {}
 			platesByTable[tableId] = held
 		end
-		table.insert(held, plateSlot)
 
+		--// The served plate is now INDEPENDENT of the counter slot (the slot
+		--// frees the instant it is served, so plates never run out). Store
+		--// the handle PassPlaceOnTable hands back, not the slot id.
 		local place = passBridge("PassPlaceOnTable")
-		local where = platePlacement(tableId, #held)
+		local where = platePlacement(tableId, #held + 1)
 		if place and where then
-			place:Invoke(plateSlot, where)
-		elseif place then
-			returnPlates(tableId, "no placement")
+			local handle = place:Invoke(plateSlot, where)
+			if handle then
+				table.insert(held, handle)
+			end
+		else
+			--// No spot to place it - still send the counter slot home so it
+			--// is never left stuck occupied.
+			local ret = passBridge("PassReturnPlate")
+			if ret then
+				ret:Invoke(plateSlot, "no placement")
+			end
 		end
 	end
 
@@ -3423,14 +3419,6 @@ local function spawnParty(options)
 			table.insert(party.Ticket,
 				Config.RollDish(Config.MenuForMap(workspace:GetAttribute("MatchMapId"))))
 		end
-		--// STUDIO KNOB (live-ignored): pin every rolled order to one dish
-		--// so serve tests need no guessing (Config.StudioForceDish)
-		if RunService:IsStudio() and (Config.StudioForceDish or "") ~= ""
-			and Config.Recipes[Config.StudioForceDish] then
-			for i = 1, #party.Ticket do
-				party.Ticket[i] = Config.StudioForceDish
-			end
-		end
 	end
 	party.DishesRemaining = dishCount
 
@@ -3990,53 +3978,3 @@ task.spawn(function()
 		end
 	end
 end)
-
---// TEMP (Sep 18, Claude): STUDIO AUTO-SERVICE for the plate-placement
---// review - seats the queue, takes every order and serves every dish
---// (Perfect, plateless) by itself, one dish per table per second, so
---// tables fill with plates hands-free. Studio-only via the knob;
---// delete this block together with Config.StudioAutoServe.
-if RunService:IsStudio() and Config.StudioAutoServe then
-	print("[Service] STUDIO AUTO-SERVICE is on (Config.StudioAutoServe)")
-
-	--// a pass slot not currently sitting on any table - so every serve
-	--// carries a REAL plate and the true placement path runs
-	local function freePlateSlot()
-		local stats = passBridge("PassStats")
-		local info = stats and stats:Invoke()
-		for id = 1, (info and info.Total) or 0 do
-			local used = false
-			for _, held in pairs(platesByTable) do
-				if table.find(held, id) then
-					used = true
-					break
-				end
-			end
-			if not used then
-				return id
-			end
-		end
-		return nil --// all plates out: serve plateless rather than stall
-	end
-
-	task.spawn(function()
-		while true do
-			task.wait(1)
-			if shift.State == "RUNNING" then
-				for _, party in pairs(parties) do
-					if party.State == STATE.QUEUED and not party.Seating
-						and partyAtFront(party) then
-						seatParty(party, nil)
-					elseif party.State == STATE.SEATED
-						and not party.Dialogue and not party.DashWarning then
-						takeOrderDirect(party)
-					elseif party.State == STATE.WAITING_FOOD
-						and party.Ticket and party.Ticket[1] then
-						serveDishToParty(party, party.TableId,
-							party.Ticket[1], "Perfect", freePlateSlot(), nil)
-					end
-				end
-			end
-		end
-	end)
-end

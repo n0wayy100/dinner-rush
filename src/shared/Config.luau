@@ -1832,8 +1832,8 @@ Config.Ultimates = {
 	--// Ignored on live servers. Set StudioFullCharge = false (and the
 	--// key "") when ultimate testing ends, or charge earning can never
 	--// be playtested in Studio.
-	StudioFullCharge = true, --// ON: Chef serve test (Sep 19) - revert after
-	StudioClassKey = "Chef",
+	StudioFullCharge = false, --// banner testing done (Sep 17)
+	StudioClassKey = "Charmer",
 
 	--// THE CAST BANNER (Sep 2026). Cosmetic only - nothing here touches
 	--// charge, abilities or THE LAW. Caster sees their own avatar posed
@@ -2189,21 +2189,7 @@ Config.StudioMapId = "Sushi" --// reviewing the ramen shift bar (Sep 18)
 --// shift goes RUNNING, so route/seating tests need no command bar.
 --// The normal spawn trickle continues after the burst. 0 = off (normal
 --// opening). Ignored on live servers - set 0 anyway when map testing ends.
-Config.StudioSpawnBurst = 4 --// TEMP: plate-vs-cup placement test at Yamasaki (Sep 18) - revert to 0
-
---// STUDIO-ONLY: every rolled order becomes this dish, so serve tests
---// need no guessing. "" = normal menu rolls. Ignored on live servers.
-Config.StudioForceDish = "TempuraShrimp" --// TEMP: Chef serve test (Sep 19)
-
---// STUDIO-ONLY: the NPC Helper stays home, so solo Studio tests are
---// pure player POV. Ignored on live servers (short-handed shifts keep
---// their coworker there).
-Config.StudioNoHelper = true --// TEMP: Chef serve test (Sep 19)
-
---// TEMP (Sep 18, live-ignored): full self-running service in Studio -
---// seats, orders and serves everything so tables fill with plates
---// hands-free. Delete together with the block at ServiceLoop's end.
-Config.StudioAutoServe = false --// OFF: owner serving by hand (Sep 19)
+Config.StudioSpawnBurst = 0 --// off: normal opening (Sep 19)
 
 --// Whether a given id is a real, playable map. The lobby server gates every
 --// party on this - never trust a MapId that arrived from a client.
@@ -2669,6 +2655,40 @@ Config.Profile = {
 	--// permanent for that player. Off unless you are deliberately testing.
 	DevSeedProgress = false,
 	DevSeedWallet = 0,            -- coins granted on first load when seeding
+
+	--// PLAYTEST WALLET GRANT (Sep 19): named players are topped up to
+	--// GrantWallet coins whenever they load below it, so testers can buy
+	--// and equip any class. Works on LIVE servers (the real DataStore),
+	--// not just Studio. ONLY the usernames listed get it - never public
+	--// players. Empty the list (or set Enabled = false) after the
+	--// playtest. This writes to the REAL save, exactly like a shift's
+	--// earnings would.
+	PlaytestGrant = {
+		Enabled = true,
+		GrantWallet = 10000,
+
+		--// PLAYTEST: give the 10k to EVERY player who joins, so no name
+		--// list to maintain. Set false to fall back to the Usernames list.
+		GrantEveryone = true,
+
+		--// Only used when GrantEveryone = false: exact Roblox usernames
+		--// (case-insensitive) that get the wallet grant.
+		Usernames = {
+			"Uneven876",
+			"no_wayyman12",
+			"Kenny_ze",
+			"raptor_Rexz96",
+			"JordonChia0019",
+			"WingzXYZ",
+			"M2RichU2Poor",
+			"YoloaXD",
+		},
+
+		--// PLAYTEST: unlock EVERY class for EVERY player who joins, so any
+		--// class can be equipped without buying. Written to the REAL save.
+		--// Set false after the playtest.
+		UnlockAllClasses = true,
+	},
 }
 
 ----------------------------------------------------------------

@@ -135,6 +135,58 @@ local function devSeed(player, data)
 	return true
 end
 
+--// PLAYTEST GRANT (Config.Profile.PlaytestGrant): tops a NAMED tester up
+--// to GrantWallet whenever they load below it, so classes are freely
+--// buyable during a playtest. Never touches anyone not on the list.
+local function playtestGrant(player, data)
+	local grant = SETTINGS.PlaytestGrant
+	if not grant or grant.Enabled ~= true then
+		return false
+	end
+	local named = grant.GrantEveryone == true
+	if not named then
+		for _, name in ipairs(grant.Usernames or {}) do
+			if player.Name:lower() == tostring(name):lower() then
+				named = true
+				break
+			end
+		end
+	end
+	if not named then
+		return false
+	end
+	local target = grant.GrantWallet or 0
+	if data.Wallet >= target then
+		return false
+	end
+	data.Wallet = target
+	warn(("[ProfileAPI] PLAYTEST GRANT: topped %s up to %d coins")
+		:format(player.Name, target))
+	return true
+end
+
+--// PLAYTEST: unlock every class for EVERY player (Config.Profile
+--// .PlaytestGrant.UnlockAllClasses). Written to the real save; turn off
+--// after the playtest.
+local function unlockAllClasses(player, data)
+	local grant = SETTINGS.PlaytestGrant
+	if not grant or grant.Enabled ~= true or grant.UnlockAllClasses ~= true then
+		return false
+	end
+	local changedAny = false
+	for classKey in pairs(Config.Classes) do
+		if not data.OwnedClasses[classKey] then
+			data.OwnedClasses[classKey] = true
+			data.ClassLevels[classKey] = data.ClassLevels[classKey] or 1
+			changedAny = true
+		end
+	end
+	if changedAny then
+		warn(("[ProfileAPI] PLAYTEST: unlocked all classes for %s"):format(player.Name))
+	end
+	return changedAny
+end
+
 --// nil while the DataStore is still answering, or if they are being kicked
 local function profileFor(player)
 	if not Profiles then
@@ -149,7 +201,9 @@ local function profileFor(player)
 	ensureShape(data)
 	local granted = ensureTrainee(player, data)
 	local seeded = devSeed(player, data)
-	if granted or seeded then
+	local topped = playtestGrant(player, data)
+	local unlocked = unlockAllClasses(player, data)
+	if granted or seeded or topped or unlocked then
 		changed:Fire(player)
 	end
 	return data

@@ -724,6 +724,92 @@ else
 end
 
 ----------------------------------------------------------------
+-- SERVED TABLE PLATES (unlimited-plate model, Sep 19)
+--
+-- The counter used to run dry: a plate was tied up from plating until the
+-- table paid. Now serving spawns an INDEPENDENT plate on the table and the
+-- slot is freed instantly - so the counter never runs out however many
+-- meals are in flight. Each served plate is tracked by a string handle and
+-- destroyed when its table's payment is collected (or the shift ends).
+----------------------------------------------------------------
+local servedPlates = {}       --// handle -> the anchored table plate model
+local nextServedId = 0
+local SERVED_TAG = "ServedPlate" --// so plate placement never stacks on one
+
+--// An anchored copy of a slot's plate, dressed with the dish, planted flat
+--// on the table at `cframe`. Mirrors buildPlateTool's clone/strip/restore,
+--// minus the tool and grip - this one just sits there.
+local function makeTablePlate(slot, dishName, cframe)
+	local clone = slot.Root:Clone()
+
+	CollectionService:RemoveTag(clone, SLOT_TAG)
+	for _, descendant in ipairs(clone:GetDescendants()) do
+		CollectionService:RemoveTag(descendant, SLOT_TAG)
+	end
+
+	for _, descendant in ipairs(clone:GetDescendants()) do
+		local junk = descendant:IsA("ProximityPrompt")
+			or descendant:IsA("ClickDetector")
+			or descendant:IsA("LayerCollector")
+			or descendant:IsA("LuaSourceContainer")
+			or (descendant:IsA("BasePart") and descendant.Name == "Food")
+		if junk then
+			descendant:Destroy()
+		end
+	end
+
+	--// Restore visibility (the slot was hidden while CARRIED)
+	local originals = partsOf(slot.Root)
+	local copies = partsOf(clone)
+	for index, original in ipairs(originals) do
+		if copies[index] then
+			copies[index].Transparency = slot.Transparency[original] or 0
+		end
+	end
+
+	local plate = handleOf(clone)
+	if not plate then
+		clone:Destroy()
+		return nil
+	end
+
+	--// Position: caller's spot, plate's resting rotation. Then lift so the
+	--// plate's real bottom rests flush (mesh plates bake odd pivots).
+	clone:PivotTo(CFrame.new(cframe.Position) * slot.Home.Rotation)
+	local bottom = plate.Position.Y - worldHalfHeight(plate)
+	local sink = cframe.Position.Y - bottom
+	if math.abs(sink) > 0.01 then
+		clone:PivotTo(clone:GetPivot() + Vector3.new(0, sink, 0))
+	end
+
+	--// The dish, positioned relative to THIS plate, same recipe as the slot
+	local food = makeFood(dishName)
+	if food then
+		food.Anchored = true
+		food.CFrame = plate.CFrame * slot.FoodOffset
+		food.CFrame = CFrame.new(food.Position
+			- Vector3.new(0, DishModels.plateDrop(dishName), 0))
+		if DishModels.dress(food, dishName) then
+			food.Transparency = 1
+		else
+			food.CFrame = plate.CFrame * slot.FoodOffset
+		end
+		food.Parent = clone
+	end
+
+	for _, part in ipairs(partsOf(clone)) do
+		part.Anchored = true
+		part.CanCollide = false
+	end
+
+	--// tagged so ServiceLoop's plate-placement ray never sets the next
+	--// dish on top of this one; NOT PassSlot, so it never becomes a slot
+	CollectionService:AddTag(plate, SERVED_TAG)
+	clone.Parent = slot.Root.Parent
+	return clone
+end
+
+----------------------------------------------------------------
 -- RECLAIM
 --
 -- Every way a plate could leave the world without coming back.
@@ -792,47 +878,51 @@ end
 --// ServiceLoop calls this when a table's payment is collected, when a served
 --// party storms out, and at shift end. KitchenService calls it when a plated
 --// dish is binned.
-bridge("PassReturnPlate", function(slotId, why)
-	return returnPlate(tonumber(slotId), why)
+--// Two kinds of handle come back here: a STRING "served:N" is one of the
+--// independent table plates (destroy it); a NUMBER is a real counter slot
+--// being sent home (carried plate binned, party stormed out mid-carry).
+bridge("PassReturnPlate", function(handle, why)
+	if type(handle) == "string" then
+		local plate = servedPlates[handle]
+		if plate then
+			plate:Destroy()
+			servedPlates[handle] = nil
+		end
+		return true
+	end
+	return returnPlate(tonumber(handle), why)
 end)
 
---// Serving moves the plate out of hiding and onto the table, food and all.
---// It stays there until the payment is collected.
+--// Serving spawns an INDEPENDENT plate on the table and frees the slot at
+--// once, so the counter is instantly ready for the next dish (unlimited
+--// plates). Returns a string handle the caller stores; PassReturnPlate
+--// destroys that plate when the table pays. Slot-based return no longer
+--// applies to a served dish - the slot went home the moment it was served.
 bridge("PassPlaceOnTable", function(slotId, cframe)
 	local slot = slots[tonumber(slotId)]
 	if not slot then
 		warn(("[Pass] table placement asked for unknown slot %s"):format(tostring(slotId)))
-		return false
+		return nil
 	end
 	if typeof(cframe) ~= "CFrame" then
 		warn("[Pass] table placement needs a CFrame")
-		return false
+		return nil
 	end
 
-	slot.State = "SERVED"
-	slot.HeldBy = nil
+	local dish = slot.Dish
+	--// Free the counter plate immediately, whatever happens next.
+	goEmpty(slot)
 
-	--// POSITION from the caller, ROTATION from how the plate rests on the
-	--// counter. The caller only knows where on the table the plate goes, not
-	--// which way this particular union has to be turned to lie flat - forcing
-	--// an identity rotation stands it on its edge.
-	slot.Root:PivotTo(CFrame.new(cframe.Position) * slot.Home.Rotation)
-
-	--// The caller's point is the SURFACE. PivotTo plants the plate's
-	--// PIVOT there - centred on a built union, but wherever the import
-	--// baked it on a MeshPart plate (Yamasaki's sank half under the
-	--// wood). Measure where the plate's real bottom landed and lift the
-	--// whole thing flush.
-	local bottom = slot.Part.Position.Y - worldHalfHeight(slot.Part)
-	local sink = cframe.Position.Y - bottom
-	if math.abs(sink) > 0.01 then
-		slot.Root:PivotTo(slot.Root:GetPivot() + Vector3.new(0, sink, 0))
+	local plate = makeTablePlate(slot, dish, cframe)
+	if not plate then
+		warn(("[Pass] could not build a table plate for slot %d"):format(slot.Id))
+		return nil
 	end
-	attachFood(slot, slot.Dish)
-	setShown(slot, true)
-	slot.Prompt.Enabled = false --// nothing to do with a plate mid-meal
-	publishState(slot)
-	return true
+
+	nextServedId += 1
+	local handle = "served:" .. nextServedId
+	servedPlates[handle] = plate
+	return handle
 end)
 
 --// Shift end: everything comes home, wherever it was. This is the backstop
@@ -844,6 +934,12 @@ bridge("PassReturnAll", function(why)
 			goEmpty(slot)
 			returned += 1
 		end
+	end
+	--// Independent table plates are not slots - clear them here too, so a
+	--// new shift never opens with last shift's plates still on tables.
+	for handle, plate in pairs(servedPlates) do
+		plate:Destroy()
+		servedPlates[handle] = nil
 	end
 	if returned > 0 then
 		print(("[Pass] reclaimed %d plate(s) (%s)"):format(returned, why or "reset"))
