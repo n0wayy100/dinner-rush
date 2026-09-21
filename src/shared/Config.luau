@@ -175,6 +175,42 @@ Config.Recipes = {
 	},
 }
 
+----------------------------------------------------------------
+-- THE RECIPE BOARD (the wall chart in every kitchen)
+--
+-- The board DERIVES ITSELF from the active map's Menu, so a new map needs
+-- no list here: build it, give it a Menu in Config.Maps, tag a wall part
+-- RecipeBoard, done. Yamasaki shows ramen, Route 67 shows burgers, and
+-- neither one is written down twice.
+----------------------------------------------------------------
+
+--// How a cook station reads on the chart. Keyed by a recipe's Method.
+--// IconId is optional: empty falls back to the label text, so the board
+--// works before the art exists.
+Config.CookMethodDisplay = {
+	Grill = { Label = "GRILL",     IconId = "" },
+	Fry   = { Label = "FRYER",     IconId = "" },
+	Ramen = { Label = "RAMEN POT", IconId = "" },
+}
+
+--// Where a raw ingredient is kept, in words. Keyed by Ingredients[x].Source.
+Config.IngredientSourceDisplay = {
+	Fridge = "FRIDGE",
+	DryShelf = "DRY SHELF",
+}
+
+Config.RecipeBoard = {
+	--// Tag a wall part RecipeBoard. Optional attribute ScreenFace
+	--// ("Front"/"Back"/"Left"/"Right"/"Top"/"Bottom") picks the side;
+	--// without it the widest face wins, same as the supplier screen.
+	Tag = "RecipeBoard",
+
+	Title = "RECIPES",          -- the map's own name sits above this
+	PixelsPerStud = 60,         -- raise for crisper text on a big slab
+	ShowSource = true,          -- the little FRIDGE / DRY SHELF line
+	MaxRows = 6,                -- more dishes than this and the rest are cut
+}
+
 --// What customers order, and how often - the FALLBACK menu, used only
 --// when the active map has no Menu of its own (see Config.Maps: each map
 --// row carries the menu its customers order from).
