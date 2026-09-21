@@ -28,8 +28,9 @@
 
 	Only a SUCCESSFUL ability consumes charge; denials keep it and tell the
 	player why. Charge survives respawn (it lives on the Player), dies with
-	leaving, and resets - along with THIRD HAND's CarryLimit - when a new
-	shift goes RUNNING.
+	leaving, and resets - along with the Waiter's DOUBLE TIME speed boost -
+	when a new shift goes RUNNING. (The Chef's CarryLimit is a class passive,
+	not reset here - see the RUNNING block below.)
 
 	THE LAW: FLASH FRY skips the cook timer entirely; it never modifies it.
 --]]
@@ -370,7 +371,9 @@ task.spawn(function()
 		if state == "RUNNING" and lastState ~= "RUNNING" then
 			for _, player in ipairs(Players:GetPlayers()) do
 				player:SetAttribute("UltimateCharge", 0)
-				player:SetAttribute("CarryLimit", nil) --// legacy third hands retract
+				--// NB: do NOT clear CarryLimit here - it is the CHEF'S PASSIVE
+				--// now (set by ClassService), not a temporary ultimate. The
+				--// old THIRD HAND ult that needed retracting is long gone.
 				player:SetAttribute("SpeedBoostMult", nil) --// double time ends
 			end
 			print("[Charge] new shift - charges and boosts reset")

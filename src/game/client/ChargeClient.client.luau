@@ -236,13 +236,9 @@ local function render()
 	wasReady = ready
 
 	setPulsing(ready)
-	if ready then
-		hintSerial += 1 --// a ready banner outranks a stale denial
-		hint.TextColor3 = GOLD
-		hint.Text = (class and class.UltimateName ~= "" and class.UltimateName or "ULT!") .. " ready!"
-	elseif hint.TextColor3 == GOLD then
-		hint.Text = ""
-	end
+	--// No "<ULT> ready!" banner (owner call, Sep 21) - the gold pulse on
+	--// the ring already says it's ready. The hint label survives only for
+	--// brief denial reasons (showDenial).
 end
 
 ----------------------------------------------------------------
@@ -267,8 +263,10 @@ local function refreshBinding()
 	local classed = (player:GetAttribute("ClassKey") or "") ~= ""
 	if classed and not bound then
 		bound = true
+		--// Ultimate moved off Q -> T (Sep 21): Q and R are now the class
+		--// SKILL keys. The on-screen circle + gamepad Y stay the mains.
 		ContextActionService:BindAction(ACTION, onAction, false,
-			Enum.KeyCode.Q, Enum.KeyCode.ButtonY)
+			Enum.KeyCode.T, Enum.KeyCode.ButtonY)
 	elseif not classed and bound then
 		bound = false
 		ContextActionService:UnbindAction(ACTION)

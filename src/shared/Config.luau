@@ -255,8 +255,15 @@ Config.CookMinigamePick = {
 
 	--// STUDIO KNOB (live-ignored, like StudioSpawnBurst): pin EVERY
 	--// roll to one game while testing it. 0 = off (normal roll),
-	--// 1 = arrow, 2 = recipe math, 3 = card match. REVERT TO 0 when done.
-	StudioForceGame = 0, --// OFF: normal random roll (card match UI review done Sep 17)
+	--// 1 = arrow, 2 = recipe math (RETIRED from the live pool),
+	--// 3 = card match, 4 = rhythm tap, 5 = whack. REVERT TO 0 when done.
+	StudioForceGame = 0, --// OFF: normal random roll across the pool
+
+	--// THE LIVE POOL (Sep 21 2026): recipe math was cut (playtest: kids
+	--// found it un-fun / a struggle) and replaced by TWO reflex games,
+	--// rhythm tap + whack. Math's code stays for the tutorial but is no
+	--// longer rolled. These are the game ids the live roll draws from.
+	Pool = { 1, 3, 4, 5 }, -- arrow, cards, rhythm, whack
 }
 
 ----------------------------------------------------------------
@@ -347,6 +354,61 @@ Config.CardMatch = {
 	PerfectPairs = 4,             -- sweep the board = Perfect, instantly
 	GoodPairs = 3,
 	OvercookedPairs = 2,          -- below this = RUINED, bin it
+}
+
+----------------------------------------------------------------
+-- RHYTHM TAP (Sep 21 2026 - replaces recipe math, game 4). Notes slide
+-- toward a target line; tap each as it lands. Latency-safe by design:
+-- the SERVER owns each note's arrival time and judges a tap against that
+-- note's window (widened by GraceSeconds for transport lag) - there is
+-- no client-side precision to corrupt, same safety as the arrow game.
+-- Hit all = Perfect, most = Good, some = Overcooked, few = RUINED.
+----------------------------------------------------------------
+Config.RhythmTap = {
+	Notes = 6,                    -- notes in a round (mix of taps + holds)
+	FirstNoteSeconds = 1.2,       -- when the first note reaches the line
+	NoteSpacingSeconds = 1.05,    -- base gap between notes reaching the line
+	SpacingVariation = 0.4,       -- +/- random wobble on tap spacing, so it
+	                              -- reads as a rhythm, not a metronome
+	NoteTravelSeconds = 1.7,      -- how long a note is visible approaching
+	HitWindowSeconds = 0.42,      -- +/- around a line-time a tap/press counts
+	GraceSeconds = 0.25,          -- extra window for transport lag
+
+	--// HOLD NOTES: press when the head reaches the ring, HOLD, release when
+	--// the tail reaches it. Judged as press-window AND release-window.
+	HoldChance = 0.4,             -- odds a given note is a hold (>=1 guaranteed)
+	HoldSeconds = 1.2,            -- how long a hold lasts
+
+	--// SCORELINES (notes hit when the clock lands - a hold counts as one):
+	PerfectHits = 6,              -- all of them = Perfect (ends on the spot)
+	GoodHits = 4,
+	OvercookedHits = 2,           -- below this = RUINED, bin it
+}
+
+----------------------------------------------------------------
+-- WHACK (Sep 21 2026 - replaces recipe math, game 5). Ingredient icons
+-- pop up around the pan; tap them before they vanish. Pure reflex, fully
+-- latency-tolerant (a target is up for a WINDOW; any tap in it counts,
+-- server-validated - no precise timing). Hit most = Perfect down to a
+-- RUINED floor, exactly like the card match tiers.
+----------------------------------------------------------------
+Config.Whack = {
+	Targets = 12,                 -- how many pop up across the round
+	SpawnEverySeconds = 0.65,     -- cadence of new pop-ups
+	TargetUpSeconds = 1.4,        -- how long each stays tappable
+	GraceSeconds = 0.25,          -- extra window for transport lag
+	Slots = 9,                    -- 3x3 grid of holes the pop-ups rise from
+
+	--// WHACK-A-MOLE RULE (owner spec, Sep 21): only the DISH's own
+	--// ingredient counts - decoys (other food) pop up too and hitting one
+	--// is a mistake. A minimum of PerfectHits good ones is guaranteed.
+	DecoyChance = 0.35,           -- odds a given pop-up is a WRONG ingredient
+	WrongHitPenalty = 1,          -- score lost for hitting a decoy (min 0)
+
+	--// SCORELINES (correct ingredients hit when the clock lands):
+	PerfectHits = 8,              -- >= this = Perfect
+	GoodHits = 5,
+	OvercookedHits = 3,           -- below this = RUINED, bin it
 }
 
 ----------------------------------------------------------------
@@ -554,6 +616,19 @@ Config.Tutorial = {
 			Objective = "Tutorial complete!",
 		},
 	},
+}
+
+--// HOVERING SOURCE ICONS (Sep 20 2026, playtest feedback: "put the food
+--// icons on the fridges and shelves"): a floating row of the ingredient
+--// icons each Fridge / DryShelf holds on the active map, so a player sees
+--// what is inside without opening the menu. Built server-side by
+--// KitchenService (world UI, like the boards). Counts stay in the menu.
+Config.SourceIcons = {
+	Enabled = true,
+	HoverStuds = 3,          -- how high above the source the icons float
+	IconStuds = 1.2,         -- size of each icon (billboard studs)
+	MaxDistanceStuds = 45,   -- hidden past this, like the wall signs
+	ShowLabel = false,       -- a "FRIDGE" / "DRY SHELF" caption under them
 }
 
 Config.Kitchen = {
@@ -785,7 +860,7 @@ Config.Difficulty = {
 		--// kindness is in these NUMBERS (slow spawns, long patience, soft
 		--// consequences), never in withholding the fun parts.
 		Label = "Cozy Shift",
-		Patience = 1.2,               -- multiplies both bars
+		Patience = 1.3,               -- multiplies both bars (kindest tier)
 		SpawnRate = 0.8,              -- interval = base / SpawnRate
 		PartySizeWeights = { [1] = 0.35, [2] = 0.65 },
 		VIPChance = 0.05,
@@ -848,8 +923,12 @@ Config.Difficulty = {
 
 	NORMAL = {
 		Label = "Dinner Rush",
-		Patience = 1.0,
-		SpawnRate = 1.0,
+		--// EASED (Sep 21 2026, playtest: "too fast / too intense, needs to
+		--// be easier"). Demand only - cook windows are untouched. More
+		--// patience + slower arrivals + later, rarer events. Still clearly
+		--// above EASY (1.2 / 0.8). Tune freely from here.
+		Patience = 1.2,               -- was 1.0: more time on both bars
+		SpawnRate = 0.9,              -- was 1.0: parties arrive ~10% less often
 		PartySizeWeights = { [1] = 0.25, [2] = 0.75 },
 		VIPChance = 0.10,
 		DoorQueueMax = 4,
@@ -868,10 +947,10 @@ Config.Difficulty = {
 		DeliveryFailBase = 0.10, DeliveryFailPerItem = 0.03,
 		SafetyFloorPriceMult = 3, SafetyFloorDeliveryMult = 1,
 		Events = {
-			IntervalSeconds = 60,
+			IntervalSeconds = 75,     -- eased from 60: more breathing room
 			MaxConcurrent = 2,
-			SecondEventAt = 300,      -- 2 allowed only in crescendo
-			FirstEventAt = 120,       -- 2:00
+			SecondEventAt = 360,      -- eased from 300: doubles only late crescendo
+			FirstEventAt = 150,       -- eased from 120 (2:00) -> 2:30
 			RushHourGuaranteed = true,
 			WeightSet = "NORMAL",
 			ExclusivePool = {},
@@ -879,8 +958,8 @@ Config.Difficulty = {
 		Consequences = {
 			ToiletFloodEndsGame = true,
 			FireBurnoutEndsGame = true,  -- every station ablaze = shift over
-			SeatedWalkoutRep = -10,
-			DoorWalkoutRep = -5,
+			SeatedWalkoutRep = -8,    -- eased from -10: mistakes sting less
+			DoorWalkoutRep = -4,      -- eased from -5
 			DashUncaughtRep = 0,
 			InspectorFinePerMess = 10,
 			InspectorFirstVisitWarns = false,
@@ -898,14 +977,20 @@ Config.Difficulty = {
 		Rewards = {
 			CoinMult = 1.0, CompletionBonus = 150,
 			StreakCap = 2.5, XPMult = 1.0,
-			TargetParties = 15,       -- of ~23 arrivals
+			TargetParties = 13,       -- eased from 15: fewer arrivals now
 		},
 	},
 
 	HARD = {
 		Label = "Friday Frenzy",
-		Patience = 0.85,
-		SpawnRate = 1.3,
+		--// EASED (Sep 21 2026): now that NORMAL is gentler, HARD is retuned
+		--// to "a real challenge, still fair" - roughly the OLD NORMAL feel
+		--// testers found tough-but-playable. The brutal old-HARD numbers
+		--// move up to the new EXTREME tier. Demand only; cook windows fixed.
+		Patience = 1.0,               -- was 0.85: the base reference; HARD's
+		                             -- pressure comes from spawns/events, not
+		                             -- from stingy patience (owner, Sep 21)
+		SpawnRate = 1.15,             -- was 1.3: busy, not a flood
 		PartySizeWeights = { [1] = 0.20, [2] = 0.80 },
 		VIPChance = 0.15,
 		DoorQueueMax = 5,
@@ -924,10 +1009,10 @@ Config.Difficulty = {
 		DeliveryFailBase = 0.15, DeliveryFailPerItem = 0.04,
 		SafetyFloorPriceMult = 4, SafetyFloorDeliveryMult = 2,
 		Events = {
-			IntervalSeconds = 45,
+			IntervalSeconds = 55,     -- eased from 45
 			MaxConcurrent = 2,
-			SecondEventAt = 120,      -- 2 allowed from 2:00
-			FirstEventAt = 90,        -- 1:30
+			SecondEventAt = 180,      -- eased from 120: doubles from 3:00
+			FirstEventAt = 105,       -- eased from 90 (1:30) -> 1:45
 			RushHourGuaranteed = true, -- + weighted second
 			WeightSet = "HARD",
 			ExclusivePool = { "CelebrityVisit", "BloggerLivestream" },
@@ -936,9 +1021,9 @@ Config.Difficulty = {
 		Consequences = {
 			ToiletFloodEndsGame = true,
 			FireBurnoutEndsGame = true,
-			SeatedWalkoutRep = -13,
-			DoorWalkoutRep = -7,
-			DashUncaughtRep = -3,
+			SeatedWalkoutRep = -11,   -- eased from -13
+			DoorWalkoutRep = -6,      -- eased from -7
+			DashUncaughtRep = -2,     -- eased from -3
 			InspectorFinePerMess = 15,
 			InspectorFirstVisitWarns = false,
 			InspectorCleanBonus = 90,
@@ -955,7 +1040,7 @@ Config.Difficulty = {
 		Rewards = {
 			CoinMult = 1.5, CompletionBonus = 250,
 			StreakCap = 3.0, XPMult = 1.25,
-			TargetParties = 19,       -- of ~30 arrivals
+			TargetParties = 17,       -- eased from 19
 		},
 	},
 }
@@ -1328,6 +1413,19 @@ Config.ShiftReport = {
 -- ORDER TICKET BOARD (wall SurfaceGui on the part tagged OrderBoard -
 -- see OrderBoardService). Most desperate party is always leftmost.
 ----------------------------------------------------------------
+--// THE ON-SCREEN ORDER PANEL (Sep 20 2026, from playtest feedback): a
+--// code-built HUD list of open orders, always legible on mobile and PC -
+--// the wall OrderBoard was too easy to miss. Server broadcasts the same
+--// GetOpenOrders data a few times a second; OrderPanelClient renders.
+--// Sorted by order number = the order they were TAKEN (Hora's ask).
+Config.OrderPanel = {
+	Enabled = true,
+	BroadcastHz = 3,             -- server -> client refresh rate
+	MaxRows = 6,                 -- rows shown before a "+N more" chip
+	LowPatienceBelow = 0.25,     -- a ticket flags red/❗ under this patience
+	                             -- (same threshold as the wall board's pulse)
+}
+
 Config.OrderBoard = {
 	MaxTickets = 8,               -- cards on the board; overflow shows a "+N more"
 	                              -- chip (unreachable with 4 tables - future-proofing)
@@ -1365,11 +1463,40 @@ Config.Classes = {
 		Price = 1500,
 		IconId = "rbxassetid://79387702760394",
 		FlavorText = "Heard you can burn water. Prove me wrong.",
-		PassiveText = "Collects cooked dishes a little faster",
-		--// FLAT passive values (owner call: levels are a badge for now, no
-		--// per-level scaling until the numbers have been playtested).
-		--// Multiplies the collect-prompt hold on cook stations + the pass.
-		CollectHoldMult = 0.6,
+		PassiveText = "Carries 3 ingredients at once",
+		--// THE CHEF'S EDGE (Sep 21 2026, playtest: roles felt
+		--// interchangeable): +1 to the 2-item carry limit = real kitchen
+		--// throughput. Drives the CarryLimit attribute (carryLimitFor).
+		--// Cook windows untouched - THE LAW holds. (The old CollectHoldMult
+		--// passive was dead: E is press-everywhere, so there was no hold to
+		--// scale.)
+		CarryBonus = 1,
+		--// TWO ACTIVE SKILLS (Q + R, cooldown-based)
+		SkillQ = {
+			Id = "DoubleBatch",
+			Name = "DOUBLE BATCH",
+			Text = "Your next cook plates two dishes",
+			Emoji = "🍳",
+			IconId = "rbxassetid://77017928564773",
+			CooldownSeconds = 25,
+			ArmSeconds = 20,          -- the armed cook must happen within this
+		},
+		SkillR = {
+			Id = "SousChef",
+			Name = "SOUS CHEF",
+			Text = "Summon a cook that fetches, cooks and serves for a while",
+			Emoji = "👨‍🍳",
+			IconId = "rbxassetid://135527262830265",
+			CooldownSeconds = 45,
+			--// The sous chef walks the real fetch->cook->serve loop (see
+			--// SkillService). These tune the summoned NPC only - never a
+			--// player's cook window, so THE LAW is untouched.
+			DurationSeconds = 26,     -- how long it works the kitchen before it poofs
+			WalkSpeed = 15,           -- studs/sec ambling pace (a touch quicker than the Helper)
+			CookSpeedMult = 1,        -- scales its OWN wait at the station (<1 = faster cook)
+			GrabSeconds = 0.6,        -- pause at the fridge/shelf, reads as picking up
+			Quality = "Good",         -- what it plates: Good clears tickets with no rep bonus (kept un-OP)
+		},
 		UltimateName = "FLASH FRY!",
 		UltimateText = "Instantly cooks the raw ingredient you're holding to PERFECT",
 		--// Levels 1->5: finish the task, then PAY to upgrade. Steps[L] is the
@@ -1416,6 +1543,25 @@ Config.Classes = {
 		ChannelMult = 0.7,
 		UltimateName = "SPEED DIAL!",
 		UltimateText = "Instantly resolves the active emergency",
+		--// TWO ACTIVE SKILLS (Sep 21 2026, cooldown-based, keys Q + R).
+		--// SkillQ unlocks first, SkillR later (level gate TBD). Both act on
+		--// the CURRENT emergency, so they do nothing when nothing is wrong.
+		SkillQ = {
+			Id = "Toolbelt",
+			Name = "TOOLBELT",
+			Text = "Grab the tool the emergency needs",
+			Emoji = "🧰",              -- shown until IconId is set
+			IconId = "rbxassetid://91158111919893",
+			CooldownSeconds = 18,
+		},
+		SkillR = {
+			Id = "RushIn",
+			Name = "RUSH IN",
+			Text = "Teleport straight to the emergency",
+			Emoji = "💨",
+			IconId = "rbxassetid://81174550748841",
+			CooldownSeconds = 28,
+		},
 		--// ~1-3 event fixes per shift; rarer actions, shorter track
 		UpgradeTrack = {
 			Counter = "EventChannels", Label = "Emergencies fixed",
@@ -1443,6 +1589,20 @@ Config.Classes = {
 			Costs = { 800, 1600, 3200, 5500 },
 		},
 	},
+}
+
+--// CLASS SKILLS (Sep 21 2026): each class has up to TWO active, cooldown-
+--// based skills on Q and R (the ultimate moved to T / gamepad Y / its
+--// on-screen circle). SkillService validates + runs them; SkillClient
+--// draws the two buttons. Only the Fixer has skills so far.
+Config.Skills = {
+	Enabled = true,
+	--// STUDIO KNOB (live-ignored): treat every skill as unlocked so they
+	--// can be tested before the level-gate exists. Revert to false later.
+	StudioUnlockAll = true,
+	--// keyboard keys per slot (the client also wires touch buttons + gamepad)
+	QKey = "Q",
+	RKey = "R",
 }
 
 Config.ClassShop = {
@@ -1868,8 +2028,8 @@ Config.Ultimates = {
 	--// Ignored on live servers. Set StudioFullCharge = false (and the
 	--// key "") when ultimate testing ends, or charge earning can never
 	--// be playtested in Studio.
-	StudioFullCharge = false, --// banner testing done (Sep 17)
-	StudioClassKey = "Charmer",
+	StudioFullCharge = true, --// TEMP: testing the Chef skills (Sep 21) - revert to false
+	StudioClassKey = "Chef",
 
 	--// THE CAST BANNER (Sep 2026). Cosmetic only - nothing here touches
 	--// charge, abilities or THE LAW. Caster sees their own avatar posed
@@ -2225,7 +2385,13 @@ Config.StudioMapId = "Sushi" --// reviewing the ramen shift bar (Sep 18)
 --// shift goes RUNNING, so route/seating tests need no command bar.
 --// The normal spawn trickle continues after the burst. 0 = off (normal
 --// opening). Ignored on live servers - set 0 anyway when map testing ends.
-Config.StudioSpawnBurst = 0 --// off: normal opening (Sep 19)
+Config.StudioSpawnBurst = 4 --// TEMP: busy room for the Chef skill test (Sep 21) - revert to 0
+
+--// STUDIO-ONLY (live-ignored): auto-fire this event a few seconds after
+--// the shift goes RUNNING, so an emergency test needs no command bar.
+--// "" = off. Names: Spill / ToiletEmergency / GreaseFire / PowerOutage.
+Config.StudioForceEventOnStart = "" --// off
+Config.StudioForceEventDelaySeconds = 6
 
 --// Whether a given id is a real, playable map. The lobby server gates every
 --// party on this - never trust a MapId that arrived from a client.
@@ -2323,6 +2489,15 @@ Config.Helper = {
 Config.EventArrow = {
 	EdgeMarginPx = 56,            -- how far the arrow floats from the edge
 	RefreshSeconds = 0.2,         -- how often targets are re-picked
+
+	--// THE GUIDE LINE (Sep 21 2026, playtest: a plunger "in the kitchen"
+	--// that nobody could find). A beam runs from the player to the
+	--// emergency target, so you follow a LINE to it instead of hunting.
+	--// The edge badge stays, but only when the target is off screen.
+	BeamEnabled = true,
+	BeamColor = Color3.fromRGB(229, 72, 77), -- tomato: urgent
+	BeamWidthStuds = 0.6,
+	BeamTransparency = 0.25,
 }
 
 ----------------------------------------------------------------

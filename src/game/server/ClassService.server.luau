@@ -7,12 +7,14 @@
 	class modifiers as ATTRIBUTES ON THE PLAYER:
 
 	  ClassKey            "Chef" / "Waiter" / "Fixer" / "Charmer" / ""
-	  CollectHoldMult     Chef: collect-prompt holds (stations + pass)
+	  CarryLimit          Chef: how many items they can hold (2 + CarryBonus)
 	  StaminaDrainMult    Waiter: sprint drain  (client reads - movement
 	  StaminaRegenMult    Waiter: sprint regen   feel exception)
 	  ChannelMult         Fixer: plunge / douse / breaker channels
 	  MoneyMult           Charmer: payment collection bonus
 	  RecommendBonusMult  Charmer: recommendation patience bonus
+	  (CollectHoldMult is still published for back-compat but every class
+	   sits at 1 now - E is press-everywhere, so there is no hold to scale.)
 
 	Attributes because they need no bridge: server systems read them off the
 	Player directly, and they replicate to that client for SprintClient.
@@ -64,6 +66,17 @@ local function applyClass(player)
 
 	local snapshot = ProfileAPI.GetSnapshot(player)
 	local classKey = snapshot.EquippedClass or ""
+
+	--// STUDIO: when the ultimate-test knob is on, force that class outright
+	--// (passives + skills + ultimate), so a Studio class test is complete
+	--// whatever the save says. Live servers never see this.
+	if game:GetService("RunService"):IsStudio() then
+		local ult = Config.Ultimates
+		if ult and ult.StudioFullCharge and (ult.StudioClassKey or "") ~= "" then
+			classKey = ult.StudioClassKey
+		end
+	end
+
 	local class = classKey ~= "" and Config.Classes[classKey] or nil
 	if classKey ~= "" and not class then
 		warn(("[Class] %s has unknown EquippedClass '%s' - treating as classless")
@@ -76,6 +89,12 @@ local function applyClass(player)
 	for attribute, field in pairs(MODIFIERS) do
 		player:SetAttribute(attribute, (class and class[field]) or 1)
 	end
+
+	--// Carry limit is a COUNT, not a multiplier, so it is set apart from the
+	--// MODIFIERS loop (which defaults missing fields to 1). The Chef's +1
+	--// makes it 3; everyone else sits at the Config default. THE LAW safe.
+	local carryBonus = (class and class.CarryBonus) or 0
+	player:SetAttribute("CarryLimit", Config.Kitchen.MaxCarriedItems + carryBonus)
 
 	if before ~= classKey then
 		print(("[Class] %s plays as %s"):format(player.Name,

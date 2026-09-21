@@ -184,23 +184,32 @@ end
 
 ----------------------------------------------------------------
 -- THE PLUNGER
--- One exists. It lives on the mount, is carried by whoever took it, and
--- returns the moment the emergency ends or its carrier disappears.
+-- EVERY player can take their OWN (owner ask, Sep 21): the mount hands
+-- one to anyone who asks during the emergency, and ALL of them vanish the
+-- moment the emergency ends or a carrier disappears. plungerTools maps a
+-- player to their live plunger.
 --
 -- It is deliberately NOT counted by KitchenService's carry limit: that count
 -- filters on the Ingredient and Dish attributes, and this tool has neither.
 ----------------------------------------------------------------
-local plungerHolder = nil
-local plungerTool = nil
+local plungerTools = {} --// player -> their plunger Tool
 local mountPrompt = nil
 
-local function returnPlunger()
-	if plungerTool then
-		plungerTool:Destroy()
-		plungerTool = nil
+--// Send one player's plunger home (they left, died, or dropped it)
+local function returnPlungerFor(player)
+	local tool = plungerTools[player]
+	if tool then
+		tool:Destroy()
+		plungerTools[player] = nil
 	end
-	plungerHolder = nil
+end
 
+--// Event over: every outstanding plunger vanishes at once
+local function returnPlunger()
+	for player, tool in pairs(plungerTools) do
+		tool:Destroy()
+		plungerTools[player] = nil
+	end
 	if mountPrompt then
 		mountPrompt.ActionText = "Take"
 		mountPrompt.ObjectText = "Plunger"
@@ -216,6 +225,51 @@ local function holdingPlunger(player)
 		end
 	end
 	return false
+end
+
+--// Hand a player their own plunger (shared by the mount and the Fixer's
+--// TOOLBELT skill). Already holding one = nothing to do.
+local function givePlungerTo(player)
+	local character = player.Character
+	if not character then return false end
+	if plungerTools[player] and plungerTools[player].Parent then
+		return true
+	end
+	returnPlungerFor(player) --// clear a stale record just in case
+
+	local tool = Instance.new("Tool")
+	tool.Name = "Plunger"
+	tool.RequiresHandle = true
+	tool.CanBeDropped = false
+	tool:SetAttribute("Plunger", true)
+
+	local handle = Instance.new("Part")
+	handle.Name = "Handle"
+	handle.Size = Vector3.new(0.6, 4, 0.6)
+	handle.Color = Color3.fromRGB(150, 60, 60)
+	handle.Material = Enum.Material.SmoothPlastic
+	handle.Parent = tool
+
+	local cup = Instance.new("Part")
+	cup.Name = "Cup"
+	cup.Shape = Enum.PartType.Cylinder
+	cup.Size = Vector3.new(1.2, 2, 2)
+	cup.Color = Color3.fromRGB(60, 45, 40)
+	cup.Material = Enum.Material.SmoothPlastic
+	cup.CanCollide = false
+	cup.Massless = true
+	cup.Parent = tool
+
+	local weld = Instance.new("WeldConstraint")
+	weld.Part0 = handle
+	weld.Part1 = cup
+	weld.Parent = cup
+	cup.CFrame = handle.CFrame * CFrame.new(0, -2, 0) * CFrame.Angles(0, 0, math.rad(90))
+
+	tool.Parent = character
+	plungerTools[player] = tool
+	print(("[Events] %s took a plunger"):format(player.Name))
+	return true
 end
 
 local function setupPlungerMount()
@@ -235,73 +289,20 @@ local function setupPlungerMount()
 	mountPrompt.Parent = mount
 
 	mountPrompt.Triggered:Connect(function(player)
-		local character = player.Character
-		if not character then return end
-
-		if plungerTool then
-			mountPrompt.ObjectText = "Plunger taken!"
-			task.delay(1.5, function()
-				if mountPrompt and not plungerTool then
-					mountPrompt.ObjectText = "Plunger"
-				end
-			end)
-			return
-		end
-
-		local tool = Instance.new("Tool")
-		tool.Name = "Plunger"
-		tool.RequiresHandle = true
-		tool.CanBeDropped = false
-		tool:SetAttribute("Plunger", true)
-
-		local handle = Instance.new("Part")
-		handle.Name = "Handle"
-		handle.Size = Vector3.new(0.6, 4, 0.6)
-		handle.Color = Color3.fromRGB(150, 60, 60)
-		handle.Material = Enum.Material.SmoothPlastic
-		handle.Parent = tool
-
-		local cup = Instance.new("Part")
-		cup.Name = "Cup"
-		cup.Shape = Enum.PartType.Cylinder
-		cup.Size = Vector3.new(1.2, 2, 2)
-		cup.Color = Color3.fromRGB(60, 45, 40)
-		cup.Material = Enum.Material.SmoothPlastic
-		cup.CanCollide = false
-		cup.Massless = true
-		cup.Parent = tool
-
-		local weld = Instance.new("WeldConstraint")
-		weld.Part0 = handle
-		weld.Part1 = cup
-		weld.Parent = cup
-		cup.CFrame = handle.CFrame * CFrame.new(0, -2, 0) * CFrame.Angles(0, 0, math.rad(90))
-
-		tool.Parent = character
-		plungerTool = tool
-		plungerHolder = player
-
-		mountPrompt.ObjectText = "Plunger taken!"
-		print(("[Events] %s took the plunger"):format(player.Name))
+		givePlungerTo(player)
 	end)
 
 	print(("[Events] plunger mount ready at %s"):format(mount:GetFullName()))
 end
 
---// The plunger must never be lost with its carrier
+--// A plunger must never be lost floating with a gone carrier
 Players.PlayerRemoving:Connect(function(player)
-	if plungerHolder == player then
-		returnPlunger()
-		print("[Events] carrier left - plunger returned to the mount")
-	end
+	returnPlungerFor(player)
 end)
 
 Players.PlayerAdded:Connect(function(player)
 	player.CharacterRemoving:Connect(function()
-		if plungerHolder == player then
-			returnPlunger()
-			print("[Events] carrier died - plunger returned to the mount")
-		end
+		returnPlungerFor(player)
 	end)
 end)
 
@@ -311,17 +312,23 @@ end)
 -- and returns when the spill ends or its carrier goes.
 ----------------------------------------------------------------
 local spillIsActive --// forward: the spill state lives further down
-local broomHolder = nil
-local broomTool = nil
+local broomTools = {} --// player -> their broom Tool
 local broomMountPrompt = nil
 
-local function returnBroom()
-	if broomTool then
-		broomTool:Destroy()
-		broomTool = nil
+local function returnBroomFor(player)
+	local tool = broomTools[player]
+	if tool then
+		tool:Destroy()
+		broomTools[player] = nil
 	end
-	broomHolder = nil
+end
 
+--// Spill over: every outstanding broom vanishes at once
+local function returnBroom()
+	for player, tool in pairs(broomTools) do
+		tool:Destroy()
+		broomTools[player] = nil
+	end
 	if broomMountPrompt then
 		broomMountPrompt.ActionText = "Take"
 		broomMountPrompt.ObjectText = "Broom"
@@ -337,6 +344,50 @@ local function holdingBroom(player)
 		end
 	end
 	return false
+end
+
+--// Hand a player their own broom (shared by the mount and the TOOLBELT
+--// skill). Caller checks spillIsActive; already holding = nothing to do.
+local function giveBroomTo(player)
+	local character = player.Character
+	if not character then return false end
+	if broomTools[player] and broomTools[player].Parent then
+		return true
+	end
+	returnBroomFor(player)
+
+	local tool = Instance.new("Tool")
+	tool.Name = "Broom"
+	tool.RequiresHandle = true
+	tool.CanBeDropped = false
+	tool:SetAttribute("Broom", true)
+
+	local handle = Instance.new("Part")
+	handle.Name = "Handle"
+	handle.Size = Vector3.new(0.5, 5, 0.5)
+	handle.Color = Color3.fromRGB(170, 120, 70)
+	handle.Material = Enum.Material.Wood
+	handle.Parent = tool
+
+	local brush = Instance.new("Part")
+	brush.Name = "Brush"
+	brush.Size = Vector3.new(2.2, 1, 0.7)
+	brush.Color = Color3.fromRGB(220, 190, 120)
+	brush.Material = Enum.Material.Fabric
+	brush.CanCollide = false
+	brush.Massless = true
+	brush.Parent = tool
+
+	local weld = Instance.new("WeldConstraint")
+	weld.Part0 = handle
+	weld.Part1 = brush
+	weld.Parent = brush
+	brush.CFrame = handle.CFrame * CFrame.new(0, -2.8, 0)
+
+	tool.Parent = character
+	broomTools[player] = tool
+	print(("[Events] %s took a broom"):format(player.Name))
+	return true
 end
 
 local function setupBroomMount()
@@ -356,12 +407,7 @@ local function setupBroomMount()
 	broomMountPrompt.Parent = mount
 
 	broomMountPrompt.Triggered:Connect(function(player)
-		local character = player.Character
-		if not character then return end
-
-		--// The broom only leaves the wall while there is a spill to
-		--// sweep - and it returns there the moment the spill ends, so
-		--// nobody tours the restaurant with cleaning equipment
+		--// The broom only leaves the wall while there is a spill to sweep
 		if not spillIsActive() then
 			broomMountPrompt.ObjectText = "No spill right now!"
 			task.delay(1.5, function()
@@ -371,51 +417,7 @@ local function setupBroomMount()
 			end)
 			return
 		end
-
-		if broomTool then
-			broomMountPrompt.ObjectText = "Broom taken!"
-			task.delay(1.5, function()
-				if broomMountPrompt and not broomTool then
-					broomMountPrompt.ObjectText = "Broom"
-				end
-			end)
-			return
-		end
-
-		local tool = Instance.new("Tool")
-		tool.Name = "Broom"
-		tool.RequiresHandle = true
-		tool.CanBeDropped = false
-		tool:SetAttribute("Broom", true)
-
-		local handle = Instance.new("Part")
-		handle.Name = "Handle"
-		handle.Size = Vector3.new(0.5, 5, 0.5)
-		handle.Color = Color3.fromRGB(170, 120, 70)
-		handle.Material = Enum.Material.Wood
-		handle.Parent = tool
-
-		local brush = Instance.new("Part")
-		brush.Name = "Brush"
-		brush.Size = Vector3.new(2.2, 1, 0.7)
-		brush.Color = Color3.fromRGB(220, 190, 120)
-		brush.Material = Enum.Material.Fabric
-		brush.CanCollide = false
-		brush.Massless = true
-		brush.Parent = tool
-
-		local weld = Instance.new("WeldConstraint")
-		weld.Part0 = handle
-		weld.Part1 = brush
-		weld.Parent = brush
-		brush.CFrame = handle.CFrame * CFrame.new(0, -2.8, 0)
-
-		tool.Parent = character
-		broomTool = tool
-		broomHolder = player
-
-		broomMountPrompt.ObjectText = "Broom taken!"
-		print(("[Events] %s took the broom"):format(player.Name))
+		giveBroomTo(player)
 	end)
 
 	print(("[Events] broom mount ready at %s"):format(mount:GetFullName()))
@@ -423,18 +425,12 @@ local function setupBroomMount()
 end
 
 Players.PlayerRemoving:Connect(function(player)
-	if broomHolder == player then
-		returnBroom()
-		print("[Events] carrier left - broom returned to the mount")
-	end
+	returnBroomFor(player)
 end)
 
 Players.PlayerAdded:Connect(function(player)
 	player.CharacterRemoving:Connect(function()
-		if broomHolder == player then
-			returnBroom()
-			print("[Events] carrier died - broom returned to the mount")
-		end
+		returnBroomFor(player)
 	end)
 end)
 
@@ -1253,6 +1249,53 @@ local function returnExtinguisher()
 	end
 end
 
+--// Hand the (single) extinguisher to a player - shared by the mount and
+--// the TOOLBELT skill. Only one exists; if it is already out, no dice.
+local function giveExtinguisherTo(player)
+	local character = player.Character
+	if not character then return false end
+	if extinguisherTool then return false end --// someone already has it
+
+	local tool = Instance.new("Tool")
+	tool.Name = "Extinguisher"
+	tool.RequiresHandle = true
+	tool.CanBeDropped = false
+	tool:SetAttribute("Extinguisher", true)
+
+	local handle = Instance.new("Part")
+	handle.Name = "Handle"
+	handle.Size = Vector3.new(0.9, 2.2, 0.9)
+	handle.Color = Color3.fromRGB(200, 45, 45)
+	handle.Material = Enum.Material.SmoothPlastic
+	handle.Parent = tool
+
+	local nozzle = Instance.new("Part")
+	nozzle.Name = "Nozzle"
+	nozzle.Size = Vector3.new(0.3, 0.6, 0.3)
+	nozzle.Color = Color3.fromRGB(30, 30, 30)
+	nozzle.Material = Enum.Material.SmoothPlastic
+	nozzle.CanCollide = false
+	nozzle.Massless = true
+	nozzle.Parent = tool
+
+	local weld = Instance.new("WeldConstraint")
+	weld.Part0 = handle
+	weld.Part1 = nozzle
+	weld.Parent = nozzle
+	nozzle.CFrame = handle.CFrame * CFrame.new(0.4, 1.3, 0) * CFrame.Angles(0, 0, math.rad(-35))
+
+	tool.Parent = character
+	extinguisherTool = tool
+	extinguisherHolder = player
+	tool.Activated:Connect(function()
+		if onExtinguisherActivated then
+			onExtinguisherActivated(player)
+		end
+	end)
+	print(("[Events] %s took the extinguisher"):format(player.Name))
+	return true
+end
+
 local function setupExtinguisherMount()
 	local mount = firstTaggedPart("ExtinguisherMount")
 	if not mount then
@@ -1270,9 +1313,6 @@ local function setupExtinguisherMount()
 	extinguisherMountPrompt.Parent = mount
 
 	extinguisherMountPrompt.Triggered:Connect(function(player)
-		local character = player.Character
-		if not character then return end
-
 		if extinguisherTool then
 			extinguisherMountPrompt.ObjectText = "Extinguisher taken!"
 			task.delay(1.5, function()
@@ -1282,49 +1322,7 @@ local function setupExtinguisherMount()
 			end)
 			return
 		end
-
-		local tool = Instance.new("Tool")
-		tool.Name = "Extinguisher"
-		tool.RequiresHandle = true
-		tool.CanBeDropped = false
-		tool:SetAttribute("Extinguisher", true)
-
-		local handle = Instance.new("Part")
-		handle.Name = "Handle"
-		handle.Size = Vector3.new(0.9, 2.2, 0.9)
-		handle.Color = Color3.fromRGB(200, 45, 45)
-		handle.Material = Enum.Material.SmoothPlastic
-		handle.Parent = tool
-
-		local nozzle = Instance.new("Part")
-		nozzle.Name = "Nozzle"
-		nozzle.Size = Vector3.new(0.3, 0.6, 0.3)
-		nozzle.Color = Color3.fromRGB(30, 30, 30)
-		nozzle.Material = Enum.Material.SmoothPlastic
-		nozzle.CanCollide = false
-		nozzle.Massless = true
-		nozzle.Parent = tool
-
-		local weld = Instance.new("WeldConstraint")
-		weld.Part0 = handle
-		weld.Part1 = nozzle
-		weld.Parent = nozzle
-		nozzle.CFrame = handle.CFrame * CFrame.new(0.4, 1.3, 0) * CFrame.Angles(0, 0, math.rad(-35))
-
-		tool.Parent = character
-		extinguisherTool = tool
-		extinguisherHolder = player
-
-		--// Left-click / tap / gamepad trigger = spray. The channel itself
-		--// runs server-side in the heartbeat.
-		tool.Activated:Connect(function()
-			if onExtinguisherActivated then
-				onExtinguisherActivated(player)
-			end
-		end)
-
-		extinguisherMountPrompt.ObjectText = "Extinguisher taken!"
-		print(("[Events] %s took the extinguisher"):format(player.Name))
+		giveExtinguisherTo(player)
 	end)
 
 	print(("[Events] extinguisher mount ready at %s"):format(mount:GetFullName()))
@@ -2221,6 +2219,28 @@ if game:GetService("RunService"):IsStudio() then
 	debugStart.Parent = ServerStorage
 end
 
+--// STUDIO auto-event (Config.StudioForceEventOnStart): fire one event a
+--// few seconds into RUNNING so an emergency test needs no command bar.
+if game:GetService("RunService"):IsStudio()
+	and (Config.StudioForceEventOnStart or "") ~= "" then
+	task.spawn(function()
+		while shiftInfo().State ~= "RUNNING" do
+			task.wait(0.5)
+		end
+		task.wait(Config.StudioForceEventDelaySeconds or 6)
+		local name = Config.StudioForceEventOnStart
+		local definition = EVENTS[name]
+		if definition and not anyEventActive() then
+			print(("[Events] STUDIO: auto-starting %s (StudioForceEventOnStart)")
+				:format(name))
+			definition.Start()
+		else
+			warn(("[Events] STUDIO auto-event '%s' skipped (unknown or one already active)")
+				:format(tostring(name)))
+		end
+	end)
+end
+
 --// TUTORIAL SEAM: the tutor's FIRE DRILL. Same start path as the
 --// debug lever above but it EXISTS on live servers - hard-gated to
 --// tutorial mode, server-only, refuses anything already burning.
@@ -2289,6 +2309,32 @@ do
 			creditStat(player, "EventChannels", 1)
 			stopSpill(player)
 			return true
+		end
+		return false, "No emergency right now!"
+	end
+	bridge.Parent = ServerStorage
+end
+
+--// THE FIXER'S TOOLBELT SKILL: hand the player the tool the CURRENT
+--// emergency needs (plunger / broom / extinguisher). PowerOutage needs no
+--// tool - you fix it at the breaker box. Returns (ok, message).
+do
+	local bridge = Instance.new("BindableFunction")
+	bridge.Name = "GiveEventTool"
+	bridge.OnInvoke = function(player)
+		if not player then return false end
+		local active = EventState:GetAttribute("ActiveEvent") or ""
+		if active == "ToiletEmergency" then
+			return givePlungerTo(player), "plunger"
+		elseif active == "Spill" then
+			return giveBroomTo(player), "broom"
+		elseif active == "GreaseFire" then
+			if giveExtinguisherTo(player) then
+				return true, "extinguisher"
+			end
+			return false, "Someone already has the extinguisher!"
+		elseif active == "PowerOutage" then
+			return false, "No tool needed - fix it at the breaker!"
 		end
 		return false, "No emergency right now!"
 	end

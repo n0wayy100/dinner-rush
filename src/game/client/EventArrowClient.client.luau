@@ -77,7 +77,10 @@ local function buildWidget()
 	pointer.Visible = false
 	pointer.Parent = gui
 
-	return { Badge = badge, Pointer = pointer, Target = nil }
+	--// Att0 (player), Att1 (target) and Beam are built lazily in the guide
+	--// step; kept per widget so an emergency and a dasher never share a line
+	return { Badge = badge, Pointer = pointer, Target = nil,
+		Att0 = nil, Att1 = nil, Beam = nil }
 end
 
 local widgets = { buildWidget(), buildWidget() }
@@ -174,29 +177,32 @@ local function computeTargets()
 
 	--// The tutor's "go here" beats everything (tutorial shifts have no
 	--// events or dashers anyway)
+	--// Beam = false on the tutorial target: TutorialClient draws its OWN
+	--// (mustard) guide line for it, so this one stays edge-badge only to
+	--// avoid two beams on the same spot. Emergencies + dashers get the beam.
 	local tutorPart = tutorialTarget()
 	if tutorPart then
-		table.insert(targets, { Part = tutorPart, Emoji = "👉" })
+		table.insert(targets, { Part = tutorPart, Emoji = "👉", Beam = false })
 	end
 
 	local active = EventState and EventState:GetAttribute("ActiveEvent") or ""
 	if active == "ToiletEmergency" then
 		if holding("Plunger") then
-			table.insert(targets, { Part = tagPart("Toilet"), Emoji = "🚽" })
+			table.insert(targets, { Part = tagPart("Toilet"), Emoji = "🚽", Beam = true })
 		else
-			table.insert(targets, { Part = tagPart("PlungerMount"), Emoji = "🚽" })
+			table.insert(targets, { Part = tagPart("PlungerMount"), Emoji = "🚽", Beam = true })
 		end
 	elseif active == "GreaseFire" then
 		if holding("Extinguisher") then
 			table.insert(targets, {
 				Part = nearestBlaze() or tagPart("ExtinguisherMount"),
-				Emoji = "🔥",
+				Emoji = "🔥", Beam = true,
 			})
 		else
-			table.insert(targets, { Part = tagPart("ExtinguisherMount"), Emoji = "🔥" })
+			table.insert(targets, { Part = tagPart("ExtinguisherMount"), Emoji = "🔥", Beam = true })
 		end
 	elseif active == "PowerOutage" then
-		table.insert(targets, { Part = tagPart("BreakerBox"), Emoji = "⚡" })
+		table.insert(targets, { Part = tagPart("BreakerBox"), Emoji = "⚡", Beam = true })
 	elseif active == "Spill" then
 		if holding("Broom") then
 			--// the puddle is a workspace part named SpillPuddle (the
@@ -208,9 +214,9 @@ local function computeTargets()
 					break
 				end
 			end
-			table.insert(targets, { Part = puddle or tagPart("BroomMount"), Emoji = "🧹" })
+			table.insert(targets, { Part = puddle or tagPart("BroomMount"), Emoji = "🧹", Beam = true })
 		else
-			table.insert(targets, { Part = tagPart("BroomMount"), Emoji = "🧹" })
+			table.insert(targets, { Part = tagPart("BroomMount"), Emoji = "🧹", Beam = true })
 		end
 	end
 
@@ -222,7 +228,7 @@ local function computeTargets()
 				or (pawn:IsA("Model")
 					and (pawn.PrimaryPart or pawn:FindFirstChildWhichIsA("BasePart", true)))
 			if part then
-				table.insert(targets, { Part = part, Emoji = "💨" })
+				table.insert(targets, { Part = part, Emoji = "💨", Beam = true })
 				break --// one dash arrow is plenty
 			end
 		end
@@ -242,6 +248,57 @@ task.spawn(function()
 end)
 
 ----------------------------------------------------------------
+-- The GUIDE LINE: a beam from the player to the target, so you follow a
+-- line instead of hunting (owner ask, Sep 21). Straight, tomato, tapered.
+----------------------------------------------------------------
+local BEAM_ON = ARROW.BeamEnabled ~= false
+local BEAM_COLOR = ColorSequence.new(ARROW.BeamColor or TOMATO)
+
+local function clearBeam(widget)
+	if widget.Beam then widget.Beam:Destroy() widget.Beam = nil end
+	if widget.Att0 then widget.Att0:Destroy() widget.Att0 = nil end
+	if widget.Att1 then widget.Att1:Destroy() widget.Att1 = nil end
+end
+
+local function updateBeam(widget, part)
+	if not BEAM_ON then return end
+	local character = player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	if not root then
+		clearBeam(widget)
+		return
+	end
+
+	--// rebuild whichever end moved to a new instance (respawn / new target)
+	if not widget.Att0 or widget.Att0.Parent ~= root then
+		if widget.Att0 then widget.Att0:Destroy() end
+		widget.Att0 = Instance.new("Attachment")
+		widget.Att0.Name = "EventGuide0"
+		widget.Att0.Parent = root
+	end
+	if not widget.Att1 or widget.Att1.Parent ~= part then
+		if widget.Att1 then widget.Att1:Destroy() end
+		widget.Att1 = Instance.new("Attachment")
+		widget.Att1.Name = "EventGuide1"
+		widget.Att1.Parent = part
+	end
+	if not widget.Beam or not widget.Beam.Parent then
+		local beam = Instance.new("Beam")
+		beam.Name = "EventGuideBeam"
+		beam.Color = BEAM_COLOR
+		beam.FaceCamera = true
+		beam.Width0 = ARROW.BeamWidthStuds or 0.6
+		beam.Width1 = (ARROW.BeamWidthStuds or 0.6) * 0.4
+		beam.Transparency = NumberSequence.new(ARROW.BeamTransparency or 0.25)
+		beam.Parent = root
+		widget.Beam = beam
+	end
+	widget.Beam.Attachment0 = widget.Att0
+	widget.Beam.Attachment1 = widget.Att1
+	widget.Beam.Enabled = true
+end
+
+----------------------------------------------------------------
 -- Projection: clamp to the screen edge, point outward
 ----------------------------------------------------------------
 local function updateWidget(widget)
@@ -250,7 +307,16 @@ local function updateWidget(widget)
 	if not part or not part.Parent then
 		widget.Badge.Visible = false
 		widget.Pointer.Visible = false
+		clearBeam(widget)
 		return
+	end
+
+	--// the line leads you the whole time the target exists (not the
+	--// tutorial target - TutorialClient owns that beam)
+	if target.Beam then
+		updateBeam(widget, part)
+	else
+		clearBeam(widget)
 	end
 
 	local camera = workspace.CurrentCamera

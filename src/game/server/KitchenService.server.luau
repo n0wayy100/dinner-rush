@@ -375,6 +375,95 @@ end
 ----------------------------------------------------------------
 -- Ingredient sources: Fridge (cold) and DryShelf (dry)
 ----------------------------------------------------------------
+
+--// Every set-up source, so the icons can be redrawn when the map's menu
+--// becomes known (setup can run before MatchMapId is set, which would
+--// otherwise freeze the Diner FALLBACK menu onto a Yamasaki fridge).
+local sourceParts = {}
+
+--// A floating row of the ingredient icons a source holds (Sep 20 2026,
+--// playtest ask). What is INSIDE, not how many - counts stay in the menu.
+local function buildSourceIcons(part, sourceTag, offered)
+	local ICONS = Config.SourceIcons
+	if not (ICONS and ICONS.Enabled) then return end
+
+	local existing = part:FindFirstChild("SourceIcons")
+	if existing then existing:Destroy() end
+
+	local iconStuds = ICONS.IconStuds or 1.2
+	local count = #offered
+	if count == 0 then return end
+
+	local billboard = Instance.new("BillboardGui")
+	billboard.Name = "SourceIcons"
+	billboard.Adornee = part
+	--// float above the part, world-up, whatever its rotation
+	billboard.StudsOffsetWorldSpace =
+		Vector3.new(0, part.Size.Y / 2 + (ICONS.HoverStuds or 3), 0)
+	billboard.Size = UDim2.new(iconStuds * count, 0,
+		iconStuds * (ICONS.ShowLabel and 1.5 or 1), 0)
+	billboard.MaxDistance = ICONS.MaxDistanceStuds or 45
+	billboard.LightInfluence = 0
+	billboard.AlwaysOnTop = false
+	billboard.Active = false
+	billboard.Parent = part
+
+	local row = Instance.new("Frame")
+	row.BackgroundTransparency = 1
+	row.Size = UDim2.fromScale(1, ICONS.ShowLabel and 0.66 or 1)
+	row.Parent = billboard
+	local layout = Instance.new("UIListLayout")
+	layout.FillDirection = Enum.FillDirection.Horizontal
+	layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	layout.VerticalAlignment = Enum.VerticalAlignment.Center
+	layout.Padding = UDim.new(0.04, 0)
+	layout.Parent = row
+
+	for i, name in ipairs(offered) do
+		local data = Config.Ingredients[name]
+		local icon = data and data.Icon
+		local hasIcon = icon and icon ~= "" and not tostring(icon):match("//0$")
+		if hasIcon then
+			local img = Instance.new("ImageLabel")
+			img.BackgroundTransparency = 1
+			img.Size = UDim2.fromScale(1 / count, 1)
+			img.ScaleType = Enum.ScaleType.Fit
+			img.Image = icon
+			img.LayoutOrder = i
+			img.Parent = row
+		else
+			--// no art yet: a chunky name chip so it still reads
+			local chip = Instance.new("TextLabel")
+			chip.BackgroundColor3 = Color3.fromRGB(255, 246, 233)
+			chip.Size = UDim2.fromScale(1 / count, 0.8)
+			chip.Font = Enum.Font.FredokaOne
+			chip.TextScaled = true
+			chip.TextColor3 = Color3.fromRGB(59, 43, 32)
+			chip.Text = (data and data.Display or name):sub(1, 6)
+			chip.LayoutOrder = i
+			chip.Parent = row
+			local corner = Instance.new("UICorner")
+			corner.CornerRadius = UDim.new(0.2, 0)
+			corner.Parent = chip
+		end
+	end
+
+	if ICONS.ShowLabel then
+		local label = Instance.new("TextLabel")
+		label.AnchorPoint = Vector2.new(0.5, 1)
+		label.Position = UDim2.fromScale(0.5, 1)
+		label.Size = UDim2.fromScale(1, 0.3)
+		label.BackgroundTransparency = 1
+		label.Font = Enum.Font.FredokaOne
+		label.TextScaled = true
+		label.TextColor3 = Color3.fromRGB(255, 255, 255)
+		label.TextStrokeColor3 = Color3.fromRGB(59, 43, 32)
+		label.TextStrokeTransparency = 0
+		label.Text = sourceTag == "DryShelf" and "DRY SHELF" or "FRIDGE"
+		label.Parent = billboard
+	end
+end
+
 local function setupSource(instance, sourceTag)
 	local part = resolvePart(instance)
 	if not part then
@@ -412,8 +501,24 @@ local function setupSource(instance, sourceTag)
 		kitchenRemote:FireClient(player, "OpenSourceMenu", sourceTag, menuPayload(sourceTag))
 	end)
 
+	--// float the icons of what is inside above the source (redrawn if the
+	--// map's menu becomes known after this runs - see the listener below)
+	sourceParts[part] = sourceTag
+	buildSourceIcons(part, sourceTag, offered)
+
 	print(("[Kitchen] %s offers %s"):format(part:GetFullName(), table.concat(offered, ", ")))
 end
+
+--// The active map decides which ingredients a source holds, so a late
+--// MatchMapId (map cloned in after setup) redraws every source's icons
+--// with the right menu instead of the fallback.
+workspace:GetAttributeChangedSignal("MatchMapId"):Connect(function()
+	for part, sourceTag in pairs(sourceParts) do
+		if part.Parent then
+			buildSourceIcons(part, sourceTag, ingredientsFor(sourceTag))
+		end
+	end
+end)
 
 ----------------------------------------------------------------
 -- Menu picks come back here. The client chose; the server decides.
@@ -747,49 +852,64 @@ local PICK = Config.CookMinigamePick
 --// memory: each same-game pick in a row moves a slice of that game's
 --// odds to the others (split evenly, capped at MaxBias); the moment
 --// the streak breaks, the new game starts at the single-pick baseline.
-local GAME_ARROW, GAME_MATH, GAME_CARDS = 1, 2, 3
-local GAME_COUNT = 3
+local GAME_ARROW, GAME_MATH, GAME_CARDS, GAME_RHYTHM, GAME_WHACK = 1, 2, 3, 4, 5
+local GAME_MAX = 5 --// highest defined id (force-knob bounds)
 
-local pickStreaks = {} --// [userId] = { Game = 1..GAME_COUNT, Count = n in a row }
+--// THE LIVE POOL: which game ids the roll actually draws from. Recipe
+--// math (2) was retired from live play (Sep 21) but its code stays for
+--// the tutorial, so it is simply absent from this list.
+local POOL = PICK.Pool or { GAME_ARROW, GAME_CARDS, GAME_RHYTHM, GAME_WHACK }
+local POOL_N = #POOL
+
+local pickStreaks = {} --// [userId] = { Game = <id>, Count = n in a row }
 
 local function rollCookGame(player)
 	--// TUTORIAL SEAM: the tutor pins each teaching cook to one game
 	--// (server-set workspace attribute; clients cannot write it)
 	local tutorialForced = workspace:GetAttribute("TutorialForceGame")
 	if typeof(tutorialForced) == "number"
-		and tutorialForced >= 1 and tutorialForced <= GAME_COUNT then
+		and tutorialForced >= 1 and tutorialForced <= GAME_MAX then
 		return tutorialForced
 	end
 
 	--// STUDIO KNOB (live-ignored): pin the roll while testing one game
 	if RunService:IsStudio() then
 		local forced = PICK.StudioForceGame or 0
-		if forced >= 1 and forced <= GAME_COUNT then
+		if forced >= 1 and forced <= GAME_MAX then
 			return forced
 		end
 	end
 
+	--// Weighted over the POOL (by pool index), streak-biased away from
+	--// the last game so the same one rarely repeats
 	local streak = pickStreaks[player.UserId]
-	local weights = table.create(GAME_COUNT, 1 / GAME_COUNT)
+	local weights = table.create(POOL_N, 1 / POOL_N)
+	local streakIndex = nil
 	if streak then
+		for i, id in ipairs(POOL) do
+			if id == streak.Game then streakIndex = i break end
+		end
+	end
+	if streakIndex then
 		local bias = math.min(streak.Count * PICK.StreakBiasPerRepeat, PICK.MaxBias)
-		bias = math.min(bias, weights[streak.Game]) --// never below zero
-		weights[streak.Game] -= bias
-		for game = 1, GAME_COUNT do
-			if game ~= streak.Game then
-				weights[game] += bias / (GAME_COUNT - 1)
+		bias = math.min(bias, weights[streakIndex])
+		weights[streakIndex] -= bias
+		for i = 1, POOL_N do
+			if i ~= streakIndex then
+				weights[i] += bias / (POOL_N - 1)
 			end
 		end
 	end
 
-	local roll, acc, pick = math.random(), 0, GAME_COUNT
-	for game = 1, GAME_COUNT do
-		acc += weights[game]
+	local roll, acc, pickIndex = math.random(), 0, POOL_N
+	for i = 1, POOL_N do
+		acc += weights[i]
 		if roll <= acc then
-			pick = game
+			pickIndex = i
 			break
 		end
 	end
+	local pick = POOL[pickIndex]
 
 	if streak and streak.Game == pick then
 		streak.Count += 1
@@ -1285,6 +1405,341 @@ cardRemote.OnServerEvent:Connect(function(player, action, token, index)
 	end
 end)
 
+----------------------------------------------------------------
+-- RHYTHM TAP + WHACK (Sep 21 2026, replacing recipe math). Both mirror
+-- the card match: server deals, client renders, server judges tiers into
+-- station.ForcedQuality, aging pauses then resumes, a won game auto-
+-- grants. Both are latency-safe: the server owns every target's time and
+-- judges a tap against that window, widened by GraceSeconds.
+----------------------------------------------------------------
+
+--// Shared finish plumbing (same as the card match's, factored out so the
+--// two new games do not each re-derive it)
+local function applyCookResult(station, quality)
+	if quality == "Ruined" then
+		station.ForcedQuality = nil
+		if station.State ~= "IDLE" then
+			station.State = "BURNT"
+			refreshStationFood(station)
+			refreshStationUi(station)
+			refreshStationPrompt(station)
+		end
+	else
+		station.ForcedQuality = quality
+		--// grill/fry resume aging from here; ramen keeps infinite windows
+		if station.Method ~= "Ramen" then
+			local recipe = Config.Recipes[station.Dish]
+			local timing = recipe and Config.Cooking[recipe.Timing]
+			if timing then
+				station.PerfectUntil = station.Elapsed + timing.PerfectWindow
+				station.OvercookedUntil = station.PerfectUntil + timing.OvercookAfter
+				station.BurntAt = station.OvercookedUntil + timing.BurntAfter
+			end
+		end
+	end
+end
+
+local function scheduleMinigameGrant(station, player, quality, sessionsTable)
+	if quality ~= "Ruined" and player.Parent then
+		task.delay(1.2, function()
+			if station.ForcedQuality and not sessionsTable[station]
+				and station.State == "PERFECT" and player.Parent then
+				grantFromMinigame(station, player, station.ForcedQuality)
+			end
+		end)
+	end
+end
+
+local function pauseAging(station)
+	station.PerfectUntil = math.huge
+	station.OvercookedUntil = math.huge
+	station.BurntAt = math.huge
+end
+
+--------------------------------------------------------------------
+-- RHYTHM TAP (game 4)
+--------------------------------------------------------------------
+local RHY = Config.RhythmTap
+local rhythmRemote = remotes:FindFirstChild("RhythmTapRemote")
+if not rhythmRemote then
+	rhythmRemote = Instance.new("RemoteEvent")
+	rhythmRemote.Name = "RhythmTapRemote"
+	rhythmRemote.Parent = remotes
+end
+local rhythmSessions = {} --// [station] = session
+local rhythmToken = 0
+
+local function rhythmQualityFor(hits)
+	if hits >= RHY.PerfectHits then return "Perfect"
+	elseif hits >= RHY.GoodHits then return "Good"
+	elseif hits >= RHY.OvercookedHits then return "Overcooked" end
+	return "Ruined"
+end
+
+local function closeRhythmSession(station, tellClient)
+	local session = rhythmSessions[station]
+	if not session then return end
+	rhythmSessions[station] = nil
+	if tellClient and session.Player and session.Player.Parent then
+		rhythmRemote:FireClient(session.Player, "Close", session.Token)
+	end
+end
+
+--// A varied pattern: tap notes with a wobbly gap so it reads as rhythm,
+--// plus hold notes (press on the head, release on the tail). At least one
+--// hold per round.
+local function buildRhythmNotes()
+	local notes = {}
+	local t = RHY.FirstNoteSeconds
+	local haveHold = false
+	for i = 1, RHY.Notes do
+		local isHold = math.random() < (RHY.HoldChance or 0.4)
+		if i == RHY.Notes and not haveHold then
+			isHold = true --// guarantee at least one hold
+		end
+		if isHold then
+			notes[i] = { Type = "hold", Head = t, Tail = t + RHY.HoldSeconds }
+			haveHold = true
+			t += RHY.HoldSeconds + RHY.NoteSpacingSeconds
+		else
+			notes[i] = { Type = "tap", Head = t, Tail = t }
+			local wobble = (math.random() * 2 - 1) * (RHY.SpacingVariation or 0)
+			t += RHY.NoteSpacingSeconds + wobble
+		end
+	end
+	return notes
+end
+
+local function beginRhythmSession(station, player)
+	pauseAging(station)
+	rhythmToken += 1
+
+	local notes = buildRhythmNotes()
+	local last = notes[#notes]
+	local total = last.Tail + RHY.HitWindowSeconds + RHY.GraceSeconds + 0.4
+
+	local session = {
+		Player = player, Token = rhythmToken, Start = os.clock(),
+		Notes = notes, Hit = {}, HoldOpen = {}, HitCount = 0,
+	}
+	rhythmSessions[station] = session
+
+	rhythmRemote:FireClient(player, "Open", {
+		Token = session.Token,
+		Notes = notes, --// each { Type, Head, Tail }
+		TravelSeconds = RHY.NoteTravelSeconds,
+		HitWindowSeconds = RHY.HitWindowSeconds,
+		TotalSeconds = total,
+	})
+
+	local function finish()
+		if rhythmSessions[station] ~= session then return end
+		rhythmSessions[station] = nil
+		local quality = rhythmQualityFor(session.HitCount)
+		applyCookResult(station, quality)
+		if player.Parent then
+			rhythmRemote:FireClient(player, "End", session.Token, session.HitCount, quality)
+		end
+		print(("[Kitchen] RHYTHM: %s hit %d/%d - %s %s"):format(
+			player.Name, session.HitCount, RHY.Notes, quality, tostring(station.Dish)))
+		scheduleMinigameGrant(station, player, quality, rhythmSessions)
+	end
+	session.Finish = finish
+	task.delay(total, finish)
+end
+
+--// The window a press/release is judged against a scheduled time
+local function rhythmHitOk(session, scheduledTime)
+	local elapsed = os.clock() - session.Start
+	return math.abs(elapsed - scheduledTime) <= (RHY.HitWindowSeconds + RHY.GraceSeconds)
+end
+
+local function rhythmScore(session, station, player, index)
+	session.Hit[index] = true
+	session.HitCount += 1
+	rhythmRemote:FireClient(player, "HitOk", session.Token, index)
+	if session.HitCount >= RHY.PerfectHits then
+		session.Finish() --// all notes cleared: Perfect on the spot
+	end
+end
+
+rhythmRemote.OnServerEvent:Connect(function(player, action, token, index)
+	local station, session
+	for s, sess in pairs(rhythmSessions) do
+		if sess.Token == token and sess.Player == player then
+			station, session = s, sess
+			break
+		end
+	end
+	if not session then return end
+	index = tonumber(index)
+	local note = index and session.Notes[index]
+	if not note or session.Hit[index] then return end
+
+	if action == "Hit" and note.Type == "tap" then
+		if rhythmHitOk(session, note.Head) then
+			rhythmScore(session, station, player, index)
+		end
+	elseif action == "HoldStart" and note.Type == "hold" then
+		--// press accepted near the head: the hold is now "open"
+		if rhythmHitOk(session, note.Head) then
+			session.HoldOpen[index] = true
+			rhythmRemote:FireClient(player, "HoldOk", token, index)
+		end
+	elseif action == "HoldEnd" and note.Type == "hold" then
+		--// release accepted near the tail, and the press had been accepted
+		if session.HoldOpen[index] and rhythmHitOk(session, note.Tail) then
+			rhythmScore(session, station, player, index)
+		end
+	end
+end)
+
+--------------------------------------------------------------------
+-- WHACK (game 5)
+--------------------------------------------------------------------
+local WHK = Config.Whack
+local whackRemote = remotes:FindFirstChild("WhackRemote")
+if not whackRemote then
+	whackRemote = Instance.new("RemoteEvent")
+	whackRemote.Name = "WhackRemote"
+	whackRemote.Parent = remotes
+end
+local whackSessions = {} --// [station] = session
+local whackToken = 0
+
+local function whackQualityFor(hits)
+	if hits >= WHK.PerfectHits then return "Perfect"
+	elseif hits >= WHK.GoodHits then return "Good"
+	elseif hits >= WHK.OvercookedHits then return "Overcooked" end
+	return "Ruined"
+end
+
+local function closeWhackSession(station, tellClient)
+	local session = whackSessions[station]
+	if not session then return end
+	whackSessions[station] = nil
+	if tellClient and session.Player and session.Player.Parent then
+		whackRemote:FireClient(session.Player, "Close", session.Token)
+	end
+end
+
+local function beginWhackSession(station, player)
+	pauseAging(station)
+	whackToken += 1
+
+	--// THE ONE TO GRAB is the dish's own raw ingredient; everything else
+	--// on the pool is a decoy you must NOT hit.
+	local recipe = Config.Recipes[station.Dish]
+	local ing = recipe and Config.Ingredients[recipe.Ingredient]
+	local pool = cardIconPool()
+	local targetIcon = (ing and ing.Icon ~= "" and ing.Icon) or pool[1] or ""
+
+	local decoys = {}
+	for _, icon in ipairs(pool) do
+		if icon ~= "" and icon ~= targetIcon then
+			table.insert(decoys, icon)
+		end
+	end
+
+	local targets = {}
+	local goodCount = 0
+	for i = 1, WHK.Targets do
+		local isTarget = math.random() >= (WHK.DecoyChance or 0.35) or #decoys == 0
+		targets[i] = {
+			At = (i - 1) * WHK.SpawnEverySeconds,
+			Up = WHK.TargetUpSeconds,
+			Slot = math.random(1, WHK.Slots),
+			IsTarget = isTarget,
+			Icon = isTarget and targetIcon or decoys[math.random(1, #decoys)],
+		}
+		if isTarget then goodCount += 1 end
+	end
+	--// guarantee Perfect is reachable: promote decoys to the target until
+	--// at least PerfectHits good ones exist
+	local j = 1
+	while goodCount < (WHK.PerfectHits or 8) and j <= WHK.Targets do
+		if not targets[j].IsTarget then
+			targets[j].IsTarget = true
+			targets[j].Icon = targetIcon
+			goodCount += 1
+		end
+		j += 1
+	end
+
+	local total = (WHK.Targets - 1) * WHK.SpawnEverySeconds
+		+ WHK.TargetUpSeconds + WHK.GraceSeconds + 0.4
+
+	local session = {
+		Player = player, Token = whackToken, Start = os.clock(),
+		Targets = targets, Hit = {}, HitCount = 0,
+	}
+	whackSessions[station] = session
+
+	--// client gets icons + the target icon for its banner; it never needs
+	--// the IsTarget flags (the icon IS the signal, and the server judges)
+	local clientTargets = {}
+	for i, t in ipairs(targets) do
+		clientTargets[i] = { At = t.At, Up = t.Up, Slot = t.Slot, Icon = t.Icon }
+	end
+
+	whackRemote:FireClient(player, "Open", {
+		Token = session.Token,
+		Targets = clientTargets,
+		TargetIcon = targetIcon,
+		TotalSeconds = total,
+	})
+
+	local function finish()
+		if whackSessions[station] ~= session then return end
+		whackSessions[station] = nil
+		local quality = whackQualityFor(session.HitCount)
+		applyCookResult(station, quality)
+		if player.Parent then
+			whackRemote:FireClient(player, "End", session.Token, session.HitCount, quality)
+		end
+		print(("[Kitchen] WHACK: %s hit %d/%d - %s %s"):format(
+			player.Name, session.HitCount, WHK.Targets, quality, tostring(station.Dish)))
+		scheduleMinigameGrant(station, player, quality, whackSessions)
+	end
+	session.Finish = finish
+	task.delay(total, finish)
+end
+
+whackRemote.OnServerEvent:Connect(function(player, action, token, index)
+	if action ~= "Hit" then return end
+	local station, session
+	for s, sess in pairs(whackSessions) do
+		if sess.Token == token and sess.Player == player then
+			station, session = s, sess
+			break
+		end
+	end
+	if not session then return end
+	index = tonumber(index)
+	local target = index and session.Targets[index]
+	if not target or session.Hit[index] then return end
+
+	--// valid only while the pop-up is actually up (+ grace for lag)
+	local elapsed = os.clock() - session.Start
+	if elapsed < target.At - WHK.GraceSeconds
+		or elapsed > target.At + target.Up + WHK.GraceSeconds then
+		return
+	end
+	session.Hit[index] = true --// one tap per pop-up, right or wrong
+
+	if target.IsTarget then
+		session.HitCount += 1
+		whackRemote:FireClient(player, "HitOk", token, index)
+		if session.HitCount >= WHK.PerfectHits then
+			session.Finish() --// enough correct: Perfect on the spot
+		end
+	else
+		--// hit the wrong ingredient: a mistake
+		session.HitCount = math.max(0, session.HitCount - (WHK.WrongHitPenalty or 0))
+		whackRemote:FireClient(player, "Wrong", token, index)
+	end
+end)
+
 local function clearStation(station)
 	--// Every route out of cooking lands here - collected, binned, burnt,
 	--// wiped by a grease fire - so one stop covers all of them.
@@ -1292,6 +1747,8 @@ local function clearStation(station)
 	clearStationFood(station)
 	closeMathSession(station, true) --// a wiped pan ends its quiz
 	closeCardSession(station, true) --// ...and its card game
+	closeRhythmSession(station, true)
+	closeWhackSession(station, true)
 	station.ForcedQuality = nil
 	station.CookGame = nil
 
@@ -1354,6 +1811,21 @@ local function startCook(station, player, tool, dishName, recipe)
 	print(("[Kitchen] %s started %s on the %s"):format(player.Name, dishName, station.Method))
 end
 
+--// THE CHEF'S DOUBLE BATCH SKILL: if the flag is armed, this cook plates a
+--// SECOND identical dish (space permitting). One-shot - the flag clears on
+--// the next cook whether or not the extra fit.
+local function applyDoubleBatch(player, character, recipe, dishName, quality)
+	if not player:GetAttribute("ChefDoubleBatch") then return end
+	player:SetAttribute("ChefDoubleBatch", nil)
+	if isFull(player) then return end
+	local extra = makeTool(recipe.Display, recipe.Icon, recipe.Color, {
+		Dish = dishName,
+		Quality = quality,
+	})
+	extra.Parent = character
+	print(("[Kitchen] DOUBLE BATCH: %s plated a second %s"):format(player.Name, dishName))
+end
+
 local function collect(station, player)
 	local character = player.Character
 	if not character then return end
@@ -1384,6 +1856,7 @@ local function collect(station, player)
 		Quality = quality,
 	})
 	tool.Parent = character
+	applyDoubleBatch(player, character, recipe, dishName, quality)
 
 	--// The perfect COLLECT is the skill moment - career and ultimate charge
 	--// credit here, at the pan, not later at the table (owner call)
@@ -1481,6 +1954,7 @@ function grantFromMinigame(station, player, quality)
 		Quality = quality,
 	})
 	tool.Parent = character
+	applyDoubleBatch(player, character, recipe, dishName, quality)
 
 	if quality == "Perfect" then
 		creditStat(player, "PerfectCooks", 1) --// the Chef's moment, as ever
@@ -1505,6 +1979,10 @@ local function beginCookSession(station, player)
 		gameSessions, beginGame = mathSessions, beginMathSession
 	elseif station.CookGame == GAME_CARDS then
 		gameSessions, beginGame = cardSessions, beginCardSession
+	elseif station.CookGame == GAME_RHYTHM then
+		gameSessions, beginGame = rhythmSessions, beginRhythmSession
+	elseif station.CookGame == GAME_WHACK then
+		gameSessions, beginGame = whackSessions, beginWhackSession
 	end
 	if gameSessions then
 		if gameSessions[station] then
