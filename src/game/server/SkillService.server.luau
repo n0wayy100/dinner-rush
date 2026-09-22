@@ -28,6 +28,7 @@ local PathfindingService = game:GetService("PathfindingService")
 local Debris = game:GetService("Debris")
 
 local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
+local DishModels = require(ServerStorage:WaitForChild("Shared"):WaitForChild("DishModels"))
 local SKILLS = Config.Skills
 if not (SKILLS and SKILLS.Enabled) then
 	return
@@ -192,22 +193,9 @@ local function stationFor(method)
 	return nil
 end
 
---// The anchor for a table by its TableId (independent of any snapshot)
-local function tableAnchorFor(tableId)
-	for _, inst in ipairs(CollectionService:GetTagged("Table")) do
-		if inst:GetAttribute("TableId") == tableId then
-			if inst:IsA("BasePart") then return inst end
-			if inst:IsA("Model") then
-				return inst.PrimaryPart or inst:FindFirstChildWhichIsA("BasePart", true)
-			end
-		end
-	end
-	return nil
-end
-
 --// Build the rig: owner's cook or the customer rig, grounded, anchored
 --// root (the Helper proves an anchored-root clone walks + renders fine).
-local function spawnCook(spawnPos, walkSpeed)
+local function spawnCook(spawnPos, walkSpeed, ignore)
 	local template = ServerStorage:FindFirstChild("SousChefRig")
 		or ServerStorage:FindFirstChild("CustomerRig")
 	if not template then
@@ -223,7 +211,18 @@ local function spawnCook(spawnPos, walkSpeed)
 		return nil
 	end
 	humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
-	root.Anchored = true
+	humanoid.WalkSpeed = walkSpeed
+
+	--// A REAL physics character (owner call - stop it phasing through counters):
+	--// nothing anchored, so the Humanoid walks with its own collision and CANNOT
+	--// pass through solid, anchored kitchen parts. We steer it with Humanoid:MoveTo
+	--// and it grounds itself. Leave the rig's own CanCollide setup alone.
+	for _, part in ipairs(rig:GetDescendants()) do
+		if part:IsA("BasePart") then
+			part.Anchored = false
+		end
+	end
+	rig.PrimaryPart = root
 
 	--// SOUS CHEF nametag, studs-sized like every other overhead
 	local head = rig:FindFirstChild("Head")
@@ -264,41 +263,34 @@ local function spawnCook(spawnPos, walkSpeed)
 		end
 	end
 
-	local rootLift = (humanoid.HipHeight > 0 and humanoid.HipHeight or 2) + root.Size.Y / 2
-	local ray = workspace:Raycast(spawnPos + Vector3.new(0, 20, 0), Vector3.new(0, -80, 0))
-	local groundY = ray and ray.Position.Y or spawnPos.Y
-	root.CFrame = CFrame.new(Vector3.new(spawnPos.X, groundY + rootLift, spawnPos.Z))
+	--// Drop it at the spawn, a touch above the floor, and let physics settle
+	--// it to standing height (the Humanoid keeps its own hip height).
+	local rayParams = RaycastParams.new()
+	rayParams.FilterType = Enum.RaycastFilterType.Exclude
+	rayParams.FilterDescendantsInstances = ignore and { ignore } or {}
+	--// Start the ray at the player's own height (2 studs up), NOT 20 - starting
+	--// high clears the restaurant ceiling and lands the chef on the roof.
+	local ray = workspace:Raycast(spawnPos + Vector3.new(0, 2, 0), Vector3.new(0, -20, 0), rayParams)
+	local groundY = ray and ray.Position.Y or (spawnPos.Y - 2.5)
+	local lift = (humanoid.HipHeight > 0 and humanoid.HipHeight or 2) + root.Size.Y / 2
+	rig:PivotTo(CFrame.new(Vector3.new(spawnPos.X, groundY + lift + 0.5, spawnPos.Z)))
 	rig.Parent = workspace
 
 	return {
 		Model = rig, Root = root, Humanoid = humanoid,
-		RootLift = rootLift, WalkSpeed = walkSpeed, WalkTrack = walkTrack,
+		WalkSpeed = walkSpeed, WalkTrack = walkTrack,
 		CarryParts = {},
 	}
 end
 
---// One tween segment of the walk (the Helper's mover)
-local function cookMoveSegment(cook, toRootPos)
-	local root = cook.Root
-	if not root or not root.Parent then return false end
-	local delta = toRootPos - root.Position
-	if delta.Magnitude < 0.4 then return true end
-	local flat = Vector3.new(delta.X, 0, delta.Z)
-	local look = flat.Magnitude > 0.1 and flat.Unit or root.CFrame.LookVector
-	local goal = CFrame.lookAt(toRootPos, toRootPos + look)
-	local tween = TweenService:Create(root,
-		TweenInfo.new(delta.Magnitude / cook.WalkSpeed, Enum.EasingStyle.Linear),
-		{ CFrame = goal })
-	tween:Play()
-	tween.Completed:Wait()
-	return cook.Model.Parent ~= nil
-end
-
---// Pathfind around walls, amble segment by segment, straight line if no route
+--// Walk there as a REAL character: pathfind, then Humanoid:MoveTo each
+--// waypoint. The Humanoid collides with anchored kitchen parts (no phasing)
+--// and grounds itself. Distance + timeout so it never hangs on a stuck path.
 local function cookWalkTo(cook, position)
 	if not cook or not position then return false end
+	local humanoid = cook.Humanoid
 	local root = cook.Root
-	if not root or not root.Parent then return false end
+	if not humanoid or not root or not root.Parent then return false end
 
 	local toward = Vector3.new(position.X - root.Position.X, 0, position.Z - root.Position.Z)
 	local target = position
@@ -307,35 +299,47 @@ local function cookWalkTo(cook, position)
 	end
 
 	local path = PathfindingService:CreatePath({
-		AgentRadius = 2, AgentHeight = 5, AgentCanJump = false,
+		AgentRadius = 2.5, AgentHeight = 5, AgentCanJump = false,
 	})
 	local ok = pcall(function()
-		path:ComputeAsync(root.Position - Vector3.new(0, cook.RootLift, 0), target)
+		path:ComputeAsync(root.Position, target)
 	end)
 
 	if cook.WalkTrack and not cook.WalkTrack.IsPlaying then
 		cook.WalkTrack:Play(0.15)
 	end
 
-	local arrived
+	--// Steer toward one point until within reach or a short timeout
+	local function stepTo(pos)
+		humanoid:MoveTo(pos)
+		local deadline = os.clock() + 5
+		while cook.Model and root.Parent and os.clock() < deadline do
+			local flat = Vector3.new(root.Position.X - pos.X, 0, root.Position.Z - pos.Z)
+			if flat.Magnitude < 3 then return true end
+			humanoid:MoveTo(pos) --// keep steering (re-paths past obstacles)
+			task.wait(0.12)
+		end
+		return cook.Model ~= nil
+	end
+
+	local arrived = true
 	if ok and path.Status == Enum.PathStatus.Success then
-		arrived = true
 		local waypoints = path:GetWaypoints()
 		for index = 2, #waypoints do
-			local wp = waypoints[index].Position
-			if not cookMoveSegment(cook, Vector3.new(wp.X, wp.Y + cook.RootLift, wp.Z)) then
+			if not stepTo(waypoints[index].Position) then
 				arrived = false
 				break
 			end
+			if not cook.Model then arrived = false; break end
 		end
 	else
-		arrived = cookMoveSegment(cook, Vector3.new(target.X, root.Position.Y, target.Z))
+		arrived = stepTo(target)
 	end
 
-	if cook.Model.Parent and cook.WalkTrack and cook.WalkTrack.IsPlaying then
+	if cook.Model and cook.WalkTrack and cook.WalkTrack.IsPlaying then
 		cook.WalkTrack:Stop(0.15)
 	end
-	return arrived and cook.Model.Parent ~= nil
+	return arrived and cook.Model ~= nil
 end
 
 --// Dress a small part into the right hand and carry it (raw or plated dish)
@@ -393,6 +397,90 @@ local function pickJob()
 	return nil
 end
 
+--// A cooking cue floated over the station so players SEE the sous chef is
+--// busy there and WHICH station: a house-style card with the dish name and a
+--// mustard progress bar that fills over the cook time. Sizzle steam too.
+local function showCookingCue(station, dishName, duration)
+	if not station then return nil end
+	local display = (Config.Recipes[dishName] and Config.Recipes[dishName].Display) or dishName
+
+	local gui = Instance.new("BillboardGui")
+	gui.Name = "SousChefCooking"
+	gui.Size = UDim2.fromScale(4.6, 1.7)
+	gui.StudsOffsetWorldSpace = Vector3.new(0, 3.6, 0)
+	gui.AlwaysOnTop = true
+	gui.MaxDistance = 100
+	gui.Adornee = station
+	gui.Parent = station
+
+	local frame = Instance.new("Frame")
+	frame.Size = UDim2.fromScale(1, 1)
+	frame.BackgroundColor3 = Color3.fromRGB(59, 43, 32)
+	frame.BackgroundTransparency = 0.1
+	frame.Parent = gui
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0.22, 0)
+	corner.Parent = frame
+	local stroke = Instance.new("UIStroke")
+	stroke.Thickness = 2.5
+	stroke.Color = Color3.fromRGB(245, 184, 65)
+	stroke.Parent = frame
+
+	local label = Instance.new("TextLabel")
+	label.Position = UDim2.fromScale(0.04, 0.06)
+	label.Size = UDim2.fromScale(0.92, 0.5)
+	label.BackgroundTransparency = 1
+	label.Font = Enum.Font.FredokaOne
+	label.TextScaled = true
+	label.Text = "🍳 Cooking " .. display
+	label.TextColor3 = Color3.fromRGB(255, 246, 233)
+	label.TextStrokeColor3 = Color3.fromRGB(30, 20, 14)
+	label.TextStrokeTransparency = 0.3
+	label.Parent = frame
+
+	local barBg = Instance.new("Frame")
+	barBg.Position = UDim2.fromScale(0.08, 0.64)
+	barBg.Size = UDim2.fromScale(0.84, 0.24)
+	barBg.BackgroundColor3 = Color3.fromRGB(40, 30, 22)
+	barBg.Parent = frame
+	local bgCorner = Instance.new("UICorner")
+	bgCorner.CornerRadius = UDim.new(1, 0)
+	bgCorner.Parent = barBg
+	local fill = Instance.new("Frame")
+	fill.Size = UDim2.fromScale(0, 1)
+	fill.BackgroundColor3 = Color3.fromRGB(245, 184, 65)
+	fill.Parent = barBg
+	local fillCorner = Instance.new("UICorner")
+	fillCorner.CornerRadius = UDim.new(1, 0)
+	fillCorner.Parent = fill
+	TweenService:Create(fill, TweenInfo.new(duration, Enum.EasingStyle.Linear),
+		{ Size = UDim2.fromScale(1, 1) }):Play()
+
+	--// a puff of steam off the station while it cooks
+	local steam = Instance.new("ParticleEmitter")
+	steam.Name = "SousChefSteam"
+	steam.Texture = "rbxassetid://243660364" --// soft smoke puff (Roblox stock)
+	steam.Color = ColorSequence.new(Color3.fromRGB(255, 255, 255))
+	steam.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.4), NumberSequenceKeypoint.new(1, 1),
+	})
+	steam.Size = NumberSequence.new(1.4, 2.6)
+	steam.Lifetime = NumberRange.new(0.9, 1.4)
+	steam.Rate = 10
+	steam.Speed = NumberRange.new(1.5, 2.5)
+	steam.VelocityInheritance = 0
+	steam.Acceleration = Vector3.new(0, 3, 0)
+	steam.Parent = station
+
+	return { Gui = gui, Steam = steam }
+end
+
+local function clearCookingCue(cue)
+	if not cue then return end
+	if cue.Gui then cue.Gui:Destroy() end
+	if cue.Steam then cue.Steam:Destroy() end
+end
+
 --// The whole loop for one dish: fetch -> cook -> plate -> serve
 local function cookOneDish(cook, job, skillDef)
 	local recipe = job.Recipe
@@ -411,22 +499,25 @@ local function cookOneDish(cook, job, skillDef)
 	if not cook.Model then return end
 
 	--// 3. Cook: stand at the station while the dish cooks (real timing;
-	--// this is the NPC's own wait, not a player's window - THE LAW holds)
+	--// this is the NPC's own wait, not a player's window - THE LAW holds).
+	--// A cue over the station tells players it is busy and with what.
 	cookCarry(cook, nil) --// raw goes on the grill (empty hands)
 	local timing = Config.Cooking[recipe.Timing]
 	local cookSecs = (timing and timing.CookTime or 10) * (skillDef.CookSpeedMult or 1)
+		+ (skillDef.ExtraCookSeconds or 0)
+	local cue = showCookingCue(station, job.Dish, cookSecs)
 	task.wait(cookSecs)
+	clearCookingCue(cue)
 	if not cook.Model then return end
 
-	--// 4. Plate it and walk it to the table
+	--// 4. Carry the finished dish to the PASS and plate it there. The sous
+	--// chef is a COOK, not a waiter (owner call): it leaves the plated dish
+	--// on the pass for a player/waiter/Helper to serve, then moves on.
 	cookCarry(cook, job.Dish)
-	local anchor = tableAnchorFor(job.TableId)
-	if anchor then cookWalkTo(cook, anchor.Position) end
+	local pass = tagPart("Pass")
+	if pass then cookWalkTo(cook, pass.Position) end
 	if not cook.Model then return end
-
-	--// 5. Serve through the validated bridge (drops harmlessly if the
-	--// table left or a player already served this dish)
-	bridgeInvoke("HelperServe", job.TableId, job.Dish, skillDef.Quality or "Good", nil)
+	bridgeInvoke("HelperPlateDish", job.Dish, skillDef.Quality or "Good")
 	cookCarry(cook, nil)
 end
 
@@ -434,16 +525,17 @@ local function summonSousChef(player, skillDef)
 	local character = player.Character
 	local playerRoot = character and character:FindFirstChild("HumanoidRootPart")
 
-	--// Spawn beside the Chef, or by the pass if the Chef has no body
+	--// Spawn right next to the Chef (3 studs to their side), or by the pass
+	--// if the Chef has no body
 	local spawnPos
 	if playerRoot then
-		spawnPos = (playerRoot.CFrame * CFrame.new(4, 0, 2)).Position
+		spawnPos = (playerRoot.CFrame * CFrame.new(3, 0, 0)).Position
 	else
 		local pass = tagPart("Pass")
 		spawnPos = pass and (pass.Position + Vector3.new(3, 0, 3)) or Vector3.new(0, 5, 0)
 	end
 
-	local cook = spawnCook(spawnPos, skillDef.WalkSpeed or 15)
+	local cook = spawnCook(spawnPos, skillDef.WalkSpeed or 15, character)
 	if not cook then return false, "Kitchen's not ready!" end
 
 	task.spawn(function()
@@ -515,10 +607,107 @@ local function showDoubleBatchTag(player)
 	end)
 end
 
+--// PLATE JUGGLER: a drag-back SLINGSHOT. The client sends a launch velocity;
+--// the server flies a dressed plate as a real projectile (gravity), and the
+--// arc passing close to a table that ordered the dish serves it. A miss floats
+--// the plate back into the waiter's hand (the held Tool was only hidden).
+local function makeFlyingPlate(from, dishName)
+	local plate = Instance.new("Part")
+	plate.Name = "ThrownPlate"
+	plate.Size = Vector3.new(1.7, 0.2, 1.7)
+	plate.Color = Color3.fromRGB(243, 236, 224)
+	plate.Material = Enum.Material.SmoothPlastic
+	plate.Anchored = true
+	plate.CanCollide = false
+	plate.CanQuery = false
+	plate.CFrame = CFrame.new(from)
+	plate.Parent = workspace
+	DishModels.dress(plate, dishName)
+	return plate
+end
+
+local function returnPlateToHand(player, info, plate, def)
+	local character = player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	--// player gone mid-flight: send the plate slot home so it never leaks
+	if not (root and info.Tool and info.Tool.Parent == nil) then
+		local ret = ServerStorage:FindFirstChild("PassReturnPlate")
+		if ret and info.PlateSlot then pcall(ret.Invoke, ret, info.PlateSlot, "throw lost") end
+		if info.Tool then info.Tool:Destroy() end
+		if plate then plate:Destroy() end
+		return
+	end
+	local seconds = def.ReturnSeconds or 0.3
+	local start = plate.CFrame.Position
+	local t0 = os.clock()
+	while plate.Parent do
+		local a = math.clamp((os.clock() - t0) / seconds, 0, 1)
+		plate.CFrame = CFrame.new(start:Lerp(root.Position + Vector3.new(0, 1, 0), a))
+		if a >= 1 then break end
+		task.wait()
+	end
+	plate:Destroy()
+	if info.Tool and info.Tool.Parent == nil then
+		info.Tool.Parent = character --// back in hand
+	end
+end
+
+local function throwProjectile(player, velocity, def)
+	local infoBridge = ServerStorage:FindFirstChild("WaiterThrowInfo")
+	local serveBridge = ServerStorage:FindFirstChild("WaiterServeThrown")
+	if not infoBridge or not serveBridge then return false, "..." end
+	local ok, info = pcall(infoBridge.Invoke, infoBridge, player)
+	if not ok or type(info) ~= "table" then
+		return false, "Hold a plated dish to throw!"
+	end
+
+	local plate = makeFlyingPlate(info.From, info.Dish)
+
+	--// the floor under the launch tells us when the arc has landed (a miss)
+	local rp = RaycastParams.new()
+	rp.FilterType = Enum.RaycastFilterType.Exclude
+	rp.FilterDescendantsInstances = { plate }
+	local ray = workspace:Raycast(info.From, Vector3.new(0, -200, 0), rp)
+	local floorY = ray and ray.Position.Y or (info.From.Y - 50)
+
+	task.spawn(function()
+		local g = Vector3.new(0, -workspace.Gravity, 0)
+		local pos, vel = info.From, velocity
+		local t0 = os.clock()
+		local hit = false
+		while os.clock() - t0 < (def.MaxFlightSeconds or 3) do
+			local dt = task.wait()
+			vel = vel + g * dt
+			pos = pos + vel * dt
+			if not plate.Parent then return end
+			plate.CFrame = CFrame.new(pos) * CFrame.Angles(0, (os.clock() - t0) * 12, 0)
+			--// the arc passes close to a table that ordered it -> serve
+			for _, tgt in ipairs(info.Targets) do
+				if (pos - tgt.Position).Magnitude <= (def.HitRadiusStuds or 8) then
+					local sok, sres = pcall(serveBridge.Invoke, serveBridge, player,
+						tgt.TableId, info.Dish, info.Quality, info.PlateSlot)
+					if sok and sres == true then
+						hit = true
+						break
+					end
+				end
+			end
+			if hit or pos.Y <= floorY then break end
+		end
+		if hit then
+			plate:Destroy()
+			if info.Tool then info.Tool:Destroy() end
+		else
+			returnPlateToHand(player, info, plate, def)
+		end
+	end)
+	return true
+end
+
 ----------------------------------------------------------------
 -- Effects, dispatched by skill Id
 ----------------------------------------------------------------
-local function runSkill(player, skillDef)
+local function runSkill(player, skillDef, aim)
 	local id = skillDef.Id
 
 	if id == "DoubleBatch" then
@@ -551,6 +740,21 @@ local function runSkill(player, skillDef)
 		--// fade out, then blink in just above the problem (0.6s of vanish)
 		rushTeleport(character, root, target.Position + Vector3.new(0, 4, 0))
 		return true
+
+	elseif id == "Dash" then
+		--// Movement is client-authoritative (SprintClient's exception), so the
+		--// server only gates the cooldown and tells the client to burst forward.
+		local character = player.Character
+		local root = character and character:FindFirstChild("HumanoidRootPart")
+		if not root then return false, "Get on the floor first!" end
+		skillRemote:FireClient(player, "Dash",
+			skillDef.DashSpeed or 85, skillDef.DashSeconds or 0.28)
+		return true
+
+	elseif id == "PlateJuggler" then
+		--// the client sends the slingshot LAUNCH VELOCITY as `aim`
+		if typeof(aim) ~= "Vector3" then return false, "Drag to aim first!" end
+		return throwProjectile(player, aim, skillDef)
 	end
 
 	return false, "Unknown skill"
@@ -559,7 +763,7 @@ end
 ----------------------------------------------------------------
 -- The one entry point
 ----------------------------------------------------------------
-skillRemote.OnServerEvent:Connect(function(player, action, slot)
+skillRemote.OnServerEvent:Connect(function(player, action, slot, aim)
 	if action ~= "Use" then return end
 	if slot ~= "Q" and slot ~= "R" then return end
 
@@ -575,7 +779,7 @@ skillRemote.OnServerEvent:Connect(function(player, action, slot)
 		return --// still cooling; the client already greys it out
 	end
 
-	local ok, reason = runSkill(player, skillDef)
+	local ok, reason = runSkill(player, skillDef, aim)
 	if ok then
 		local cd = skillDef.CooldownSeconds or 20
 		cooldowns[player][slot] = now + cd

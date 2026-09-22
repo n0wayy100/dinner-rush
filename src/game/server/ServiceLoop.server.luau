@@ -3328,6 +3328,62 @@ do
 		collectPayment(tableId, nil)
 		return true
 	end)
+
+	--// PLATE JUGGLER (Waiter SkillR, SkillService): a drag-back SLINGSHOT.
+	--// WaiterThrowInfo hands the skill everything it needs to fly a plated
+	--// dish as a physics projectile - the held Tool (hidden, so the hand looks
+	--// empty mid-flight; SkillService re-equips it on a miss or destroys it on
+	--// a serve), the launch origin, and the positions of every table that
+	--// ordered that dish (the arc landing near one = a serve).
+	makeBridge("WaiterThrowInfo", function(player)
+		local character = player and player.Character
+		local root = character and character:FindFirstChild("HumanoidRootPart")
+		if not root then return nil end
+
+		--// the FIRST plated dish the waiter is carrying
+		local tool
+		for _, container in ipairs({ character, player:FindFirstChildOfClass("Backpack") }) do
+			if container and not tool then
+				for _, t in ipairs(container:GetChildren()) do
+					if t:IsA("Tool") and t:GetAttribute("Dish") and t:GetAttribute("PlateSlot") then
+						tool = t
+						break
+					end
+				end
+			end
+		end
+		if not tool then return nil end
+
+		local dish = tool:GetAttribute("Dish")
+		local targets = {}
+		for _, party in pairs(parties) do
+			if party.State == STATE.WAITING_FOOD and party.TableId
+				and table.find(party.Ticket or {}, dish) then
+				local tpart = tableById[party.TableId]
+				if tpart then
+					table.insert(targets, { TableId = party.TableId, Position = tpart.Position })
+				end
+			end
+		end
+
+		local from = root.Position + Vector3.new(0, 2.5, 0)
+		tool.Parent = nil --// hidden - the flying plate stands in for it
+		return {
+			Tool = tool, Dish = dish,
+			Quality = tool:GetAttribute("Quality"),
+			PlateSlot = tool:GetAttribute("PlateSlot"),
+			From = from, Targets = targets,
+		}
+	end)
+
+	--// The arc reached a table that ordered it - serve with the waiter's credit
+	makeBridge("WaiterServeThrown", function(player, tableId, dish, quality, plateSlot)
+		local party = tableOccupant[tableId]
+		if not party or party.State ~= STATE.WAITING_FOOD then return false end
+		if not table.find(party.Ticket or {}, dish) then return false end
+		serveDishToParty(party, tableId, dish, quality, plateSlot, player)
+		return true
+	end)
 end
 
 ----------------------------------------------------------------
@@ -3957,6 +4013,33 @@ task.spawn(function()
 	--// the one scripted party through TutorialSpawnParty
 	if tutorialMode() then
 		print("[Service] TUTORIAL shift - natural spawns are off")
+	--// STUDIO-ONLY (Config.StudioPreSeat): auto-spawn a full house and
+	--// AUTO-SEAT + AUTO-ORDER them, so a skill/cook test has open orders
+	--// instantly. Automates the front-of-queue seating + ordering (no
+	--// precondition bypass) rather than teleporting parties into place.
+	elseif game:GetService("RunService"):IsStudio() and Config.StudioPreSeat then
+		local n = math.max(Config.StudioSpawnBurst or 0, 4)
+		print(("[Service] STUDIO PRE-SEAT: seating + pre-ordering %d parties"):format(n))
+		task.spawn(function()
+			for _ = 1, n do
+				spawnParty({ Plain = true })
+				task.wait(0.4)
+			end
+			--// seat the front + order the seated, repeatedly, until they fill
+			for _ = 1, 30 do
+				for _, party in pairs(parties) do
+					if party.State == STATE.QUEUED then
+						seatParty(party, nil)
+					end
+				end
+				for _, party in pairs(parties) do
+					if party.State == STATE.SEATED then
+						takeOrderDirect(party)
+					end
+				end
+				task.wait(0.5)
+			end
+		end)
 	--// STUDIO-ONLY: the map-testing burst (Config.StudioSpawnBurst)
 	--// replaces the single opening spawn; the normal trickle follows
 	elseif game:GetService("RunService"):IsStudio()

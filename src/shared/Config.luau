@@ -1491,9 +1491,10 @@ Config.Classes = {
 			--// The sous chef walks the real fetch->cook->serve loop (see
 			--// SkillService). These tune the summoned NPC only - never a
 			--// player's cook window, so THE LAW is untouched.
-			DurationSeconds = 26,     -- how long it works the kitchen before it poofs
+			DurationSeconds = 30,     -- how long it works the kitchen before it poofs
 			WalkSpeed = 15,           -- studs/sec ambling pace (a touch quicker than the Helper)
 			CookSpeedMult = 1,        -- scales its OWN wait at the station (<1 = faster cook)
+			ExtraCookSeconds = 5,     -- flat seconds ADDED to each cook (owner: longer, clearer cook)
 			GrabSeconds = 0.6,        -- pause at the fridge/shelf, reads as picking up
 			Quality = "Good",         -- what it plates: Good clears tickets with no rep bonus (kept un-OP)
 		},
@@ -1522,6 +1523,39 @@ Config.Classes = {
 		--// SprintClient reads these off replicated Player attributes.
 		StaminaDrainMult = 0.65,
 		StaminaRegenMult = 1.35,
+		--// TWO ACTIVE SKILLS (Sep 22 2026, cooldown-based, keys Q + R).
+		SkillQ = {
+			Id = "Dash",
+			Name = "DASH",
+			Text = "Burst forward - cross the floor or catch a dasher",
+			Emoji = "💨",
+			IconId = "",
+			CooldownSeconds = 8,
+			DashSpeed = 85,       -- studs/sec during the burst (client-side, like sprint)
+			DashSeconds = 0.28,   -- burst length (~24 studs)
+		},
+		SkillR = {
+			Id = "PlateJuggler",
+			Name = "PLATE JUGGLER",
+			Text = "Slingshot the plated dish you hold onto a table that ordered it",
+			Emoji = "🍽️",
+			IconId = "",
+			CooldownSeconds = 6,
+			HoldAim = true, --// R is press-DRAG-release (Angry Birds), not a tap
+			--// THE SLINGSHOT (drag-back aim, all client-tunable):
+			--// power = how far you drag; pitch = how far DOWN you drag; yaw =
+			--// how far sideways. You launch OPPOSITE the pull.
+			MaxDragPixels = 240,  -- drag this far (from the press point) = full power
+			MinPower = 55,        -- launch speed at the tiniest drag (studs/sec)
+			MaxPower = 150,       -- launch speed at full drag
+			MinPitchDeg = 18,     -- flattest arc (little vertical drag)
+			MaxPitchDeg = 68,     -- steepest arc (full downward drag)
+			MaxYawDeg = 55,       -- how far sideways drag can swing the aim
+			--// FLIGHT + CATCH:
+			HitRadiusStuds = 8,   -- the arc passing this close to an ordering table serves it ("close enough")
+			MaxFlightSeconds = 3, -- give up (miss) after this
+			ReturnSeconds = 0.3,  -- a miss floats the plate back to your hand this fast
+		},
 		UltimateName = "DOUBLE TIME!",
 		UltimateText = "A huge burst of speed to clear the whole floor",
 		--// ~10-15 serves per focused shift
@@ -2028,8 +2062,8 @@ Config.Ultimates = {
 	--// Ignored on live servers. Set StudioFullCharge = false (and the
 	--// key "") when ultimate testing ends, or charge earning can never
 	--// be playtested in Studio.
-	StudioFullCharge = true, --// TEMP: testing the Chef skills (Sep 21) - revert to false
-	StudioClassKey = "Chef",
+	StudioFullCharge = true, --// TEMP: testing the Waiter skills (Sep 22) - revert to false
+	StudioClassKey = "Waiter",
 
 	--// THE CAST BANNER (Sep 2026). Cosmetic only - nothing here touches
 	--// charge, abilities or THE LAW. Caster sees their own avatar posed
@@ -2386,6 +2420,13 @@ Config.StudioMapId = "Sushi" --// reviewing the ramen shift bar (Sep 18)
 --// The normal spawn trickle continues after the burst. 0 = off (normal
 --// opening). Ignored on live servers - set 0 anyway when map testing ends.
 Config.StudioSpawnBurst = 4 --// TEMP: busy room for the Chef skill test (Sep 21) - revert to 0
+
+--// STUDIO-ONLY (live-ignored): the moment the shift goes RUNNING, auto-spawn
+--// a full house AND auto-seat + auto-order them, so a skill/cooking test has
+--// open orders instantly with no manual seating. Uses StudioSpawnBurst for
+--// the count (min 4). true = on. TEMP for the Sous Chef test - set false for
+--// normal play.
+Config.StudioPreSeat = true --// TEMP (Sep 22) - revert to false
 
 --// STUDIO-ONLY (live-ignored): auto-fire this event a few seconds after
 --// the shift goes RUNNING, so an emergency test needs no command bar.

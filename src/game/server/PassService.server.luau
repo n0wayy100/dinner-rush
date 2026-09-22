@@ -365,6 +365,25 @@ do
 		return false
 	end
 	giveBack.Parent = ServerStorage
+
+	--// The Sous Chef skill (SkillService) COOKS and plates at the pass like a
+	--// player would, then leaves - a waiter/player/Helper carries it out. Finds
+	--// a free plate and plates the cooked dish on it; false if the pass is full.
+	local plate = Instance.new("BindableFunction")
+	plate.Name = "HelperPlateDish"
+	plate.OnInvoke = function(dishName, quality)
+		if not dishName then return false end
+		for _, slot in pairs(slots) do
+			if slot.State == "EMPTY" then
+				goPlated(slot, dishName, quality or "Good")
+				print(("[Pass] the Sous Chef plated %s (%s) on slot %s")
+					:format(tostring(dishName), tostring(quality), tostring(slot.Id)))
+				return true
+			end
+		end
+		return false --// every plate is in use
+	end
+	plate.Parent = ServerStorage
 end
 
 ----------------------------------------------------------------
