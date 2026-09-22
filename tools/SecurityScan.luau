@@ -21,6 +21,9 @@
 	  * Network + insertion: HttpService, InsertService, MarketplaceService
 	  * This project's known IOCs: getSignal, getArchetype, checkChild,
 	    Pose.Value, the Credits:@rewq tag, and the named suspect nodes
+	  * The Sep 2026 command-bar scam: darksynapse, asset 122935217379945,
+	    the fake "Model corruption / Copy Code / Command Bar" dialog text,
+	    HttpEnabled-from-code, and StarterCharacterScripts persistence
 	  * Structural smells: scripts hidden under Decals/Textures/Meshes,
 	    disabled scripts, remotes in odd places
 	  * Every script living OUTSIDE the four Rojo-managed folders - in this
@@ -59,6 +62,14 @@ local CRITICAL = {
 	{ "getArchetype",             "getArchetype - known IOC for this place" },
 	{ "checkChild",               "checkChild - known IOC for this place" },
 	{ "rewq",                     "rewq - known IOC for this place" },
+	--// The Sep 21 2026 attack: a teammate's model carried a fake
+	--// "Model corruption detected / Copy Code" dialog that tricked us into
+	--// pasting a command bar backdoor. IOCs from that exact kit:
+	{ "darksynapse",              "darksynapse - known backdoor payload (Sep 2026 teammate model)" },
+	{ "122935217379945",          "asset 122935217379945 - the Sep 2026 backdoor carrier model" },
+	{ "corruption detected",      "fake 'corruption detected' dialog - command-bar backdoor scam" },
+	{ "Model Parse Error",        "fake 'Model Parse Error' dialog - command-bar backdoor scam" },
+	{ "HttpEnabled",              "sets HttpEnabled from code - backdoors flip this to phone home" },
 }
 
 local HIGH = {
@@ -69,6 +80,9 @@ local HIGH = {
 	{ "HttpGet",                  "HttpGet - exploit-side HTTP" },
 	{ "\27",                      "raw bytecode marker in source" },
 	{ "GetProductInfo",           "MarketplaceService:GetProductInfo - sometimes a payload fetch" },
+	{ "StarterCharacterScripts",  "StarterCharacterScripts - backdoor persistence target (this project never writes here)" },
+	{ "Copy Code",                "'Copy Code' button text - the command-bar backdoor scam UI" },
+	{ "Command Bar",             "'Command Bar' instructions in code - the scam tells you to paste + Run" },
 }
 
 local MEDIUM = {
@@ -88,6 +102,7 @@ local ODD_PARENTS = {
 --// Nodes called out by name in earlier sessions
 local NAMED_SUSPECTS = {
 	"PoseTexture", "LightConfig", "DishRack", "Electrical Box", "WaterStation",
+	"darksynapse", --// Sep 2026 backdoor payload node name
 }
 
 ----------------------------------------------------------------
