@@ -29,6 +29,8 @@
 local CollectionService = game:GetService("CollectionService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
+
+local Sfx = require(ServerStorage:WaitForChild("Shared"):WaitForChild("Sfx"))
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
 
@@ -36,10 +38,42 @@ local sharedFolder = ReplicatedStorage:WaitForChild("Shared", 10)
 assert(sharedFolder, "[Events] ReplicatedStorage.Shared not found")
 local Config = require(sharedFolder:WaitForChild("Config", 10))
 
+--// Persistence contract - degrade over dying, same as ServiceLoop
+local ProfileAPI
+do
+	local ok, api = pcall(function()
+		return require(ServerStorage:WaitForChild("Shared", 20):WaitForChild("ProfileAPI", 20))
+	end)
+	if ok and api then
+		ProfileAPI = api
+	else
+		warn("[Events] ProfileAPI unavailable - event careers will NOT save")
+		ProfileAPI = { AddStat = function() return false end }
+	end
+end
+
+--// Career + ultimate charge + hidden score in one call (same shape as
+--// ServiceLoop's; ScoreService quietly counts every credited moment)
+local function creditStat(player, key, amount)
+	ProfileAPI.AddStat(player, key, amount)
+	local charge = ServerStorage:FindFirstChild("AddCharge")
+	if charge then
+		pcall(function()
+			charge:Invoke(player, key, amount)
+		end)
+	end
+	local bus = ServerStorage:FindFirstChild("AddScore")
+	if bus then
+		bus:Fire(player, key, amount)
+	end
+end
+
 print("[Events] script started")
 
 local SCHEDULER = Config.Events.Scheduler
 local TOILET = Config.Events.ToiletEmergency
+local OUTAGE = Config.Events.PowerOutage
+local SPILL = Config.Events.Spill
 
 --// Declared up here because stopToilet writes to it. A local declared further
 --// down would not be in scope for a function defined above it.
@@ -67,6 +101,8 @@ local function publish(activeEvent, phase, fuseRemaining, fuseTotal, alertText)
 end
 
 publish()
+EventState:SetAttribute("PatienceMultiplier", 1) --// 1 = normal drain
+EventState:SetAttribute("PowerOut", false) --// KitchenService freezes cooking on this
 EventState:SetAttribute("Toast", "") --// independent of publish(): a toast may
                                      --// outlive the event that raised it
 
@@ -86,6 +122,29 @@ local function applyRep(amount, why)
 	if bridge then
 		bridge:Invoke(amount, why)
 	end
+end
+
+----------------------------------------------------------------
+-- SHIFT REPORT COUNTERS. ServiceLoop pulls these at shift end through
+-- GetEventStats; we reset them ourselves when a new shift goes RUNNING
+-- (the heartbeat below watches for the transition).
+----------------------------------------------------------------
+local eventStats = {
+	ToiletsPlunged = 0,
+	FiresExtinguished = 0,
+	OutagesFixed = 0,
+	WaterIncidents = 0,
+	SpillsSwept = 0,
+}
+local lastShiftState = "WAITING"
+
+do
+	local bridge = Instance.new("BindableFunction")
+	bridge.Name = "GetEventStats"
+	bridge.OnInvoke = function()
+		return table.clone(eventStats)
+	end
+	bridge.Parent = ServerStorage
 end
 
 ----------------------------------------------------------------
@@ -125,23 +184,32 @@ end
 
 ----------------------------------------------------------------
 -- THE PLUNGER
--- One exists. It lives on the mount, is carried by whoever took it, and
--- returns the moment the emergency ends or its carrier disappears.
+-- EVERY player can take their OWN (owner ask, Sep 21): the mount hands
+-- one to anyone who asks during the emergency, and ALL of them vanish the
+-- moment the emergency ends or a carrier disappears. plungerTools maps a
+-- player to their live plunger.
 --
 -- It is deliberately NOT counted by KitchenService's carry limit: that count
 -- filters on the Ingredient and Dish attributes, and this tool has neither.
 ----------------------------------------------------------------
-local plungerHolder = nil
-local plungerTool = nil
+local plungerTools = {} --// player -> their plunger Tool
 local mountPrompt = nil
 
-local function returnPlunger()
-	if plungerTool then
-		plungerTool:Destroy()
-		plungerTool = nil
+--// Send one player's plunger home (they left, died, or dropped it)
+local function returnPlungerFor(player)
+	local tool = plungerTools[player]
+	if tool then
+		tool:Destroy()
+		plungerTools[player] = nil
 	end
-	plungerHolder = nil
+end
 
+--// Event over: every outstanding plunger vanishes at once
+local function returnPlunger()
+	for player, tool in pairs(plungerTools) do
+		tool:Destroy()
+		plungerTools[player] = nil
+	end
 	if mountPrompt then
 		mountPrompt.ActionText = "Take"
 		mountPrompt.ObjectText = "Plunger"
@@ -157,6 +225,51 @@ local function holdingPlunger(player)
 		end
 	end
 	return false
+end
+
+--// Hand a player their own plunger (shared by the mount and the Fixer's
+--// TOOLBELT skill). Already holding one = nothing to do.
+local function givePlungerTo(player)
+	local character = player.Character
+	if not character then return false end
+	if plungerTools[player] and plungerTools[player].Parent then
+		return true
+	end
+	returnPlungerFor(player) --// clear a stale record just in case
+
+	local tool = Instance.new("Tool")
+	tool.Name = "Plunger"
+	tool.RequiresHandle = true
+	tool.CanBeDropped = false
+	tool:SetAttribute("Plunger", true)
+
+	local handle = Instance.new("Part")
+	handle.Name = "Handle"
+	handle.Size = Vector3.new(0.6, 4, 0.6)
+	handle.Color = Color3.fromRGB(150, 60, 60)
+	handle.Material = Enum.Material.SmoothPlastic
+	handle.Parent = tool
+
+	local cup = Instance.new("Part")
+	cup.Name = "Cup"
+	cup.Shape = Enum.PartType.Cylinder
+	cup.Size = Vector3.new(1.2, 2, 2)
+	cup.Color = Color3.fromRGB(60, 45, 40)
+	cup.Material = Enum.Material.SmoothPlastic
+	cup.CanCollide = false
+	cup.Massless = true
+	cup.Parent = tool
+
+	local weld = Instance.new("WeldConstraint")
+	weld.Part0 = handle
+	weld.Part1 = cup
+	weld.Parent = cup
+	cup.CFrame = handle.CFrame * CFrame.new(0, -2, 0) * CFrame.Angles(0, 0, math.rad(90))
+
+	tool.Parent = character
+	plungerTools[player] = tool
+	print(("[Events] %s took a plunger"):format(player.Name))
+	return true
 end
 
 local function setupPlungerMount()
@@ -176,74 +289,502 @@ local function setupPlungerMount()
 	mountPrompt.Parent = mount
 
 	mountPrompt.Triggered:Connect(function(player)
-		local character = player.Character
-		if not character then return end
-
-		if plungerTool then
-			mountPrompt.ObjectText = "Plunger taken!"
-			task.delay(1.5, function()
-				if mountPrompt and not plungerTool then
-					mountPrompt.ObjectText = "Plunger"
-				end
-			end)
-			return
-		end
-
-		local tool = Instance.new("Tool")
-		tool.Name = "Plunger"
-		tool.RequiresHandle = true
-		tool.CanBeDropped = false
-		tool:SetAttribute("Plunger", true)
-
-		local handle = Instance.new("Part")
-		handle.Name = "Handle"
-		handle.Size = Vector3.new(0.6, 4, 0.6)
-		handle.Color = Color3.fromRGB(150, 60, 60)
-		handle.Material = Enum.Material.SmoothPlastic
-		handle.Parent = tool
-
-		local cup = Instance.new("Part")
-		cup.Name = "Cup"
-		cup.Shape = Enum.PartType.Cylinder
-		cup.Size = Vector3.new(1.2, 2, 2)
-		cup.Color = Color3.fromRGB(60, 45, 40)
-		cup.Material = Enum.Material.SmoothPlastic
-		cup.CanCollide = false
-		cup.Massless = true
-		cup.Parent = tool
-
-		local weld = Instance.new("WeldConstraint")
-		weld.Part0 = handle
-		weld.Part1 = cup
-		weld.Parent = cup
-		cup.CFrame = handle.CFrame * CFrame.new(0, -2, 0) * CFrame.Angles(0, 0, math.rad(90))
-
-		tool.Parent = character
-		plungerTool = tool
-		plungerHolder = player
-
-		mountPrompt.ObjectText = "Plunger taken!"
-		print(("[Events] %s took the plunger"):format(player.Name))
+		givePlungerTo(player)
 	end)
 
 	print(("[Events] plunger mount ready at %s"):format(mount:GetFullName()))
 end
 
---// The plunger must never be lost with its carrier
+--// A plunger must never be lost floating with a gone carrier
 Players.PlayerRemoving:Connect(function(player)
-	if plungerHolder == player then
-		returnPlunger()
-		print("[Events] carrier left - plunger returned to the mount")
-	end
+	returnPlungerFor(player)
 end)
 
 Players.PlayerAdded:Connect(function(player)
 	player.CharacterRemoving:Connect(function()
-		if plungerHolder == player then
-			returnPlunger()
-			print("[Events] carrier died - plunger returned to the mount")
+		returnPlungerFor(player)
+	end)
+end)
+
+----------------------------------------------------------------
+-- THE BROOM (mirrors the plunger): one exists, lives on the part
+-- tagged BroomMount, ONLY leaves the wall while a spill is active,
+-- and returns when the spill ends or its carrier goes.
+----------------------------------------------------------------
+local spillIsActive --// forward: the spill state lives further down
+local broomTools = {} --// player -> their broom Tool
+local broomMountPrompt = nil
+
+local function returnBroomFor(player)
+	local tool = broomTools[player]
+	if tool then
+		tool:Destroy()
+		broomTools[player] = nil
+	end
+end
+
+--// Spill over: every outstanding broom vanishes at once
+local function returnBroom()
+	for player, tool in pairs(broomTools) do
+		tool:Destroy()
+		broomTools[player] = nil
+	end
+	if broomMountPrompt then
+		broomMountPrompt.ActionText = "Take"
+		broomMountPrompt.ObjectText = "Broom"
+	end
+end
+
+local function holdingBroom(player)
+	local character = player.Character
+	if not character then return false end
+	for _, child in ipairs(character:GetChildren()) do
+		if child:IsA("Tool") and child:GetAttribute("Broom") then
+			return true
+		end
+	end
+	return false
+end
+
+--// Hand a player their own broom (shared by the mount and the TOOLBELT
+--// skill). Caller checks spillIsActive; already holding = nothing to do.
+local function giveBroomTo(player)
+	local character = player.Character
+	if not character then return false end
+	if broomTools[player] and broomTools[player].Parent then
+		return true
+	end
+	returnBroomFor(player)
+
+	local tool = Instance.new("Tool")
+	tool.Name = "Broom"
+	tool.RequiresHandle = true
+	tool.CanBeDropped = false
+	tool:SetAttribute("Broom", true)
+
+	local handle = Instance.new("Part")
+	handle.Name = "Handle"
+	handle.Size = Vector3.new(0.5, 5, 0.5)
+	handle.Color = Color3.fromRGB(170, 120, 70)
+	handle.Material = Enum.Material.Wood
+	handle.Parent = tool
+
+	local brush = Instance.new("Part")
+	brush.Name = "Brush"
+	brush.Size = Vector3.new(2.2, 1, 0.7)
+	brush.Color = Color3.fromRGB(220, 190, 120)
+	brush.Material = Enum.Material.Fabric
+	brush.CanCollide = false
+	brush.Massless = true
+	brush.Parent = tool
+
+	local weld = Instance.new("WeldConstraint")
+	weld.Part0 = handle
+	weld.Part1 = brush
+	weld.Parent = brush
+	brush.CFrame = handle.CFrame * CFrame.new(0, -2.8, 0)
+
+	tool.Parent = character
+	broomTools[player] = tool
+	print(("[Events] %s took a broom"):format(player.Name))
+	return true
+end
+
+local function setupBroomMount()
+	local mount = firstTaggedPart("BroomMount")
+	if not mount then
+		warn("[Events] no part tagged BroomMount - the Spill event cannot run")
+		return false
+	end
+
+	broomMountPrompt = Instance.new("ProximityPrompt")
+	broomMountPrompt.Name = "TakeBroom"
+	broomMountPrompt.ActionText = "Take"
+	broomMountPrompt.ObjectText = "Broom"
+	broomMountPrompt.HoldDuration = Config.Kitchen.PickupHoldSeconds
+	broomMountPrompt.MaxActivationDistance = Config.Interaction.PromptRangeStuds
+	broomMountPrompt.RequiresLineOfSight = Config.Interaction.PromptRequiresLineOfSight
+	broomMountPrompt.Parent = mount
+
+	broomMountPrompt.Triggered:Connect(function(player)
+		--// The broom only leaves the wall while there is a spill to sweep
+		if not spillIsActive() then
+			broomMountPrompt.ObjectText = "No spill right now!"
+			task.delay(1.5, function()
+				if broomMountPrompt then
+					broomMountPrompt.ObjectText = "Broom"
+				end
+			end)
+			return
+		end
+		giveBroomTo(player)
+	end)
+
+	print(("[Events] broom mount ready at %s"):format(mount:GetFullName()))
+	return true
+end
+
+Players.PlayerRemoving:Connect(function(player)
+	returnBroomFor(player)
+end)
+
+Players.PlayerAdded:Connect(function(player)
+	player.CharacterRemoving:Connect(function()
+		returnBroomFor(player)
+	end)
+end)
+
+----------------------------------------------------------------
+-- THE SPILL (owner design, Sep 17 2026 - GLOBAL): a puddle splats near
+-- a random table. Sweep it with the broom inside the fuse and nothing
+-- happens; let it sit and HALF the seated parties lose HALF their
+-- remaining patience (ServiceLoop's SpillPatienceHit bridge), then the
+-- puddle dries itself and the event ends. The roadmap's mess system.
+----------------------------------------------------------------
+local spill = {
+	Active = false,
+	Puddle = nil,
+	Prompt = nil,
+	Gui = nil,
+	Fill = nil,
+	Label = nil,
+	Remaining = 0,
+	Total = 0,
+	Hit = false,        --// the patience cut has landed
+	EvaporateIn = 0,    --// post-hit countdown to self-drying
+}
+
+local stopSpill --// forward: the heartbeat and registry both need it
+local cancelSweepSession --// forward: stopSpill closes any open panel
+local beginSweepSession --// forward: the puddle prompt opens the panel
+
+spillIsActive = function() --// assigns the broom mount's forward local
+	return spill.Active == true
+end
+
+--// One success door for every way of sweeping (hold, panel, SPEED
+--// DIAL rides its own branch): stats, career and the cleanup
+local function sweepSuccess(player)
+	eventStats.SpillsSwept += 1
+	creditStat(player, "EventChannels", 1) --// the Fixer's career
+	print(("[Events] %s swept the spill%s"):format(
+		player.Name, spill.Hit and " (too late for the guests)" or " in time"))
+	stopSpill(player)
+end
+
+local function refreshSpillUi()
+	if not spill.Gui then return end
+	spill.Gui.Enabled = spill.Active
+	if not spill.Active then return end
+	if spill.Hit then
+		spill.Label.Text = "EW! Too late..."
+		spill.Fill.Size = UDim2.fromScale(0, 1)
+	else
+		spill.Label.Text = "SPILL! Sweep it!"
+		spill.Fill.Size = UDim2.fromScale(
+			math.clamp(spill.Remaining / math.max(spill.Total, 1), 0, 1), 1)
+	end
+end
+
+--// The puddle lands near a random tagged table, on the real floor
+local function pickPuddleSpot()
+	local tables = {}
+	for _, instance in ipairs(CollectionService:GetTagged("Table")) do
+		if instance:IsDescendantOf(workspace) then
+			local part = resolvePart(instance)
+			if part then table.insert(tables, part) end
+		end
+	end
+	if #tables == 0 then return nil end
+
+	local anchor = tables[math.random(#tables)]
+	local angle = math.random() * math.pi * 2
+	local at = anchor.Position + Vector3.new(
+		math.cos(angle) * SPILL.PuddleOffsetStuds, 0,
+		math.sin(angle) * SPILL.PuddleOffsetStuds)
+
+	local rp = RaycastParams.new()
+	rp.RespectCanCollide = true
+	local hit = workspace:Raycast(at + Vector3.new(0, 6, 0), Vector3.new(0, -30, 0), rp)
+	return Vector3.new(at.X, (hit and hit.Position.Y or at.Y) + 0.15, at.Z)
+end
+
+local function startSpill()
+	local diff = difficultyBlock()
+	local at = pickPuddleSpot()
+	if not at then
+		warn("[Events] Spill rolled but no tagged Table exists - skipped")
+		return
+	end
+
+	Sfx.Play("SpillAlert")
+
+	spill.Active = true
+	spill.Hit = false
+	spill.Total = diff.SpillFuseSeconds
+	spill.Remaining = spill.Total
+	spill.EvaporateIn = 0
+
+	--// The puddle: a flat glassy blot, named for the arrow client
+	local puddle = Instance.new("Part")
+	puddle.Name = "SpillPuddle"
+	puddle.Shape = Enum.PartType.Cylinder
+	puddle.Size = Vector3.new(0.2, SPILL.PuddleRadiusStuds * 2, SPILL.PuddleRadiusStuds * 2)
+	puddle.CFrame = CFrame.new(at) * CFrame.Angles(0, 0, math.rad(90))
+	puddle.Color = Color3.fromRGB(120, 180, 235)
+	puddle.Material = Enum.Material.Glass
+	puddle.Transparency = 0.35
+	puddle.Anchored = true
+	puddle.CanCollide = false
+	puddle.CanQuery = true
+	puddle.Parent = workspace
+	spill.Puddle = puddle
+
+	--// Fuse billboard, house pattern
+	local gui = Instance.new("BillboardGui")
+	gui.Name = "SpillAlert"
+	gui.Size = UDim2.fromOffset(190, 52)
+	gui.StudsOffsetWorldSpace = Vector3.new(0, 4, 0)
+	gui.AlwaysOnTop = true
+	gui.Parent = puddle
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.fromScale(1, 0.55)
+	label.BackgroundTransparency = 1
+	label.TextScaled = true
+	label.Font = Enum.Font.FredokaOne
+	label.TextColor3 = Color3.fromRGB(150, 210, 255)
+	label.TextStrokeColor3 = Color3.fromRGB(59, 43, 32)
+	label.TextStrokeTransparency = 0
+	label.Parent = gui
+	local back = Instance.new("Frame")
+	back.AnchorPoint = Vector2.new(0.5, 1)
+	back.Position = UDim2.fromScale(0.5, 1)
+	back.Size = UDim2.fromScale(0.92, 0.3)
+	back.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+	back.BorderSizePixel = 0
+	back.Parent = gui
+	local fill = Instance.new("Frame")
+	fill.Size = UDim2.fromScale(1, 1)
+	fill.BackgroundColor3 = Color3.fromRGB(120, 180, 235)
+	fill.BorderSizePixel = 0
+	fill.Parent = back
+	spill.Gui, spill.Label, spill.Fill = gui, label, fill
+
+	--// The sweep entry. Gated difficulties (Interactions.SweepMinigame,
+	--// ON everywhere): E is a PRESS that opens the drag-the-broom panel.
+	--// Ungated fallback per the constitution: the plain channel hold,
+	--// with the Fixer's ChannelMult trimming it (Chef-collect trick).
+	local gated = diff.Interactions and diff.Interactions.SweepMinigame == true
+
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.Name = "Sweep"
+	prompt.ActionText = "Sweep"
+	prompt.ObjectText = "Spill"
+	prompt.HoldDuration = gated and 0 or diff.SweepChannelSeconds
+	prompt.MaxActivationDistance = Config.Interaction.PromptRangeStuds
+	prompt.RequiresLineOfSight = false
+	prompt.Parent = puddle
+	spill.Prompt = prompt
+
+	if not gated then
+		prompt.PromptButtonHoldBegan:Connect(function(player)
+			local mult = player:GetAttribute("ChannelMult") or 1
+			if mult ~= 1 then
+				prompt.HoldDuration = diff.SweepChannelSeconds * mult
+			end
+		end)
+		prompt.PromptButtonHoldEnded:Connect(function()
+			prompt.HoldDuration = diff.SweepChannelSeconds
+		end)
+	end
+
+	prompt.Triggered:Connect(function(player)
+		if not spill.Active then return end
+		if not holdingBroom(player) then
+			prompt.ObjectText = "Need the broom!"
+			task.delay(1.5, function()
+				if prompt.Parent then prompt.ObjectText = "Spill" end
+			end)
+			return
+		end
+		if gated then
+			beginSweepSession(player) --// the panel decides the finish
+		else
+			sweepSuccess(player) --// the hold already elapsed
 		end
 	end)
+
+	refreshSpillUi()
+	publish("Spill", "SPREADING", spill.Remaining, spill.Total,
+		"A spill on the floor! Grab the broom and sweep it!")
+	print(("[Events] spill started - fuse %ds"):format(spill.Total))
+end
+
+--// The fuse ran out: the gut-punch lands ONCE, the puddle lingers
+--// briefly (still sweepable, for pride), then dries by itself
+local function soakSpill()
+	spill.Hit = true
+	spill.EvaporateIn = SPILL.EvaporateAfterHitSeconds
+
+	local bridge = ServerStorage:FindFirstChild("SpillPatienceHit")
+	local hitCount = 0
+	if bridge then
+		hitCount = bridge:Invoke(SPILL.AffectedFraction, SPILL.PatienceCutMult) or 0
+	end
+	if (SPILL.FuseOutRep or 0) ~= 0 then
+		applyRep(SPILL.FuseOutRep, "spill left on the floor")
+	end
+
+	refreshSpillUi()
+	publish("Spill", "SOAKED", 0, spill.Total,
+		"Too late! The guests are grossed out!")
+	print(("[Events] spill soaked in - %d seated part%s lost patience")
+		:format(hitCount, hitCount == 1 and "y" or "ies"))
+end
+
+stopSpill = function(byPlayer)
+	if not spill.Active then return end
+	spill.Active = false
+
+	if cancelSweepSession then
+		cancelSweepSession() --// a vanished puddle closes any open panel
+	end
+	if spill.Puddle then
+		spill.Puddle:Destroy() --// prompt and gui ride along
+		spill.Puddle, spill.Prompt, spill.Gui, spill.Fill, spill.Label =
+			nil, nil, nil, nil, nil
+	end
+	returnBroom()
+
+	--// Stamp the scheduler gap (same reasoning as stopToilet)
+	local elapsed = shiftInfo().Elapsed or 0
+	scheduler.LastEndedAt = elapsed
+	scheduler.NextRollAt = elapsed + SCHEDULER.RollIntervalSeconds
+
+	publish()
+	print(("[Events] spill over (%s)"):format(
+		byPlayer and ("swept by " .. byPlayer.Name) or "dried up"))
+end
+
+----------------------------------------------------------------
+-- THE SWEEP PANEL (gated by Difficulty.Interactions.SweepMinigame -
+-- ON for every difficulty). The square drag-the-broom minigame: the
+-- client reports completed drag PASSES, and the server counts its OWN
+-- strokes - rate-capped against auto-draggers, broom-in-hand and
+-- proximity re-checked every stroke - plunge-tap grammar throughout.
+-- A full count exits through sweepSuccess, same as the ungated hold.
+----------------------------------------------------------------
+local SWEEP = Config.Events.SpillSweep
+
+local sweepRemoteFolder = ReplicatedStorage:FindFirstChild("Remotes")
+if not sweepRemoteFolder then
+	sweepRemoteFolder = Instance.new("Folder")
+	sweepRemoteFolder.Name = "Remotes"
+	sweepRemoteFolder.Parent = ReplicatedStorage
+end
+local sweepRemote = sweepRemoteFolder:FindFirstChild("SpillSweepRemote")
+if not sweepRemote then
+	sweepRemote = Instance.new("RemoteEvent")
+	sweepRemote.Name = "SpillSweepRemote"
+	sweepRemote.Parent = sweepRemoteFolder
+end
+
+local sweepSession = nil --// { Player, Strokes, StrokesNeeded, LastStrokeAt, Token }
+local sweepToken = 0
+
+cancelSweepSession = function()
+	if not sweepSession then return end
+	local session = sweepSession
+	sweepSession = nil
+	if session.Player and session.Player.Parent then
+		sweepRemote:FireClient(session.Player, "Close", session.Token, false)
+	end
+end
+
+beginSweepSession = function(player)
+	--// One sweeper at a time
+	if sweepSession then
+		if sweepSession.Player ~= player and spill.Prompt then
+			spill.Prompt.ObjectText = "Being swept!"
+			task.delay(1.5, function()
+				if spill.Prompt and spill.Prompt.Parent then
+					spill.Prompt.ObjectText = "Spill"
+				end
+			end)
+		end
+		return
+	end
+
+	--// FIXER PASSIVE in stroke grammar: ChannelMult trims the passes
+	local strokesNeeded = math.max(1, math.ceil(
+		SWEEP.StrokesNeeded * (player:GetAttribute("ChannelMult") or 1)))
+
+	sweepToken += 1
+	sweepSession = {
+		Player = player,
+		Strokes = 0,
+		StrokesNeeded = strokesNeeded,
+		LastStrokeAt = 0,
+		Token = sweepToken,
+	}
+
+	sweepRemote:FireClient(player, "Open", {
+		Token = sweepToken,
+		StrokesNeeded = strokesNeeded,
+	})
+
+	--// An abandoned panel must never wedge the puddle
+	local myToken = sweepToken
+	task.delay(SWEEP.TimeoutSeconds, function()
+		if sweepSession and sweepSession.Token == myToken then
+			print("[Events] sweep panel timed out - puddle freed")
+			cancelSweepSession()
+		end
+	end)
+
+	print(("[Events] %s started sweeping (%d passes)"):format(player.Name, strokesNeeded))
+end
+
+sweepRemote.OnServerEvent:Connect(function(player, action, token)
+	local session = sweepSession
+	if not session or session.Token ~= token or session.Player ~= player then return end
+
+	if action == "Abandon" then
+		cancelSweepSession()
+		return
+	end
+	if action ~= "Stroke" then return end
+	if not spill.Active or not spill.Puddle then
+		cancelSweepSession()
+		return
+	end
+
+	--// The broom must still be in hand and the sweeper at the puddle
+	local character = player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	if not holdingBroom(player) or not root
+		or (root.Position - spill.Puddle.Position).Magnitude > SWEEP.WalkAwayStuds + 6 then
+		cancelSweepSession()
+		return
+	end
+
+	--// Rate cap: passes beyond human arm speed simply don't count
+	local now = os.clock()
+	if now - session.LastStrokeAt < 1 / SWEEP.MaxStrokesPerSecond then
+		return
+	end
+	session.LastStrokeAt = now
+	session.Strokes += 1
+
+	if session.Strokes >= session.StrokesNeeded then
+		sweepSession = nil --// before stopSpill so its cancel is a no-op
+		sweepRemote:FireClient(player, "Close", session.Token, true)
+		sweepSuccess(player)
+		return
+	end
+
+	sweepRemote:FireClient(player, "Progress", session.Token,
+		session.Strokes / session.StrokesNeeded)
 end)
 
 ----------------------------------------------------------------
@@ -394,13 +935,22 @@ local function refreshToiletPrompt()
 	local diff = difficultyBlock()
 	toilet.Prompt.ActionText = "Plunge"
 	toilet.Prompt.ObjectText = toilet.Phase == "FLOODED" and "Flooded!" or "Overflowing!"
-	toilet.Prompt.HoldDuration = channelSecondsFor(diff)
+	if diff.Interactions and diff.Interactions.PlungeMinigame then
+		toilet.Prompt.HoldDuration = 0 --// gated: a TAP opens the tapping panel
+	else
+		toilet.Prompt.HoldDuration = channelSecondsFor(diff) --// ungated fallback
+	end
 end
 
 local stopToilet --// forward declared, the scheduler needs it too
+local cancelPlungeSession --// forward declared (plunge-tap section, below stopToilet)
+local beginPlungeSession --// forward declared (same section)
 
 local function startToilet()
 	local diff = difficultyBlock()
+
+	--// Global: an emergency nobody hears is an emergency nobody fixes
+	Sfx.Play("ToiletAlert")
 
 	toilet.Active = true
 	toilet.Phase = "ERUPTING"
@@ -419,6 +969,9 @@ end
 local function floodToilet()
 	toilet.Phase = "FLOODED"
 	toilet.Remaining = 0
+	if cancelPlungeSession then
+		cancelPlungeSession() --// the flooded deal needs more taps - re-open
+	end
 	spawnFlood()
 	applyRep(-TOILET.FloodInstantRepHit, "toilet flood")
 
@@ -438,6 +991,9 @@ function stopToilet(fixedBy)
 	toilet.Remaining = 0
 	toilet.Total = 0
 	toilet.DrainAccum = 0
+	if cancelPlungeSession then
+		cancelPlungeSession() --// an open tap panel closes with the event
+	end
 	clearPuddles()
 	refreshToiletUi()
 	refreshToiletPrompt()
@@ -452,6 +1008,8 @@ function stopToilet(fixedBy)
 
 	if fixedBy then
 		applyRep(TOILET.FixRepReward, "toilet fixed")
+		eventStats.ToiletsPlunged += 1
+		creditStat(fixedBy, "EventChannels", 1) --// the Fixer's career
 		--// ActiveEvent goes empty immediately: the event is over. Only the
 		--// closing message lingers, and only for a moment.
 		publish("", "", 0, 0, ("%s fixed the toilet!"):format(fixedBy.Name))
@@ -468,6 +1026,138 @@ function stopToilet(fixedBy)
 		fixedBy and (" (fixed by " .. fixedBy.Name .. ")") or "",
 		math.floor(elapsed + SCHEDULER.MinGapSeconds)))
 end
+
+----------------------------------------------------------------
+-- THE PLUNGE TAP (gated by Difficulty.Interactions.PlungeMinigame -
+-- ON for every difficulty). Spam tap/click fills a bar that
+-- leaks while you rest. The server counts its OWN taps - rate-capped
+-- against autoclickers, plunger-in-hand and proximity re-checked every
+-- tap - and a full bar exits through stopToilet's normal success path.
+-- One plumber at a time; every exit path frees the toilet.
+----------------------------------------------------------------
+local PLUNGE = Config.PlungeTap
+
+local plungeRemoteFolder = ReplicatedStorage:FindFirstChild("Remotes")
+if not plungeRemoteFolder then
+	plungeRemoteFolder = Instance.new("Folder")
+	plungeRemoteFolder.Name = "Remotes"
+	plungeRemoteFolder.Parent = ReplicatedStorage
+end
+
+local plungeRemote = plungeRemoteFolder:FindFirstChild("PlungeRemote")
+if not plungeRemote then
+	plungeRemote = Instance.new("RemoteEvent")
+	plungeRemote.Name = "PlungeRemote"
+	plungeRemote.Parent = plungeRemoteFolder
+end
+
+local plungeSession = nil --// { Player, Fill, TapsNeeded, LastTapAt, Token }
+local plungeToken = 0
+
+cancelPlungeSession = function()
+	if not plungeSession then return end
+	local session = plungeSession
+	plungeSession = nil
+	if session.Player and session.Player.Parent then
+		plungeRemote:FireClient(session.Player, "Close", session.Token, false)
+	end
+end
+
+beginPlungeSession = function(player)
+	--// One plumber at a time
+	if plungeSession then
+		if plungeSession.Player ~= player and toilet.Prompt then
+			toilet.Prompt.ObjectText = "Being plunged!"
+			task.delay(1.5, function()
+				if toilet.Active then
+					refreshToiletPrompt()
+				end
+			end)
+		end
+		return
+	end
+
+	local tapsNeeded = PLUNGE.TapsToFill
+	if toilet.Phase == "FLOODED" then
+		tapsNeeded *= PLUNGE.FloodTapsMultiplier
+	end
+	--// FIXER PASSIVE in tap grammar: ChannelMult trims the taps needed
+	tapsNeeded = math.max(1, math.ceil(tapsNeeded * (player:GetAttribute("ChannelMult") or 1)))
+
+	plungeToken += 1
+	plungeSession = {
+		Player = player,
+		Fill = 0,
+		TapsNeeded = tapsNeeded,
+		LastTapAt = os.clock(),
+		Token = plungeToken,
+	}
+
+	plungeRemote:FireClient(player, "Open", {
+		Token = plungeToken,
+		FillPerTap = 1 / tapsNeeded, --// lets the client bump optimistically
+		ToiletPosition = toilet.Part and toilet.Part.Position or Vector3.zero,
+	})
+
+	--// An abandoned panel must never deadlock the toilet
+	local myToken = plungeToken
+	task.delay(PLUNGE.TimeoutSeconds, function()
+		if plungeSession and plungeSession.Token == myToken then
+			print("[Events] plunge panel timed out - toilet freed")
+			cancelPlungeSession()
+		end
+	end)
+
+	print(("[Events] %s started plunging (%d taps)"):format(player.Name, tapsNeeded))
+end
+
+plungeRemote.OnServerEvent:Connect(function(player, action, token)
+	local session = plungeSession
+	if not session or session.Token ~= token or session.Player ~= player then return end
+
+	if action == "Abandon" then
+		cancelPlungeSession()
+		return
+	end
+	if action ~= "Tap" then return end
+	if not toilet.Active then
+		cancelPlungeSession()
+		return
+	end
+
+	--// The plunger must still be in hand and the plumber at the bowl
+	local character = player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	if not holdingPlunger(player) or not root or not toilet.Part
+		or (root.Position - toilet.Part.Position).Magnitude > PLUNGE.WalkAwayStuds + 6 then
+		cancelPlungeSession()
+		return
+	end
+
+	--// Rate cap: taps beyond human speed simply don't count
+	local now = os.clock()
+	local sinceLast = now - session.LastTapAt
+	if sinceLast < 1 / PLUNGE.MaxTapsPerSecond then
+		return
+	end
+
+	--// The bar leaked while they rested; this tap pushes it back up
+	session.Fill = math.max(0, session.Fill - PLUNGE.DecayPerSecond * sinceLast)
+	session.Fill += 1 / session.TapsNeeded
+	session.LastTapAt = now
+
+	if session.Fill >= 1 then
+		--// Filled: exit through the SAME success path as EASY's hold -
+		--// reward, career credit, charge and announcement all come free
+		plungeSession = nil --// before stopToilet so its cancel is a no-op
+		plungeRemote:FireClient(player, "Close", session.Token, true)
+		print(("[Events] %s tapped the toilet clear"):format(player.Name))
+		stopToilet(player)
+		return
+	end
+
+	plungeRemote:FireClient(player, "Progress", session.Token, session.Fill)
+end)
 
 local function setupToilet()
 	toilet.Part = firstTaggedPart("Toilet")
@@ -488,6 +1178,25 @@ local function setupToilet()
 	prompt.Parent = toilet.Part
 	toilet.Prompt = prompt
 
+	--// FIXER PASSIVE: channels scale per player. Same shared-prompt trick
+	--// as the kitchen's collect holds: scale when THIS player's hold
+	--// begins, restore on release.
+	prompt.PromptButtonHoldBegan:Connect(function(player)
+		local diffTable = difficultyBlock()
+		if diffTable.Interactions and diffTable.Interactions.PlungeMinigame then
+			return --// gated: tap-to-open, no hold to scale
+		end
+		local mult = player:GetAttribute("ChannelMult") or 1
+		if mult ~= 1 and toilet.Active then
+			prompt.HoldDuration = channelSecondsFor(diffTable) * mult
+		end
+	end)
+	prompt.PromptButtonHoldEnded:Connect(function()
+		if toilet.Active then
+			refreshToiletPrompt()
+		end
+	end)
+
 	prompt.Triggered:Connect(function(player)
 		if not toilet.Active then return end
 
@@ -501,8 +1210,13 @@ local function setupToilet()
 			return
 		end
 
-		print(("[Events] %s plunged the toilet"):format(player.Name))
-		stopToilet(player)
+		local diffTable = difficultyBlock()
+		if diffTable.Interactions and diffTable.Interactions.PlungeMinigame then
+			beginPlungeSession(player) --// gated: the tap opens the tapping panel
+		else
+			print(("[Events] %s plunged the toilet"):format(player.Name))
+			stopToilet(player) --// EASY: the channel hold just completed
+		end
 	end)
 
 	print(("[Events] toilet ready at %s"):format(toilet.Part:GetFullName()))
@@ -535,6 +1249,53 @@ local function returnExtinguisher()
 	end
 end
 
+--// Hand the (single) extinguisher to a player - shared by the mount and
+--// the TOOLBELT skill. Only one exists; if it is already out, no dice.
+local function giveExtinguisherTo(player)
+	local character = player.Character
+	if not character then return false end
+	if extinguisherTool then return false end --// someone already has it
+
+	local tool = Instance.new("Tool")
+	tool.Name = "Extinguisher"
+	tool.RequiresHandle = true
+	tool.CanBeDropped = false
+	tool:SetAttribute("Extinguisher", true)
+
+	local handle = Instance.new("Part")
+	handle.Name = "Handle"
+	handle.Size = Vector3.new(0.9, 2.2, 0.9)
+	handle.Color = Color3.fromRGB(200, 45, 45)
+	handle.Material = Enum.Material.SmoothPlastic
+	handle.Parent = tool
+
+	local nozzle = Instance.new("Part")
+	nozzle.Name = "Nozzle"
+	nozzle.Size = Vector3.new(0.3, 0.6, 0.3)
+	nozzle.Color = Color3.fromRGB(30, 30, 30)
+	nozzle.Material = Enum.Material.SmoothPlastic
+	nozzle.CanCollide = false
+	nozzle.Massless = true
+	nozzle.Parent = tool
+
+	local weld = Instance.new("WeldConstraint")
+	weld.Part0 = handle
+	weld.Part1 = nozzle
+	weld.Parent = nozzle
+	nozzle.CFrame = handle.CFrame * CFrame.new(0.4, 1.3, 0) * CFrame.Angles(0, 0, math.rad(-35))
+
+	tool.Parent = character
+	extinguisherTool = tool
+	extinguisherHolder = player
+	tool.Activated:Connect(function()
+		if onExtinguisherActivated then
+			onExtinguisherActivated(player)
+		end
+	end)
+	print(("[Events] %s took the extinguisher"):format(player.Name))
+	return true
+end
+
 local function setupExtinguisherMount()
 	local mount = firstTaggedPart("ExtinguisherMount")
 	if not mount then
@@ -552,9 +1313,6 @@ local function setupExtinguisherMount()
 	extinguisherMountPrompt.Parent = mount
 
 	extinguisherMountPrompt.Triggered:Connect(function(player)
-		local character = player.Character
-		if not character then return end
-
 		if extinguisherTool then
 			extinguisherMountPrompt.ObjectText = "Extinguisher taken!"
 			task.delay(1.5, function()
@@ -564,49 +1322,7 @@ local function setupExtinguisherMount()
 			end)
 			return
 		end
-
-		local tool = Instance.new("Tool")
-		tool.Name = "Extinguisher"
-		tool.RequiresHandle = true
-		tool.CanBeDropped = false
-		tool:SetAttribute("Extinguisher", true)
-
-		local handle = Instance.new("Part")
-		handle.Name = "Handle"
-		handle.Size = Vector3.new(0.9, 2.2, 0.9)
-		handle.Color = Color3.fromRGB(200, 45, 45)
-		handle.Material = Enum.Material.SmoothPlastic
-		handle.Parent = tool
-
-		local nozzle = Instance.new("Part")
-		nozzle.Name = "Nozzle"
-		nozzle.Size = Vector3.new(0.3, 0.6, 0.3)
-		nozzle.Color = Color3.fromRGB(30, 30, 30)
-		nozzle.Material = Enum.Material.SmoothPlastic
-		nozzle.CanCollide = false
-		nozzle.Massless = true
-		nozzle.Parent = tool
-
-		local weld = Instance.new("WeldConstraint")
-		weld.Part0 = handle
-		weld.Part1 = nozzle
-		weld.Parent = nozzle
-		nozzle.CFrame = handle.CFrame * CFrame.new(0.4, 1.3, 0) * CFrame.Angles(0, 0, math.rad(-35))
-
-		tool.Parent = character
-		extinguisherTool = tool
-		extinguisherHolder = player
-
-		--// Left-click / tap / gamepad trigger = spray. The channel itself
-		--// runs server-side in the heartbeat.
-		tool.Activated:Connect(function()
-			if onExtinguisherActivated then
-				onExtinguisherActivated(player)
-			end
-		end)
-
-		extinguisherMountPrompt.ObjectText = "Extinguisher taken!"
-		print(("[Events] %s took the extinguisher"):format(player.Name))
+		giveExtinguisherTo(player)
 	end)
 
 	print(("[Events] extinguisher mount ready at %s"):format(mount:GetFullName()))
@@ -632,11 +1348,13 @@ end)
 
 ----------------------------------------------------------------
 -- THE GREASE FIRE
--- A cook station ignites (its in-progress dish is destroyed), burns on a
--- per-station fuse, and when any fuse runs out every station within
--- SpreadRadiusStuds of any burning one catches too - chain spread is
--- intended. The extinguisher is the fix, one channel-hold per station.
--- Thrown water is an instant spread plus a lesson on the screen.
+-- A cook station ignites (its in-progress dish is destroyed) under ONE
+-- big blaze covering the whole appliance, burns on a per-station fuse,
+-- and when any fuse runs out every station within SpreadRadiusStuds of
+-- any burning one catches too - chain spread is intended. The
+-- extinguisher is the fix: ONE completed spray clears the ENTIRE fire
+-- however far it spread (owner ruling, Aug 2026 - dousing station by
+-- station dragged). Thrown water is an instant spread plus a lesson.
 --
 -- Stations are driven through ServerStorage.KitchenStationControl -
 -- EventSystem never reaches into KitchenService's internals.
@@ -648,6 +1366,7 @@ local fire = {
 	Burning = {},        -- station Id -> burn record
 	Count = 0,
 	DrainAccum = 0,
+	Dousing = nil,       -- the ONE shared spray channel { Player, Remaining, Total, Target }
 	AlertOverride = nil, -- "<player> threw water..." wins the banner briefly
 	AlertUntil = 0,
 }
@@ -665,7 +1384,7 @@ local function fireAlertText()
 		return fire.AlertOverride
 	end
 	if fire.Count >= 2 then
-		return ("%d stations are on FIRE! Spray them out!"):format(fire.Count)
+		return ("%d stations ablaze - one good spray clears it all!"):format(fire.Count)
 	end
 	return "GREASE FIRE! Grab the extinguisher and CLICK the flames!"
 end
@@ -750,11 +1469,12 @@ local function buildFireUi(part)
 end
 
 local function refreshFireUi(burn)
-	--// Someone is spraying: the bar becomes their basil progress and the
-	--// spread fuse is on hold
-	if burn.Dousing then
-		burn.Label.Text = ("DOUSING... %ds"):format(math.max(0, math.ceil(burn.Dousing.Remaining)))
-		local progress = 1 - math.clamp(burn.Dousing.Remaining / burn.Dousing.Total, 0, 1)
+	--// Someone is spraying: every burning station's bar becomes the one
+	--// shared basil progress, and every spread fuse is on hold
+	local douse = fire.Dousing
+	if douse then
+		burn.Label.Text = ("DOUSING... %ds"):format(math.max(0, math.ceil(douse.Remaining)))
+		local progress = 1 - math.clamp(douse.Remaining / douse.Total, 0, 1)
 		burn.Fill.Size = UDim2.fromScale(progress, 1)
 		burn.Fill.BackgroundColor3 = Color3.fromRGB(76, 175, 109)
 		return
@@ -770,14 +1490,14 @@ end
 
 local function clearBurnVisuals(burn)
 	if burn.Gui then burn.Gui:Destroy() end
-	if burn.Fx then burn.Fx:Destroy() end
-	if burn.Light then burn.Light:Destroy() end
-	if burn.Steam then burn.Steam:Destroy() end
+	if burn.Blaze then burn.Blaze:Destroy() end --// takes Fx/Light/Steam with it
 	if burn.WaterPrompt then burn.WaterPrompt:Destroy() end
 end
 
 local igniteStation  --// forward declared: spreadFrom calls it
-local extinguishStation
+local igniteAppliance --// forward declared: spreadFrom calls this one too
+                      --// (a plain local function below it would be invisible
+                      --// to spreadFrom's compiled body - real crash, was live)
 
 --// One fuse ran out (or water was thrown): every station within radius of
 --// ANY burning station catches. The source keeps raging with a fresh fuse,
@@ -802,8 +1522,9 @@ local function spreadFrom(sourceBurn, cause)
 			end
 		end
 
+		--// Whatever catches brings its whole appliance with it
 		for _, entry in ipairs(toIgnite) do
-			igniteStation(entry)
+			igniteAppliance(entry, list)
 		end
 		if #toIgnite > 0 then
 			print(("[Events] the fire spread to %d station(s) (%s)"):format(#toIgnite, cause))
@@ -812,6 +1533,32 @@ local function spreadFrom(sourceBurn, cause)
 
 	sourceBurn.Remaining = sourceBurn.Total
 	publishFire()
+end
+
+--// Every station on the same physical appliance as this one, itself
+--// included. Anchors with no Appliance name are alone.
+local function applianceGroup(entry, list)
+	local group = { entry }
+	if not entry.Appliance or not list then
+		return group
+	end
+
+	for _, other in ipairs(list) do
+		if other.Id ~= entry.Id and other.Appliance == entry.Appliance then
+			table.insert(group, other)
+		end
+	end
+	return group
+end
+
+--// One stove catches all at once: three burners on one appliance is one
+--// fire, not three that happen to be near each other.
+igniteAppliance = function(entry, list)
+	local group = applianceGroup(entry, list or kitchenStations("List"))
+	for _, member in ipairs(group) do
+		igniteStation(member)
+	end
+	return #group
 end
 
 igniteStation = function(entry)
@@ -823,16 +1570,30 @@ igniteStation = function(entry)
 	kitchenStations("CancelCook", entry.Id)
 	kitchenStations("SetDisabled", entry.Id, true)
 
+	--// ONE big blaze: an invisible pad covering the whole appliance so the
+	--// flames read as one fire engulfing the station, not a candle on the
+	--// small anchor part
+	local blaze = Instance.new("Part")
+	blaze.Name = "GreaseBlaze"
+	blaze.Size = Vector3.new(FIRE.BlazeCoverStuds, 1, FIRE.BlazeCoverStuds)
+	blaze.CFrame = CFrame.new(part.Position + Vector3.new(0, 1, 0))
+	blaze.Anchored = true
+	blaze.CanCollide = false
+	blaze.CanQuery = false
+	blaze.CanTouch = false
+	blaze.Transparency = 1
+	blaze.Parent = workspace
+
 	local fx = Instance.new("Fire")
 	fx.Size = FIRE.FireSize
 	fx.Heat = 12
-	fx.Parent = part
+	fx.Parent = blaze
 
 	local light = Instance.new("PointLight")
 	light.Color = Color3.fromRGB(255, 140, 40)
 	light.Range = FIRE.LightRange
 	light.Brightness = 2
-	light.Parent = part
+	light.Parent = blaze
 
 	local gui, fill, label = buildFireUi(part)
 
@@ -859,7 +1620,7 @@ igniteStation = function(entry)
 		Total = diff.Consequences.FireSpreadSeconds,
 		Remaining = diff.Consequences.FireSpreadSeconds,
 		Gui = gui, Fill = fill, Label = label,
-		Fx = fx, Light = light,
+		Fx = fx, Light = light, Blaze = blaze,
 		WaterPrompt = waterPrompt,
 	}
 	fire.Burning[entry.Id] = burn
@@ -900,6 +1661,9 @@ igniteStation = function(entry)
 		fire.AlertOverride = ("%s threw water on a grease fire!!"):format(player.Name)
 		fire.AlertUntil = os.clock() + FIRE.ToastSeconds
 		showToast(FIRE.WaterTrapMessage)
+		eventStats.WaterIncidents += 1
+		creditStat(player, "KitchenCrimes", 1) --// the permanent record (and
+		                                       --// the hidden score's penalty)
 		print(("[Events] %s threw water on the %s fire - it spreads!"):format(
 			player.Name, active.Method))
 		spreadFrom(active, "water!!")
@@ -908,71 +1672,60 @@ igniteStation = function(entry)
 	print(("[Events] the %s station is on fire - fuse %ds"):format(entry.Method, burn.Total))
 end
 
-extinguishStation = function(id, player)
-	local burn = fire.Burning[id]
-	if not burn then return end
-
-	fire.Burning[id] = nil
-	fire.Count -= 1
-	clearBurnVisuals(burn)
-	kitchenStations("SetDisabled", id, false)
-	print(("[Events] %s extinguished the %s station (%d still burning)"):format(
-		player.Name, burn.Method, fire.Count))
-
-	if fire.Count <= 0 then
-		stopFire(player)
-	else
-		publishFire()
-	end
-end
-
 --// Left-click / tap / gamepad trigger with the extinguisher equipped:
---// start spraying the nearest burning station in range. The channel runs
---// in the heartbeat; walking away, dying, or unequipping cancels it, and
---// the spread fuse pauses while the spray is on.
+--// start THE spray - one shared channel aimed at the nearest flames that
+--// clears the ENTIRE fire when it completes. It runs in the heartbeat;
+--// walking away, dying, or unequipping cancels it, and every spread fuse
+--// pauses while the spray is on.
 onExtinguisherActivated = function(player)
 	if not fire.Active then return end
+	if fire.Dousing then return end --// one spray at a time
 	local character = player.Character
 	local root = character and character:FindFirstChild("HumanoidRootPart")
 	if not root then return end
 
 	local best, bestDist = nil, math.huge
 	for _, burn in pairs(fire.Burning) do
-		if not burn.Dousing then
-			local dist = (burn.Part.Position - root.Position).Magnitude
-			if dist <= FIRE.DouseRangeStuds and dist < bestDist then
-				best, bestDist = burn, dist
-			end
+		local dist = (burn.Part.Position - root.Position).Magnitude
+		if dist <= FIRE.DouseRangeStuds and dist < bestDist then
+			best, bestDist = burn, dist
 		end
 	end
 	if not best then return end
 
 	local diff = difficultyBlock()
-	best.Dousing = {
+	--// FIXER PASSIVE: the spray channel knows its player, so this one
+	--// scales directly - no prompt trickery needed
+	local channelSeconds = diff.ExtinguishChannelSeconds
+		* (player:GetAttribute("ChannelMult") or 1)
+	fire.Dousing = {
 		Player = player,
-		Remaining = diff.ExtinguishChannelSeconds,
-		Total = diff.ExtinguishChannelSeconds,
+		Remaining = channelSeconds,
+		Total = channelSeconds,
+		Target = best, --// range is held against these flames
 	}
 
-	--// Code-built spray: white steam billowing off the station while the
-	--// channel runs (the Fire instance also shrinks - see the heartbeat)
-	if not best.Steam then
-		local steam = Instance.new("ParticleEmitter")
-		steam.Name = "DouseSteam"
-		steam.Color = ColorSequence.new(Color3.fromRGB(240, 240, 240))
-		steam.Size = NumberSequence.new(2, 4)
-		steam.Lifetime = NumberRange.new(0.6, 1.1)
-		steam.Rate = 40
-		steam.Speed = NumberRange.new(4, 7)
-		steam.SpreadAngle = Vector2.new(35, 35)
-		steam.Transparency = NumberSequence.new(0.3, 1)
-		steam.Enabled = false
-		steam.Parent = best.Part
-		best.Steam = steam
+	--// Code-built spray: white steam billowing off EVERY burning station -
+	--// the whole fire is dying together (the flames also shrink - heartbeat)
+	for _, burn in pairs(fire.Burning) do
+		if not burn.Steam then
+			local steam = Instance.new("ParticleEmitter")
+			steam.Name = "DouseSteam"
+			steam.Color = ColorSequence.new(Color3.fromRGB(240, 240, 240))
+			steam.Size = NumberSequence.new(2, 4)
+			steam.Lifetime = NumberRange.new(0.6, 1.1)
+			steam.Rate = 40
+			steam.Speed = NumberRange.new(4, 7)
+			steam.SpreadAngle = Vector2.new(35, 35)
+			steam.Transparency = NumberSequence.new(0.3, 1)
+			steam.Enabled = false
+			steam.Parent = burn.Blaze
+			burn.Steam = steam
+		end
+		burn.Steam.Enabled = true
 	end
-	best.Steam.Enabled = true
 
-	print(("[Events] %s is dousing the %s station"):format(player.Name, best.Method))
+	print(("[Events] %s is spraying down the fire"):format(player.Name))
 end
 
 local function startFire()
@@ -981,6 +1734,8 @@ local function startFire()
 		warn("[Events] GreaseFire rolled but no cook stations exist - skipped")
 		return
 	end
+
+	Sfx.Play("FireAlert")
 
 	fire.Active = true
 	fire.DrainAccum = 0
@@ -996,9 +1751,10 @@ local function startFire()
 	end
 	local target = #busy > 0 and busy[math.random(#busy)] or list[math.random(#list)]
 
-	igniteStation(target)
+	local caught = igniteAppliance(target, list)
 	publishFire()
-	print(("[Events] grease fire started on the %s station"):format(target.Method))
+	print(("[Events] grease fire started on the %s station (%d burner(s) alight)")
+		:format(target.Method, caught))
 end
 
 stopFire = function(fixedBy)
@@ -1011,6 +1767,7 @@ stopFire = function(fixedBy)
 	fire.Burning = {}
 	fire.Count = 0
 	fire.DrainAccum = 0
+	fire.Dousing = nil
 	fire.AlertOverride = nil
 
 	--// Defensive: EVERY station re-enabled no matter how the event died -
@@ -1046,6 +1803,368 @@ stopFire = function(fixedBy)
 end
 
 ----------------------------------------------------------------
+-- POWER OUTAGE
+--
+-- No fuse and no escalation: the darkness, the reputation bleed and the
+-- faster-melting patience are the whole pressure. Cook stations deliberately
+-- keep working - they are gas, and a second kitchen-disabling event on top of
+-- the grease fire would be too cruel.
+--
+-- Lighting is snapshotted rather than assumed, so restore puts back exactly
+-- what was there, including any light that was already switched off.
+----------------------------------------------------------------
+local Lighting = game:GetService("Lighting")
+
+local outage = {
+	Part = nil,
+	Active = false,
+	DrainAccum = 0,
+	Lights = nil,     -- { {Light=, Enabled=}, ... }
+	Sky = nil,        -- Lighting properties as they were
+	Gui = nil,
+	Prompt = nil,
+}
+
+local function snapshotAndDarken()
+	local saved = {}
+	for _, descendant in ipairs(workspace:GetDescendants()) do
+		if descendant:IsA("PointLight")
+			or descendant:IsA("SpotLight")
+			or descendant:IsA("SurfaceLight") then
+			table.insert(saved, { Light = descendant, Enabled = descendant.Enabled })
+			descendant.Enabled = false
+		end
+	end
+	outage.Lights = saved
+
+	outage.Sky = {
+		Ambient = Lighting.Ambient,
+		OutdoorAmbient = Lighting.OutdoorAmbient,
+		Brightness = Lighting.Brightness,
+	}
+
+	Lighting.Ambient = OUTAGE.DarkAmbient
+	Lighting.OutdoorAmbient = OUTAGE.DarkOutdoorAmbient
+	Lighting.Brightness = OUTAGE.DarkBrightness
+
+	print(("[Events] power out - %d light(s) killed"):format(#saved))
+end
+
+local function restoreLighting()
+	if outage.Lights then
+		for _, entry in ipairs(outage.Lights) do
+			--// The light may have been destroyed mid-outage
+			if entry.Light.Parent then
+				entry.Light.Enabled = entry.Enabled
+			end
+		end
+		outage.Lights = nil
+	end
+
+	if outage.Sky then
+		Lighting.Ambient = outage.Sky.Ambient
+		Lighting.OutdoorAmbient = outage.Sky.OutdoorAmbient
+		Lighting.Brightness = outage.Sky.Brightness
+		outage.Sky = nil
+	end
+end
+
+local function refreshOutageUi()
+	if outage.Gui then
+		outage.Gui.Enabled = outage.Active
+	end
+	if outage.Prompt then
+		outage.Prompt.Enabled = outage.Active
+		if outage.Active then
+			local diffTable = difficultyBlock()
+			if diffTable.Interactions and diffTable.Interactions.BreakerMinigame then
+				--// Gated difficulties: a TAP opens the wire panel
+				outage.Prompt.ActionText = "Fix the wires"
+				outage.Prompt.HoldDuration = 0
+			else
+				--// ungated fallback: the original channel hold
+				outage.Prompt.ActionText = "Restore power"
+				local seconds = OUTAGE.FixChannelSeconds[
+					Config.IsValidDifficulty(shiftInfo().Difficulty) and shiftInfo().Difficulty or "NORMAL"]
+				outage.Prompt.HoldDuration = seconds or OUTAGE.FixChannelSeconds.NORMAL
+			end
+		end
+	end
+end
+
+local stopOutage --// forward declared
+local cancelWirePuzzle --// forward declared (wire-fix section, below stopOutage)
+local beginWirePuzzle --// forward declared (same section)
+
+local function startOutage()
+	if outage.Active or not outage.Part then return end
+
+	Sfx.Play("PowerAlert")
+
+	outage.Active = true
+	outage.DrainAccum = 0
+	snapshotAndDarken()
+
+	--// Seated bars drain faster while it is dark. ServiceLoop reads this.
+	EventState:SetAttribute("PatienceMultiplier", OUTAGE.PatienceDrainMultiplier)
+
+	--// The stoves die with the lights: KitchenService freezes every pan and
+	--// refuses new cooks while this is true.
+	EventState:SetAttribute("PowerOut", true)
+
+	refreshOutageUi()
+	publish("PowerOutage", "DARK", 0, 0,
+		"The power is out! Someone get to the breaker box!")
+
+	print("[Events] power outage started")
+end
+
+function stopOutage(fixedBy)
+	--// Global relief beat: everyone was in the dark together
+	if outage.Active then
+		Sfx.Play("PowerRestored")
+	end
+
+	if not outage.Active then return end
+
+	outage.Active = false
+	outage.DrainAccum = 0
+	if cancelWirePuzzle then
+		cancelWirePuzzle() --// an open panel closes with the outage
+	end
+	restoreLighting()
+	EventState:SetAttribute("PatienceMultiplier", 1)
+	EventState:SetAttribute("PowerOut", false)
+	refreshOutageUi()
+
+	local elapsed = shiftInfo().Elapsed
+	scheduler.LastEndedAt = elapsed
+	scheduler.NextRollAt = elapsed + SCHEDULER.RollIntervalSeconds
+
+	if fixedBy then
+		applyRep(OUTAGE.FixRepReward, "power restored")
+		eventStats.OutagesFixed += 1
+		creditStat(fixedBy, "EventChannels", 1) --// the Fixer's career
+		publish("", "", 0, 0, ("%s got the lights back on!"):format(fixedBy.Name))
+		task.delay(3, function()
+			if not outage.Active then publish() end
+		end)
+	else
+		publish()
+	end
+
+	print(("[Events] power outage ended%s"):format(
+		fixedBy and (" (fixed by " .. fixedBy.Name .. ")") or ""))
+end
+
+----------------------------------------------------------------
+-- THE WIRE FIX (gated by Difficulty.Interactions.BreakerMinigame - the
+-- first minigame under the EASY FREEZE). The server DEALS the shuffle
+-- and CHECKS the answer; the client only renders and reports taps. One
+-- solver holds the breaker at a time, the outage keeps draining while
+-- they fumble, and every exit path unlocks. EASY never sees any of this.
+----------------------------------------------------------------
+local WIREFIX = Config.WireFix
+
+local wireRemotes = ReplicatedStorage:FindFirstChild("Remotes")
+if not wireRemotes then
+	wireRemotes = Instance.new("Folder")
+	wireRemotes.Name = "Remotes"
+	wireRemotes.Parent = ReplicatedStorage
+end
+
+local wireRemote = wireRemotes:FindFirstChild("WireFixRemote")
+if not wireRemote then
+	wireRemote = Instance.new("RemoteEvent")
+	wireRemote.Name = "WireFixRemote"
+	wireRemote.Parent = wireRemotes
+end
+
+local wirePuzzle = nil --// { Player, RightSlots, Wires, Token }
+local wireToken = 0
+
+cancelWirePuzzle = function()
+	if not wirePuzzle then return end
+	local puzzle = wirePuzzle
+	wirePuzzle = nil
+	if puzzle.Player and puzzle.Player.Parent then
+		wireRemote:FireClient(puzzle.Player, "Close", puzzle.Token)
+	end
+end
+
+beginWirePuzzle = function(player)
+	--// One electrician at a time
+	if wirePuzzle then
+		if wirePuzzle.Player ~= player and outage.Prompt then
+			outage.Prompt.ObjectText = "Being fixed!"
+			task.delay(1.5, function()
+				if outage.Prompt and outage.Active then
+					outage.Prompt.ObjectText = "Breaker box"
+				end
+			end)
+		end
+		return
+	end
+
+	local diffTable = difficultyBlock()
+	local wires = (diffTable.Interactions and diffTable.Interactions.BreakerWires) or 4
+
+	--// FIXER PASSIVE in minigame grammar: one fewer wire to match
+	if player:GetAttribute("ClassKey") == "Fixer" then
+		wires = math.max(WIREFIX.MinWires, wires - WIREFIX.FixerWireDiscount)
+	end
+	wires = math.min(wires, #WIREFIX.Colors)
+
+	--// RightSlots[k] = which LEFT wire's colour sits in right slot k
+	local rightSlots = {}
+	for index = 1, wires do
+		rightSlots[index] = index
+	end
+	for index = wires, 2, -1 do
+		local swap = math.random(index)
+		rightSlots[index], rightSlots[swap] = rightSlots[swap], rightSlots[index]
+	end
+
+	wireToken += 1
+	wirePuzzle = {
+		Player = player,
+		RightSlots = rightSlots,
+		Wires = wires,
+		Token = wireToken,
+	}
+
+	wireRemote:FireClient(player, "Open", {
+		Token = wireToken,
+		Wires = wires,
+		RightSlots = rightSlots, --// the colour layout IS the puzzle
+		BreakerPosition = outage.Part and outage.Part.Position or Vector3.zero,
+	})
+
+	--// An abandoned panel must never deadlock the breaker
+	local myToken = wireToken
+	task.delay(WIREFIX.TimeoutSeconds, function()
+		if wirePuzzle and wirePuzzle.Token == myToken then
+			print("[Events] wire panel timed out - breaker unlocked")
+			cancelWirePuzzle()
+		end
+	end)
+
+	print(("[Events] %s opened the wire panel (%d wires)"):format(player.Name, wires))
+end
+
+wireRemote.OnServerEvent:Connect(function(player, action, token, answer)
+	if action == "Abandon" then
+		if wirePuzzle and wirePuzzle.Token == token and wirePuzzle.Player == player then
+			cancelWirePuzzle()
+		end
+		return
+	end
+	if action ~= "Submit" then return end
+
+	local puzzle = wirePuzzle
+	if not puzzle or puzzle.Token ~= token or puzzle.Player ~= player then return end
+	if not outage.Active then return end
+
+	--// The server's own walk-away check (the client also closes itself)
+	local character = player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	if not root or not outage.Part
+		or (root.Position - outage.Part.Position).Magnitude > WIREFIX.WalkAwayStuds + 6 then
+		cancelWirePuzzle()
+		return
+	end
+
+	--// THE CHECK: answer[leftIndex] = right slot. Every wire must land in
+	--// the slot holding its own colour, each slot used exactly once.
+	if type(answer) ~= "table" then return end
+	local used = {}
+	for leftIndex = 1, puzzle.Wires do
+		local slot = tonumber(answer[leftIndex])
+		if not slot or used[slot] or puzzle.RightSlots[slot] ~= leftIndex then
+			wireRemote:FireClient(player, "Deny", puzzle.Token)
+			return
+		end
+		used[slot] = true
+	end
+
+	--// Solved: exit through the SAME success path as EASY's hold -
+	--// reward, career credit, charge and announcement all come free
+	wirePuzzle = nil
+	wireRemote:FireClient(player, "Close", puzzle.Token)
+	print(("[Events] %s matched every wire - power restored"):format(player.Name))
+	stopOutage(player)
+end)
+
+local function setupBreaker()
+	outage.Part = firstTaggedPart("BreakerBox")
+	if not outage.Part then
+		warn("[Events] no part tagged BreakerBox - the power outage is disabled")
+		return false
+	end
+
+	local gui = Instance.new("BillboardGui")
+	gui.Name = "BreakerAlert"
+	gui.Size = UDim2.fromOffset(120, 48)
+	gui.StudsOffsetWorldSpace = Vector3.new(0, 3.5, 0)
+	gui.AlwaysOnTop = true
+	gui.Enabled = false
+	gui.Parent = outage.Part
+
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.fromScale(1, 1)
+	label.BackgroundTransparency = 1
+	label.TextScaled = true
+	label.Font = Enum.Font.FredokaOne
+	label.TextColor3 = Color3.fromRGB(255, 235, 120)
+	label.TextStrokeColor3 = Color3.fromRGB(59, 43, 32)
+	label.TextStrokeTransparency = 0
+	label.Text = "!"
+	label.Parent = gui
+
+	outage.Gui = gui
+
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.Name = "RestorePower"
+	prompt.ActionText = "Restore power"
+	prompt.ObjectText = "Breaker box"
+	prompt.MaxActivationDistance = Config.Interaction.PromptRangeStuds
+	prompt.RequiresLineOfSight = Config.Interaction.PromptRequiresLineOfSight
+	prompt.Enabled = false
+	prompt.Parent = outage.Part
+	outage.Prompt = prompt
+
+	--// FIXER PASSIVE: same per-player channel scaling as the plunge
+	prompt.PromptButtonHoldBegan:Connect(function(player)
+		local mult = player:GetAttribute("ChannelMult") or 1
+		if mult ~= 1 and outage.Active then
+			local diffName = Config.IsValidDifficulty(shiftInfo().Difficulty)
+				and shiftInfo().Difficulty or "NORMAL"
+			local seconds = OUTAGE.FixChannelSeconds[diffName] or OUTAGE.FixChannelSeconds.NORMAL
+			prompt.HoldDuration = seconds * mult
+		end
+	end)
+	prompt.PromptButtonHoldEnded:Connect(function()
+		if outage.Active then
+			refreshOutageUi()
+		end
+	end)
+
+	--// No tool needed - the whole point is that anyone can run for it
+	prompt.Triggered:Connect(function(player)
+		if not outage.Active then return end
+		local diffTable = difficultyBlock()
+		if diffTable.Interactions and diffTable.Interactions.BreakerMinigame then
+			beginWirePuzzle(player) --// gated: the tap opens the wire panel
+		else
+			stopOutage(player) --// EASY: the channel hold just completed
+		end
+	end)
+
+	print(("[Events] breaker box ready at %s"):format(outage.Part:GetFullName()))
+	return true
+end
+
+----------------------------------------------------------------
 -- Event registry. New events add an entry here; the scheduler only ever
 -- picks from what is registered AND weighted, so unimplemented entries in
 -- Config.EventWeights are skipped rather than crashing.
@@ -1066,6 +2185,81 @@ local function anyEventActive()
 		end
 	end
 	return false
+end
+
+--// STUDIO-ONLY DEBUG: force an event on demand, for fixture testing.
+--// Command bar (server view):
+--//   game.ServerStorage.DebugStartEvent:Invoke("ToiletEmergency")
+--// Also takes "GreaseFire" / "PowerOutage". Never exists in live servers.
+if game:GetService("RunService"):IsStudio() then
+	local debugStart = Instance.new("BindableFunction")
+	debugStart.Name = "DebugStartEvent"
+	debugStart.OnInvoke = function(name)
+		--// Refusals WARN (orange in Output) - the command bar swallows
+		--// return values, so a silent reason helps nobody
+		local definition = EVENTS[name]
+		if not definition then
+			local names = {}
+			for registered in pairs(EVENTS) do
+				table.insert(names, registered)
+			end
+			warn(("[Events] DEBUG refused: unknown event '%s' - registered: %s")
+				:format(tostring(name),
+					#names > 0 and table.concat(names, ", ") or "NONE"))
+			return false
+		end
+		if anyEventActive() then
+			warn("[Events] DEBUG refused: an event is already active - resolve it first")
+			return false
+		end
+		print(("[Events] DEBUG: force-starting %s"):format(name))
+		definition.Start()
+		return true
+	end
+	debugStart.Parent = ServerStorage
+end
+
+--// STUDIO auto-event (Config.StudioForceEventOnStart): fire one event a
+--// few seconds into RUNNING so an emergency test needs no command bar.
+if game:GetService("RunService"):IsStudio()
+	and (Config.StudioForceEventOnStart or "") ~= "" then
+	task.spawn(function()
+		while shiftInfo().State ~= "RUNNING" do
+			task.wait(0.5)
+		end
+		task.wait(Config.StudioForceEventDelaySeconds or 6)
+		local name = Config.StudioForceEventOnStart
+		local definition = EVENTS[name]
+		if definition and not anyEventActive() then
+			print(("[Events] STUDIO: auto-starting %s (StudioForceEventOnStart)")
+				:format(name))
+			definition.Start()
+		else
+			warn(("[Events] STUDIO auto-event '%s' skipped (unknown or one already active)")
+				:format(tostring(name)))
+		end
+	end)
+end
+
+--// TUTORIAL SEAM: the tutor's FIRE DRILL. Same start path as the
+--// debug lever above but it EXISTS on live servers - hard-gated to
+--// tutorial mode, server-only, refuses anything already burning.
+do
+	local bindable = Instance.new("BindableFunction")
+	bindable.Name = "TutorialStartEvent"
+	bindable.OnInvoke = function(name)
+		if workspace:GetAttribute("MatchMode") ~= "TUTORIAL" then
+			return false
+		end
+		local definition = EVENTS[name]
+		if not definition or anyEventActive() then
+			return false
+		end
+		print(("[Events] TUTORIAL: force-starting %s for the drill"):format(name))
+		definition.Start()
+		return true
+	end
+	bindable.Parent = ServerStorage
 end
 
 local function pickEvent(difficultyName)
@@ -1093,16 +2287,113 @@ local function pickEvent(difficultyName)
 	return pool[#pool]
 end
 
+--// SPEED DIAL! bridge (the Fixer's ultimate): instantly resolves whatever
+--// is active by calling the SAME success paths a hands-on fix uses -
+--// cleanup, reward, career credit and announcement all come free.
+--// False = nothing active = the caller must NOT consume the charge.
+do
+	local bridge = Instance.new("BindableFunction")
+	bridge.Name = "ResolveActiveEvent"
+	bridge.OnInvoke = function(player)
+		if toilet.Active then
+			stopToilet(player)
+			return true
+		elseif fire.Active then
+			stopFire(player)
+			return true
+		elseif outage.Active then
+			stopOutage(player)
+			return true
+		elseif spill.Active then
+			eventStats.SpillsSwept += 1
+			creditStat(player, "EventChannels", 1)
+			stopSpill(player)
+			return true
+		end
+		return false, "No emergency right now!"
+	end
+	bridge.Parent = ServerStorage
+end
+
+--// THE FIXER'S TOOLBELT SKILL: hand the player the tool the CURRENT
+--// emergency needs (plunger / broom / extinguisher). PowerOutage needs no
+--// tool - you fix it at the breaker box. Returns (ok, message).
+do
+	local bridge = Instance.new("BindableFunction")
+	bridge.Name = "GiveEventTool"
+	bridge.OnInvoke = function(player)
+		if not player then return false end
+		local active = EventState:GetAttribute("ActiveEvent") or ""
+		if active == "ToiletEmergency" then
+			return givePlungerTo(player), "plunger"
+		elseif active == "Spill" then
+			return giveBroomTo(player), "broom"
+		elseif active == "GreaseFire" then
+			if giveExtinguisherTo(player) then
+				return true, "extinguisher"
+			end
+			return false, "Someone already has the extinguisher!"
+		elseif active == "PowerOutage" then
+			return false, "No tool needed - fix it at the breaker!"
+		end
+		return false, "No emergency right now!"
+	end
+	bridge.Parent = ServerStorage
+end
+
+--// FIX AUDIO. Each emergency has its own mini-game - tapping to plunge,
+--// rewiring a breaker, spraying a fire - and each has several ways in and
+--// several ways out (finished, walked away, died, event cancelled). Hooking
+--// every one of those would leave a loop playing after a fix eventually.
+--//
+--// So this follows the SESSION instead. One place, and a loop can never
+--// outlive the thing it belongs to.
+local fixLoops = {}
+
+local function syncFixLoop(key, active, soundName, part)
+	local live = fixLoops[key]
+	if active and part and not live then
+		fixLoops[key] = Sfx.Loop(soundName, part)
+	elseif (not active or not part) and live then
+		live:Stop()
+		fixLoops[key] = nil
+	end
+end
+
 RunService.Heartbeat:Connect(function(dt)
+	--// Positional: you hear the work where the work is happening.
+	--// (No breaker loop - owner ruling: the wire fix sounds per wire
+	--// CONNECTION, client-side in WireFixClient.)
+	syncFixLoop("Toilet", plungeSession ~= nil, "ToiletFix", toilet.Part)
+	syncFixLoop("Spill", sweepSession ~= nil, "MopSweep", spill.Puddle)
+	syncFixLoop("Fire", fire.Dousing ~= nil, "FireExtinguish",
+		fire.Dousing and fire.Dousing.Target and fire.Dousing.Target.Part or nil)
+
 	local info = shiftInfo()
+
+	--// Fresh shift, fresh report counters
+	if info.State ~= lastShiftState then
+		if info.State == "RUNNING" then
+			for key in pairs(eventStats) do
+				eventStats[key] = 0
+			end
+		end
+		lastShiftState = info.State
+	end
 
 	--// Nothing runs outside a live shift, and anything mid-flight is cleared
 	if info.State ~= "RUNNING" then
+		if spill.Active then
+			stopSpill(nil)
+		end
 		if toilet.Active then
 			stopToilet(nil)
 		end
 		if fire.Active then
 			stopFire(nil)
+		end
+		if outage.Active then
+			stopOutage(nil)
 		end
 		return
 	end
@@ -1126,47 +2417,93 @@ RunService.Heartbeat:Connect(function(dt)
 		end
 	end
 
-	--// Tick the fire: every burning station's fuse runs independently,
-	--// except while someone is actively spraying it
-	if fire.Active then
-		local expired, doused = nil, nil
-		local soonest = math.huge
-		for _, burn in pairs(fire.Burning) do
-			local douse = burn.Dousing
-			if douse then
-				--// Cancel if the sprayer let go of the tool, died, or
-				--// wandered out of range; finish when the channel completes
-				local character = douse.Player and douse.Player.Character
-				local holding = character and extinguisherTool
-					and extinguisherTool.Parent == character
-				local root = character and character:FindFirstChild("HumanoidRootPart")
-				local inRange = root
-					and (burn.Part.Position - root.Position).Magnitude <= FIRE.DouseRangeStuds
+	--// Tick the spill: fuse down to the gut-punch, then a short self-dry
+	if spill.Active then
+		if not spill.Hit then
+			spill.Remaining -= dt
+			if spill.Remaining <= 0 then
+				soakSpill()
+			else
+				refreshSpillUi()
+				EventState:SetAttribute("FuseRemaining", math.max(0, spill.Remaining))
+			end
+		else
+			spill.EvaporateIn -= dt
+			if spill.EvaporateIn <= 0 then
+				stopSpill(nil)
+			end
+		end
+	end
 
-				if not (holding and inRange) then
-					burn.Dousing = nil
+	--// Tick the outage: no fuse, just a steady bleed until someone fixes it
+	if outage.Active then
+		outage.DrainAccum += dt
+		if outage.DrainAccum >= 10 then
+			outage.DrainAccum -= 10
+			applyRep(-OUTAGE.RepDrainPer10s, "power outage")
+		end
+	end
+
+	--// Tick the fire: ONE shared spray channel fights the whole blaze,
+	--// and every spread fuse pauses while it runs. No sprayer = the
+	--// fuses burn down toward spread.
+	if fire.Active then
+		local douse = fire.Dousing
+		if douse then
+			--// Cancel if the sprayer let go of the tool, died, or wandered
+			--// from the flames they aimed at; finish = the WHOLE fire out
+			local character = douse.Player and douse.Player.Character
+			local holding = character and extinguisherTool
+				and extinguisherTool.Parent == character
+			local root = character and character:FindFirstChild("HumanoidRootPart")
+			local inRange = root and douse.Target
+				and (douse.Target.Part.Position - root.Position).Magnitude <= FIRE.DouseRangeStuds
+
+			if not (holding and inRange) then
+				fire.Dousing = nil
+				for _, burn in pairs(fire.Burning) do
 					if burn.Steam then burn.Steam.Enabled = false end
 					if burn.Fx then burn.Fx.Size = FIRE.FireSize end
-				else
-					douse.Remaining -= dt
-					--// The flames visibly die back as the spray works
-					if burn.Fx then
-						burn.Fx.Size = math.max(2,
-							FIRE.FireSize * math.clamp(douse.Remaining / douse.Total, 0, 1))
-					end
-					if douse.Remaining <= 0 then
-						doused = doused or {}
-						table.insert(doused, burn)
-					end
 				end
 			else
+				douse.Remaining -= dt
+				--// Every flame in the kitchen dies back together
+				local shrunk = math.max(2,
+					FIRE.FireSize * math.clamp(douse.Remaining / douse.Total, 0, 1))
+				for _, burn in pairs(fire.Burning) do
+					if burn.Fx then burn.Fx.Size = shrunk end
+				end
+				if douse.Remaining <= 0 then
+					eventStats.FiresExtinguished += 1
+					creditStat(douse.Player, "EventChannels", 1) --// the Fixer's career
+					print(("[Events] %s sprayed the fire out"):format(douse.Player.Name))
+					stopFire(douse.Player)
+				end
+			end
+		else
+			local expired = nil
+			for _, burn in pairs(fire.Burning) do
 				burn.Remaining -= dt
 				if burn.Remaining <= 0 then
 					expired = expired or {}
 					table.insert(expired, burn)
 				end
 			end
+			if expired then
+				for _, burn in ipairs(expired) do
+					if fire.Active and fire.Burning[burn.Id] then
+						spreadFrom(burn, "the fuse ran out")
+					end
+				end
+			end
+		end
+	end
 
+	--// The spray may have just ended the event - everything below is
+	--// live-fire bookkeeping only
+	if fire.Active then
+		local soonest = math.huge
+		for _, burn in pairs(fire.Burning) do
 			refreshFireUi(burn)
 			if burn.Remaining < soonest then
 				soonest = burn.Remaining
@@ -1174,22 +2511,6 @@ RunService.Heartbeat:Connect(function(dt)
 		end
 		if soonest < math.huge then
 			EventState:SetAttribute("FuseRemaining", math.max(0, soonest))
-		end
-
-		if doused then
-			for _, burn in ipairs(doused) do
-				if fire.Burning[burn.Id] and burn.Dousing then
-					extinguishStation(burn.Id, burn.Dousing.Player)
-				end
-			end
-		end
-
-		if expired then
-			for _, burn in ipairs(expired) do
-				if fire.Active and fire.Burning[burn.Id] then
-					spreadFrom(burn, "the fuse ran out")
-				end
-			end
 		end
 
 		--// Each burning station bleeds reputation independently
@@ -1263,6 +2584,24 @@ task.spawn(function()
 		})
 	elseif hasMount then
 		warn("[Events] GreaseFire not registered - KitchenStationControl bridge never appeared")
+	end
+
+	if setupBreaker() then
+		registerEvent("PowerOutage", {
+			Start = startOutage,
+			Stop = function() stopOutage(nil) end,
+			IsActive = function() return outage.Active end,
+		})
+	end
+
+	--// THE SPILL needs its broom mount (owner places & tags BroomMount
+	--// on each map) and at least one tagged Table to splat beside
+	if setupBroomMount() then
+		registerEvent("Spill", {
+			Start = startSpill,
+			Stop = function() stopSpill(nil) end,
+			IsActive = function() return spill.Active end,
+		})
 	end
 
 	local names = {}
