@@ -131,6 +131,9 @@ end
 --// about. Rendering only - the server still validates every Triggered.
 local function publishState(slot)
 	slot.Root:SetAttribute("PassState", slot.State)
+	--// the plated dish name, so clients can show which plate is which (the
+	--// Waiter's EXPRESS RUN ready-indicator reads this)
+	slot.Root:SetAttribute("PassDish", slot.Dish or "")
 end
 
 local function setShown(slot, shown)

@@ -527,7 +527,8 @@ ShiftState:GetAttributeChangedSignal("State"):Connect(function()
 	if state == "RUNNING" and lastState ~= "RUNNING" then
 		--// TUTORIAL: no Helper - he would seat and serve Bruno's whole
 		--// lesson himself before the rookie moved a muscle
-		if #Players:GetPlayers() <= HELPER.MaxPlayersForHelper
+		if HELPER.Enabled ~= false
+			and #Players:GetPlayers() <= HELPER.MaxPlayersForHelper
 			and workspace:GetAttribute("MatchMode") ~= "TUTORIAL" then
 			spawnHelper()
 		end

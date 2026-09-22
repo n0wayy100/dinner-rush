@@ -19,8 +19,9 @@
 	                        dish variants resolve to what open tickets
 	                        want (neediest first), else by
 	                        Config.Ultimates.FlashFryMethodOrder
-	  Waiter   DOUBLE TIME! SpeedBoostMult attribute for SpeedBoostSeconds
-	                        (SprintClient applies the movement feel)
+	  Waiter   EXPRESS RUN! teleport to the pass, grab every plate, and
+	                        flash-serve each to the neediest ordering table
+	                        (ServiceLoop.WaiterExpress does the work)
 	  Fixer    SPEED DIAL!  ServerStorage.ResolveActiveEvent (EventSystem's
 	                        own stop* success paths - never re-implemented)
 	  Charmer  SWEET TALK!  ServerStorage.SweetTalkTable (ServiceLoop's
@@ -250,23 +251,24 @@ local function flashFry(player)
 	return true
 end
 
---// DOUBLE TIME (replaced THIRD HAND, owner call Sep 2026): a timed
---// speed burst. Server owns the attribute + timer; SprintClient scales
---// the actual WalkSpeed (movement feel is the documented client-side
---// exception). Deny-while-active keeps the charge.
-local function doubleTime(player)
-	if player:GetAttribute("SpeedBoostMult") then
-		return false, "Already at double time!"
+--// EXPRESS RUN (Waiter ultimate, revamped Sep 2026): teleport to the pass,
+--// grab every plate, and flash-serve each to the neediest table that ordered
+--// it. All the work is in ServiceLoop's WaiterExpress bridge (it owns the
+--// tables, patience and serve flow); here we just fire it. No plates / no
+--// matching tables = it keeps the charge.
+local function expressRun(player)
+	local bridge = ServerStorage:FindFirstChild("WaiterExpress")
+	if not bridge then
+		return false, "The floor's not ready!"
 	end
-	player:SetAttribute("SpeedBoostMult", ULT.SpeedBoostMult)
-	task.delay(ULT.SpeedBoostSeconds, function()
-		if player.Parent then
-			player:SetAttribute("SpeedBoostMult", nil)
-		end
-	end)
-	print(("[Charge] DOUBLE TIME! %s moves x%.2f for %ds"):format(
-		player.Name, ULT.SpeedBoostMult, ULT.SpeedBoostSeconds))
-	return true
+	local ok, served, reason = pcall(function() return bridge:Invoke(player) end)
+	if not ok then
+		return false, "Delivery jammed!"
+	end
+	if served then
+		print(("[Charge] EXPRESS RUN! %s flash-served the neediest tables"):format(player.Name))
+	end
+	return served, reason
 end
 
 local function speedDial(player)
@@ -305,7 +307,7 @@ end
 
 local ABILITIES = {
 	Chef = flashFry,
-	Waiter = doubleTime,
+	Waiter = expressRun,
 	Fixer = speedDial,
 	Charmer = sweetTalk,
 }

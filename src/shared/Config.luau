@@ -412,6 +412,27 @@ Config.Whack = {
 }
 
 ----------------------------------------------------------------
+-- THE PLATE-THROW SLINGSHOT (Waiter's Plate Juggler, Sep 22 2026): a GUI
+-- minigame. Press R holding a plated dish -> a slingshot panel opens with
+-- one target card per table that ORDERED that dish (up to MaxTargets).
+-- Drag the plate back (Angry Birds) and release; the plate arcs in 2D
+-- under Gravity and, landing on a table card, serves that real table.
+-- Miss = the plate resets to the sling to try again; the panel's X cancels
+-- (nothing lost). All render + intent client-side; the SERVE is server-
+-- validated (the client only reports which table it hit).
+----------------------------------------------------------------
+Config.PlateThrow = {
+	MaxTargets = 4,          -- most table cards shown (there are 4 tables)
+	Gravity = 2200,          -- panel gravity (px/s^2) - bigger = snappier drop
+	PowerScale = 6.5,        -- pull distance (px) -> launch speed (px/s)
+	MaxPullPixels = 240,     -- clamp the slingshot pull
+	MinPullPixels = 12,      -- ignore a tiny drag (a stray tap)
+	PlateRadiusPx = 26,      -- the flying plate's hit size
+	TargetRadiusPx = 54,     -- a table card's catch size (generous)
+	TrailDots = 22,          -- dotted trajectory preview length
+}
+
+----------------------------------------------------------------
 -- THE TUTORIAL (owner design, Sep 2026): a guided first shift in the
 -- real restaurant. Opt-in only - a live server enters it via lobby
 -- teleport data (Mode = "TUTORIAL"; button lands with the lobby
@@ -1529,7 +1550,7 @@ Config.Classes = {
 			Name = "DASH",
 			Text = "Burst forward - cross the floor or catch a dasher",
 			Emoji = "💨",
-			IconId = "",
+			IconId = "rbxassetid://83750035573275",
 			CooldownSeconds = 8,
 			DashSpeed = 85,       -- studs/sec during the burst (client-side, like sprint)
 			DashSeconds = 0.28,   -- burst length (~24 studs)
@@ -1537,27 +1558,15 @@ Config.Classes = {
 		SkillR = {
 			Id = "PlateJuggler",
 			Name = "PLATE JUGGLER",
-			Text = "Slingshot the plated dish you hold onto a table that ordered it",
+			Text = "Slingshot a plated dish onto a table that ordered it",
 			Emoji = "🍽️",
-			IconId = "",
-			CooldownSeconds = 6,
-			HoldAim = true, --// R is press-DRAG-release (Angry Birds), not a tap
-			--// THE SLINGSHOT (drag-back aim, all client-tunable):
-			--// power = how far you drag; pitch = how far DOWN you drag; yaw =
-			--// how far sideways. You launch OPPOSITE the pull.
-			MaxDragPixels = 240,  -- drag this far (from the press point) = full power
-			MinPower = 55,        -- launch speed at the tiniest drag (studs/sec)
-			MaxPower = 150,       -- launch speed at full drag
-			MinPitchDeg = 18,     -- flattest arc (little vertical drag)
-			MaxPitchDeg = 68,     -- steepest arc (full downward drag)
-			MaxYawDeg = 55,       -- how far sideways drag can swing the aim
-			--// FLIGHT + CATCH:
-			HitRadiusStuds = 8,   -- the arc passing this close to an ordering table serves it ("close enough")
-			MaxFlightSeconds = 3, -- give up (miss) after this
-			ReturnSeconds = 0.3,  -- a miss floats the plate back to your hand this fast
+			IconId = "rbxassetid://138988630662839",
+			CooldownSeconds = 30, -- a strong shortcut (serve without walking), so it's rationed
+			--// The aiming is a GUI SLINGSHOT MINIGAME (Config.PlateThrow) - press
+			--// R holding a plated dish and it opens.
 		},
-		UltimateName = "DOUBLE TIME!",
-		UltimateText = "A huge burst of speed to clear the whole floor",
+		UltimateName = "EXPRESS RUN!",
+		UltimateText = "Teleport to the pass, grab every plate, and flash-serve the neediest tables",
 		--// ~10-15 serves per focused shift
 		UpgradeTrack = {
 			Counter = "DishesServed", Label = "Dishes served",
@@ -2494,6 +2503,8 @@ end
 -- difficulty mercy - runs on every difficulty.
 ----------------------------------------------------------------
 Config.Helper = {
+	Enabled = false,             -- TEMP (Sep 22): off so it stops interfering with
+	                              -- skill playtests - set back to true for real play
 	MaxPlayersForHelper = 2,      -- helper spawns when the shift starts
 	                              -- with this many players or fewer
 	WalkSpeed = 13,               -- an amble; players can always outrun it

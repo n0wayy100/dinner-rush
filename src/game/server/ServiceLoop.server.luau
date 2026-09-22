@@ -3329,59 +3329,123 @@ do
 		return true
 	end)
 
-	--// PLATE JUGGLER (Waiter SkillR, SkillService): a drag-back SLINGSHOT.
-	--// WaiterThrowInfo hands the skill everything it needs to fly a plated
-	--// dish as a physics projectile - the held Tool (hidden, so the hand looks
-	--// empty mid-flight; SkillService re-equips it on a miss or destroys it on
-	--// a serve), the launch origin, and the positions of every table that
-	--// ordered that dish (the arc landing near one = a serve).
-	makeBridge("WaiterThrowInfo", function(player)
-		local character = player and player.Character
-		local root = character and character:FindFirstChild("HumanoidRootPart")
-		if not root then return nil end
-
-		--// the FIRST plated dish the waiter is carrying
-		local tool
+	--// PLATE JUGGLER (Waiter SkillR): a GUI slingshot minigame. WaiterThrow
+	--// Targets tells the skill which dish the waiter holds and which tables
+	--// ordered it - one becomes a target card in the panel. The held plate is
+	--// NOT touched here; it only leaves the hand on a landed serve.
+	local function firstHeldPlate(character, player)
 		for _, container in ipairs({ character, player:FindFirstChildOfClass("Backpack") }) do
-			if container and not tool then
+			if container then
 				for _, t in ipairs(container:GetChildren()) do
 					if t:IsA("Tool") and t:GetAttribute("Dish") and t:GetAttribute("PlateSlot") then
-						tool = t
-						break
+						return t
 					end
 				end
 			end
 		end
-		if not tool then return nil end
+		return nil
+	end
 
+	makeBridge("WaiterThrowTargets", function(player)
+		local character = player and player.Character
+		if not character then return nil end
+		local tool = firstHeldPlate(character, player)
+		if not tool then return nil end
 		local dish = tool:GetAttribute("Dish")
 		local targets = {}
 		for _, party in pairs(parties) do
 			if party.State == STATE.WAITING_FOOD and party.TableId
 				and table.find(party.Ticket or {}, dish) then
-				local tpart = tableById[party.TableId]
-				if tpart then
-					table.insert(targets, { TableId = party.TableId, Position = tpart.Position })
+				table.insert(targets, { TableId = party.TableId })
+			end
+		end
+		if #targets == 0 then return nil end --// no one wants it - no throw
+		return { Dish = dish, Targets = targets }
+	end)
+
+	--// The minigame reports which table the plate landed on; serve it with the
+	--// waiter's credit. Server-authoritative: it re-finds the held plate and
+	--// re-checks the table wants it - the client only names the table.
+	makeBridge("WaiterServeThrown", function(player, tableId)
+		local character = player and player.Character
+		if not character then return false end
+		local party = tableOccupant[tableId]
+		if not party or party.State ~= STATE.WAITING_FOOD then return false end
+		local tool = firstHeldPlate(character, player)
+		if not tool then return false end
+		local dish = tool:GetAttribute("Dish")
+		if not table.find(party.Ticket or {}, dish) then return false end
+		local quality = tool:GetAttribute("Quality")
+		local plateSlot = tool:GetAttribute("PlateSlot")
+		tool:Destroy()
+		serveDishToParty(party, tableId, dish, quality, plateSlot, player)
+		return true
+	end)
+
+	--// EXPRESS RUN (Waiter ULTIMATE, ChargeService): teleport the waiter to the
+	--// pass, take EVERY plated dish, and flash-serve each to the neediest table
+	--// that ordered it - teleporting table to table. Every serve is the waiter's
+	--// credit. Returns false (keeps the charge) if there is nothing to deliver.
+	makeBridge("WaiterExpress", function(player)
+		local character = player and player.Character
+		local root = character and character:FindFirstChild("HumanoidRootPart")
+		if not root then return false end
+
+		local snap = ServerStorage:FindFirstChild("HelperPassSnapshot")
+		local take = ServerStorage:FindFirstChild("HelperTakeDish")
+		if not snap or not take then return false end
+		local plated = snap:Invoke()
+		if type(plated) ~= "table" or #plated == 0 then
+			return false, "No plates on the pass!"
+		end
+
+		--// teleport to the pass (the grab)
+		local passPart
+		for _, inst in ipairs(CollectionService:GetTagged("Pass")) do
+			if inst:IsDescendantOf(workspace) then
+				passPart = inst:IsA("BasePart") and inst
+					or (inst:IsA("Model") and (inst.PrimaryPart
+						or inst:FindFirstChildWhichIsA("BasePart", true)))
+				if passPart then break end
+			end
+		end
+		if passPart then
+			root.CFrame = CFrame.new(passPart.Position + Vector3.new(0, 3, 4))
+			task.wait(0.15)
+		end
+
+		local function patienceFrac(party)
+			return math.clamp((party.BarRemaining or 0) / math.max(party.BarTotal or 1, 1), 0, 1)
+		end
+
+		local served = 0
+		for _, slot in ipairs(plated) do
+			--// neediest WAITING_FOOD table that ordered this exact plate
+			local best, bestFrac
+			for _, party in pairs(parties) do
+				if party.State == STATE.WAITING_FOOD and party.TableId
+					and table.find(party.Ticket or {}, slot.Dish) then
+					local frac = patienceFrac(party)
+					if not bestFrac or frac < bestFrac then
+						best, bestFrac = party, frac
+					end
+				end
+			end
+			if best then
+				local dish, quality = take:Invoke(slot.SlotId)
+				if dish then
+					local tpart = tableById[best.TableId]
+					if tpart and root.Parent then
+						root.CFrame = CFrame.new(tpart.Position + Vector3.new(0, 3, 4))
+						task.wait(0.12)
+					end
+					serveDishToParty(best, best.TableId, dish, quality, slot.SlotId, player)
+					served += 1
 				end
 			end
 		end
 
-		local from = root.Position + Vector3.new(0, 2.5, 0)
-		tool.Parent = nil --// hidden - the flying plate stands in for it
-		return {
-			Tool = tool, Dish = dish,
-			Quality = tool:GetAttribute("Quality"),
-			PlateSlot = tool:GetAttribute("PlateSlot"),
-			From = from, Targets = targets,
-		}
-	end)
-
-	--// The arc reached a table that ordered it - serve with the waiter's credit
-	makeBridge("WaiterServeThrown", function(player, tableId, dish, quality, plateSlot)
-		local party = tableOccupant[tableId]
-		if not party or party.State ~= STATE.WAITING_FOOD then return false end
-		if not table.find(party.Ticket or {}, dish) then return false end
-		serveDishToParty(party, tableId, dish, quality, plateSlot, player)
+		if served == 0 then return false, "No table wants what's on the pass!" end
 		return true
 	end)
 end
