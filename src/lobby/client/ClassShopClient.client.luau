@@ -7,8 +7,9 @@
 
 	  LEFT  - the card list, pinned to the left edge
 	  RIGHT - the detail panel: rarity header band, big icon, LEVEL bar,
-	          REQUIRED TASK block with a large progress bar, passive +
-	          ultimate, and the BUY / EQUIP / UPGRADE buttons
+	          REQUIRED TASK block with a large progress bar, the passive,
+	          a Q / R / T skill row (tap a tile for a readable card), and
+	          the BUY / EQUIP / UPGRADE buttons
 	  BOTTOM CENTRE - wallet balance + the CLOSE button
 
 	Render only: every number and decision comes from the server. Buttons
@@ -293,15 +294,355 @@ dPassive.AnchorPoint = Vector2.new(0.5, 0)
 dPassive.Position = UDim2.fromScale(0.5, 0.675)
 dPassive.Size = UDim2.fromScale(0.9, 0.045)
 
-local dUltName = makeText(detail, "UltimateName", Enum.Font.FredokaOne, TOMATO)
-dUltName.AnchorPoint = Vector2.new(0.5, 0)
-dUltName.Position = UDim2.fromScale(0.5, 0.726)
-dUltName.Size = UDim2.fromScale(0.9, 0.05)
+--// SKILLS: one tile per key - Q, R, then the ultimate on T. Tapping a tile
+--// opens a big readable card in the middle of the screen, because a skill
+--// description squeezed into a side panel is text nobody reads.
+local SKILL_KEYS = Config.Skills or {}
+local SLOTS = {
+	{ Slot = "SkillQ", Key = SKILL_KEYS.QKey or "Q" },
+	{ Slot = "SkillR", Key = SKILL_KEYS.RKey or "R" },
+	{ Slot = "Ultimate", Key = SKILL_KEYS.UltKey or "T" },
+}
 
-local dUltText = makeText(detail, "UltimateText", Enum.Font.Gotham, GREY_TEXT)
-dUltText.AnchorPoint = Vector2.new(0.5, 0)
-dUltText.Position = UDim2.fromScale(0.5, 0.778)
-dUltText.Size = UDim2.fromScale(0.9, 0.052)
+--// Each slot has its own colour so the three read apart at a glance.
+--// Main fills the tile and the card; Dark is for chips and outlines on top.
+local SLOT_COLORS = {
+	SkillQ = { Main = Color3.fromRGB(76, 175, 109), Dark = Color3.fromRGB(44, 120, 70) },    -- green
+	SkillR = { Main = Color3.fromRGB(242, 146, 48), Dark = Color3.fromRGB(176, 94, 18) },    -- orange
+	Ultimate = { Main = Color3.fromRGB(72, 138, 232), Dark = Color3.fromRGB(36, 88, 172) },  -- blue
+	Locked = { Main = Color3.fromRGB(196, 188, 178), Dark = Color3.fromRGB(140, 130, 120) },
+}
+
+local skillRow = Instance.new("Frame")
+skillRow.Name = "SkillRow"
+skillRow.AnchorPoint = Vector2.new(0.5, 0)
+skillRow.Position = UDim2.fromScale(0.5, 0.724)
+skillRow.Size = UDim2.fromScale(0.9, 0.105)
+skillRow.BackgroundTransparency = 1
+skillRow.Parent = detail
+
+local rowLayout = Instance.new("UIListLayout")
+rowLayout.FillDirection = Enum.FillDirection.Horizontal
+rowLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+rowLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+rowLayout.Padding = UDim.new(0.04, 0)
+rowLayout.SortOrder = Enum.SortOrder.LayoutOrder
+rowLayout.Parent = skillRow
+
+local function hasImage(id)
+	return type(id) == "string" and id ~= "" and not id:match("//0$")
+end
+
+--// slot -> { Button, Icon, Glyph, Caption, Stroke, Key, Info }
+local skillTiles = {}
+
+for order, entry in ipairs(SLOTS) do
+	local button = Instance.new("TextButton")
+	button.Name = entry.Slot .. "Tile"
+	button.Text = ""
+	button.AutoButtonColor = true
+	button.Size = UDim2.fromScale(0.29, 1)
+	button.BackgroundColor3 = Color3.new(1, 1, 1)
+	button.LayoutOrder = order
+	button.Parent = skillRow
+	local stroke = stylize(button, 2.5)
+
+	local icon = Instance.new("ImageLabel")
+	icon.Name = "Icon"
+	icon.BackgroundTransparency = 1
+	icon.AnchorPoint = Vector2.new(0.5, 0)
+	icon.Position = UDim2.fromScale(0.5, 0.07)
+	icon.Size = UDim2.fromScale(0.6, 0.6)
+	icon.ScaleType = Enum.ScaleType.Fit
+	icon.Parent = button
+	local iconAspect = Instance.new("UIAspectRatioConstraint")
+	iconAspect.AspectRatio = 1
+	iconAspect.Parent = icon
+
+	--// Emoji or a letter when there is no icon art yet
+	local glyph = makeText(button, "Glyph", Enum.Font.FredokaOne, CHOC)
+	glyph.AnchorPoint = Vector2.new(0.5, 0)
+	glyph.Position = UDim2.fromScale(0.5, 0.09)
+	glyph.Size = UDim2.fromScale(0.8, 0.54)
+
+	local caption = makeText(button, "Caption", Enum.Font.FredokaOne, CHOC)
+	caption.AnchorPoint = Vector2.new(0.5, 1)
+	caption.Position = UDim2.fromScale(0.5, 0.96)
+	caption.Size = UDim2.fromScale(0.92, 0.24)
+
+	--// The key you press, pinned to the corner like a keycap
+	local badge = makeText(button, "KeyBadge", Enum.Font.FredokaOne, Color3.new(1, 1, 1))
+	badge.BackgroundTransparency = 0
+	badge.BackgroundColor3 = CHOC
+	badge.AnchorPoint = Vector2.new(0.5, 0.5)
+	badge.Position = UDim2.fromScale(0.1, 0.1)
+	badge.Size = UDim2.fromScale(0.34, 0.34)
+	badge.Text = entry.Key
+	badge.ZIndex = 3
+	local badgeAspect = Instance.new("UIAspectRatioConstraint")
+	badgeAspect.AspectRatio = 1
+	badgeAspect.Parent = badge
+	local badgeCorner = Instance.new("UICorner")
+	badgeCorner.CornerRadius = UDim.new(1, 0)
+	badgeCorner.Parent = badge
+
+	skillTiles[entry.Slot] = {
+		Button = button, Icon = icon, Glyph = glyph, Caption = caption,
+		Stroke = stroke, Key = entry.Key, Info = nil,
+	}
+end
+
+----------------------------------------------------------------
+-- THE SKILL CARD: dims the screen, one skill, big and readable
+----------------------------------------------------------------
+
+--// The dim is itself a button, so tapping anywhere outside the card closes it
+local popup = Instance.new("TextButton")
+popup.Name = "SkillPopup"
+popup.Text = ""
+popup.AutoButtonColor = false
+popup.Size = UDim2.fromScale(1, 1)
+popup.BackgroundColor3 = Color3.new(0, 0, 0)
+popup.BackgroundTransparency = 1
+popup.ZIndex = 50
+popup.Visible = false
+popup.Parent = root
+
+local card = Instance.new("Frame")
+card.Name = "Card"
+card.AnchorPoint = Vector2.new(0.5, 0.5)
+card.Position = UDim2.fromScale(0.5, 0.5)
+card.Size = UDim2.fromScale(0.32, 0.56)
+card.BackgroundColor3 = CREAM
+--// Active sinks the click, so tapping the card itself does not fall
+--// through to the dim behind it and close the popup
+card.Active = true
+card.Parent = popup
+stylize(card, 4)
+
+local cardAspect = Instance.new("UIAspectRatioConstraint")
+cardAspect.AspectRatio = 0.8
+cardAspect.Parent = card
+
+local cardScale = Instance.new("UIScale")
+cardScale.Parent = card
+
+local cardGrad = Instance.new("UIGradient")
+cardGrad.Rotation = 90
+--// A neutral shade, not the cream WARM: a gradient multiplies the colour
+--// underneath, and cream would muddy the green, orange and blue cards.
+cardGrad.Color = ColorSequence.new(Color3.new(1, 1, 1), Color3.fromRGB(215, 215, 215))
+cardGrad.Parent = card
+
+--// GothamBold, not FredokaOne: the chunky font crushed into a small chip
+--// turned "ULTIMATE - PRESS T" into an unreadable blob.
+local keyChip = makeText(card, "KeyChip", Enum.Font.GothamBold, Color3.new(1, 1, 1))
+keyChip.BackgroundTransparency = 0
+keyChip.BackgroundColor3 = CHOC
+keyChip.AnchorPoint = Vector2.new(0.5, 0)
+keyChip.Position = UDim2.fromScale(0.5, 0.045)
+keyChip.Size = UDim2.fromScale(0.84, 0.095)
+stylize(keyChip, 2)
+local chipPad = Instance.new("UIPadding")
+chipPad.PaddingLeft = UDim.new(0.06, 0)
+chipPad.PaddingRight = UDim.new(0.06, 0)
+chipPad.PaddingTop = UDim.new(0.18, 0)
+chipPad.PaddingBottom = UDim.new(0.18, 0)
+chipPad.Parent = keyChip
+
+local bigArt = Instance.new("Frame")
+bigArt.Name = "Art"
+bigArt.AnchorPoint = Vector2.new(0.5, 0)
+bigArt.Position = UDim2.fromScale(0.5, 0.17)
+bigArt.Size = UDim2.fromScale(0.42, 0.42)
+bigArt.BackgroundColor3 = Color3.new(1, 1, 1)
+bigArt.Parent = card
+local bigArtStroke = stylize(bigArt, 3)
+local bigArtAspect = Instance.new("UIAspectRatioConstraint")
+bigArtAspect.AspectRatio = 1
+bigArtAspect.Parent = bigArt
+
+local bigIcon = Instance.new("ImageLabel")
+bigIcon.BackgroundTransparency = 1
+bigIcon.AnchorPoint = Vector2.new(0.5, 0.5)
+bigIcon.Position = UDim2.fromScale(0.5, 0.5)
+bigIcon.Size = UDim2.fromScale(0.86, 0.86)
+bigIcon.ScaleType = Enum.ScaleType.Fit
+bigIcon.Parent = bigArt
+
+local bigGlyph = makeText(bigArt, "Glyph", Enum.Font.FredokaOne, CHOC)
+bigGlyph.AnchorPoint = Vector2.new(0.5, 0.5)
+bigGlyph.Position = UDim2.fromScale(0.5, 0.5)
+bigGlyph.Size = UDim2.fromScale(0.8, 0.8)
+
+local skillName = makeText(card, "SkillName", Enum.Font.FredokaOne, Color3.new(1, 1, 1))
+skillName.TextStrokeColor3 = CHOC
+skillName.TextStrokeTransparency = 0.25
+skillName.AnchorPoint = Vector2.new(0.5, 0)
+skillName.Position = UDim2.fromScale(0.5, 0.62)
+skillName.Size = UDim2.fromScale(0.88, 0.1)
+
+local skillText = makeText(card, "SkillText", Enum.Font.GothamBold, Color3.new(1, 1, 1))
+skillText.TextStrokeColor3 = CHOC
+skillText.TextStrokeTransparency = 0.6
+skillText.AnchorPoint = Vector2.new(0.5, 0)
+skillText.Position = UDim2.fromScale(0.5, 0.73)
+skillText.Size = UDim2.fromScale(0.84, 0.1)
+
+local gotIt = Instance.new("TextButton")
+gotIt.Name = "GotIt"
+gotIt.AnchorPoint = Vector2.new(0.5, 1)
+gotIt.Position = UDim2.fromScale(0.5, 0.955)
+gotIt.Size = UDim2.fromScale(0.58, 0.095)
+gotIt.BackgroundColor3 = Color3.new(1, 1, 1)
+--// GothamBold for the same reason as the key chip: FredokaOne squeezed into
+--// a small button runs its letters together.
+gotIt.Font = Enum.Font.GothamBold
+gotIt.TextScaled = true
+gotIt.TextColor3 = Color3.new(1, 1, 1)
+gotIt.TextStrokeTransparency = 1
+gotIt.Text = "GOT IT!"
+gotIt.Parent = card
+stylize(gotIt, 2.5)
+local gotItPad = Instance.new("UIPadding")
+gotItPad.PaddingLeft = UDim.new(0.1, 0)
+gotItPad.PaddingRight = UDim.new(0.1, 0)
+gotItPad.PaddingTop = UDim.new(0.2, 0)
+gotItPad.PaddingBottom = UDim.new(0.2, 0)
+gotItPad.Parent = gotIt
+
+local function closeSkillPopup()
+	popup.Visible = false
+end
+
+local function openSkillPopup(info)
+	if not info then return end
+	local colors = SLOT_COLORS[info.Locked and "Locked" or info.Slot] or SLOT_COLORS.Locked
+
+	card.BackgroundColor3 = colors.Main
+	keyChip.BackgroundColor3 = colors.Dark
+	keyChip.TextColor3 = Color3.new(1, 1, 1)
+	gotIt.BackgroundColor3 = colors.Dark
+	if info.Locked then
+		keyChip.Text = ("KEY %s"):format(info.Key)
+	elseif info.IsUltimate then
+		keyChip.Text = ("ULTIMATE  -  PRESS %s"):format(info.Key)
+	else
+		keyChip.Text = ("PRESS %s"):format(info.Key)
+	end
+
+	local useImage = hasImage(info.IconId)
+	bigIcon.Visible = useImage
+	bigIcon.Image = useImage and info.IconId or ""
+	bigGlyph.Visible = not useImage
+	bigGlyph.Text = info.Emoji or info.Letter or "?"
+	bigArtStroke.Color = colors.Dark
+
+	skillName.Text = info.Name
+	skillText.Text = info.Text
+
+	--// Pop in: the dim fades, the card springs up from slightly small
+	popup.BackgroundTransparency = 1
+	cardScale.Scale = 0.85
+	popup.Visible = true
+	TweenService:Create(popup, TweenInfo.new(0.15), { BackgroundTransparency = 0.45 }):Play()
+	TweenService:Create(cardScale,
+		TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+		{ Scale = 1 }):Play()
+end
+
+--// Lift everything on the card above the dim explicitly, so it draws on top
+--// whichever ZIndexBehavior this ScreenGui ends up with.
+for _, item in ipairs(card:GetDescendants()) do
+	if item:IsA("GuiObject") then
+		item.ZIndex = 52
+	end
+end
+card.ZIndex = 51
+
+popup.Activated:Connect(closeSkillPopup)
+gotIt.Activated:Connect(closeSkillPopup)
+
+for _, tile in pairs(skillTiles) do
+	tile.Button.Activated:Connect(function()
+		openSkillPopup(tile.Info)
+	end)
+end
+
+--// What one slot shows for this class. nil = the class has nothing there.
+local function skillInfoFor(classKey, class, slot, key)
+	local letter = string.upper(string.sub(classKey, 1, 1))
+
+	if slot == "Ultimate" then
+		if not class.UltimateName or class.UltimateName == "" then
+			return nil
+		end
+		--// The ultimate wears the class sticker, same as the in-game button
+		return {
+			Slot = slot, Key = key, Name = class.UltimateName, Text = class.UltimateText or "",
+			IconId = class.IconId, Letter = letter, IsUltimate = true,
+		}
+	end
+
+	local def = class[slot]
+	if not def then
+		return nil
+	end
+	return {
+		Slot = slot, Key = key, Name = def.Name or def.Id or slot, Text = def.Text or "",
+		IconId = def.IconId, Emoji = def.Emoji, Letter = letter,
+	}
+end
+
+--// Fills the three tiles for the selected class. A class with nothing at
+--// all (the Trainee) hides the row; a class with only some skills (the
+--// Charmer, for now) shows the missing ones as COMING SOON.
+local function renderSkills(classKey, class)
+	local infos, any = {}, false
+	for _, entry in ipairs(SLOTS) do
+		infos[entry.Slot] = skillInfoFor(classKey, class, entry.Slot, entry.Key)
+		any = any or infos[entry.Slot] ~= nil
+	end
+
+	skillRow.Visible = any
+	if not any then
+		return
+	end
+
+	for _, entry in ipairs(SLOTS) do
+		local tile = skillTiles[entry.Slot]
+		local info = infos[entry.Slot]
+
+		local colors = SLOT_COLORS[info and entry.Slot or "Locked"]
+		tile.Button.BackgroundColor3 = colors.Main
+		tile.Stroke.Color = CHOC
+		tile.Stroke.Thickness = 2.5
+		tile.Caption.TextColor3 = Color3.new(1, 1, 1)
+		tile.Caption.TextStrokeColor3 = CHOC
+		tile.Caption.TextStrokeTransparency = 0.3
+
+		if info then
+			local useImage = hasImage(info.IconId)
+			tile.Icon.Visible = useImage
+			tile.Icon.Image = useImage and info.IconId or ""
+			tile.Glyph.Visible = not useImage
+			tile.Glyph.Text = info.Emoji or info.Letter or "?"
+			tile.Glyph.TextColor3 = Color3.new(1, 1, 1)
+			tile.Caption.Text = info.Name
+			tile.Info = info
+		else
+			tile.Icon.Visible = false
+			tile.Glyph.Visible = true
+			tile.Glyph.Text = "?"
+			tile.Glyph.TextColor3 = Color3.new(1, 1, 1)
+			tile.Caption.Text = "SOON"
+			tile.Info = {
+				Slot = entry.Slot, Key = entry.Key, Name = "COMING SOON",
+				Text = "This skill is still being cooked up!", Locked = true,
+			}
+		end
+	end
+end
 
 local dError = makeText(detail, "ErrorText", Enum.Font.GothamBold, TOMATO)
 dError.AnchorPoint = Vector2.new(0.5, 0)
@@ -453,8 +794,7 @@ local function renderDetail()
 	dInitial.Text = string.upper(string.sub(classKey, 1, 1))
 	dFlavor.Text = "\"" .. class.FlavorText .. "\""
 	dPassive.Text = class.PassiveText
-	dUltName.Text = class.UltimateName
-	dUltText.Text = class.UltimateText
+	renderSkills(classKey, class)
 
 	--// Level + the task track: finish the task, then pay to level
 	local track = class.UpgradeTrack
@@ -691,6 +1031,9 @@ local function setOpen(open)
 	gui.Enabled = open
 	root.Visible = open
 	cameraFocus(open)
+	if not open then
+		closeSkillPopup()
+	end
 
 	if walkWatcher then
 		walkWatcher:Disconnect()

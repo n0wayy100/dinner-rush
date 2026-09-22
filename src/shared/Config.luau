@@ -1496,7 +1496,7 @@ Config.Classes = {
 		SkillQ = {
 			Id = "DoubleBatch",
 			Name = "DOUBLE BATCH",
-			Text = "Your next cook plates two dishes",
+			Text = "Your next cook makes two dishes",
 			Emoji = "🍳",
 			IconId = "rbxassetid://77017928564773",
 			CooldownSeconds = 25,
@@ -1505,7 +1505,7 @@ Config.Classes = {
 		SkillR = {
 			Id = "SousChef",
 			Name = "SOUS CHEF",
-			Text = "Summon a cook that fetches, cooks and serves for a while",
+			Text = "Summon a helper who cooks and serves for a while",
 			Emoji = "👨‍🍳",
 			IconId = "rbxassetid://135527262830265",
 			CooldownSeconds = 45,
@@ -1520,7 +1520,7 @@ Config.Classes = {
 			Quality = "Good",         -- what it plates: Good clears tickets with no rep bonus (kept un-OP)
 		},
 		UltimateName = "FLASH FRY!",
-		UltimateText = "Instantly cooks the raw ingredient you're holding to PERFECT",
+		UltimateText = "Instantly cook everything you're holding - perfectly",
 		--// Levels 1->5: finish the task, then PAY to upgrade. Steps[L] is the
 		--// cumulative counter needed to leave level L; Costs[L] the coins.
 		--// Tuned for ~10-15 perfects per focused shift: Lv2 in a shift or two,
@@ -1548,7 +1548,7 @@ Config.Classes = {
 		SkillQ = {
 			Id = "Dash",
 			Name = "DASH",
-			Text = "Burst forward - cross the floor or catch a dasher",
+			Text = "Dash forward fast - great for catching runaways",
 			Emoji = "💨",
 			IconId = "rbxassetid://83750035573275",
 			CooldownSeconds = 8,
@@ -1558,7 +1558,7 @@ Config.Classes = {
 		SkillR = {
 			Id = "PlateJuggler",
 			Name = "PLATE JUGGLER",
-			Text = "Slingshot a plated dish onto a table that ordered it",
+			Text = "Throw a ready dish straight to its table",
 			Emoji = "🍽️",
 			IconId = "rbxassetid://138988630662839",
 			CooldownSeconds = 30, -- a strong shortcut (serve without walking), so it's rationed
@@ -1566,7 +1566,7 @@ Config.Classes = {
 			--// R holding a plated dish and it opens.
 		},
 		UltimateName = "EXPRESS RUN!",
-		UltimateText = "Teleport to the pass, grab every plate, and flash-serve the neediest tables",
+		UltimateText = "Grab every ready plate and serve the neediest tables",
 		--// ~10-15 serves per focused shift
 		UpgradeTrack = {
 			Counter = "DishesServed", Label = "Dishes served",
@@ -1585,14 +1585,14 @@ Config.Classes = {
 		--// are chores, not skill windows - legal under THE LAW.
 		ChannelMult = 0.7,
 		UltimateName = "SPEED DIAL!",
-		UltimateText = "Instantly resolves the active emergency",
+		UltimateText = "Fix the current emergency instantly",
 		--// TWO ACTIVE SKILLS (Sep 21 2026, cooldown-based, keys Q + R).
 		--// SkillQ unlocks first, SkillR later (level gate TBD). Both act on
 		--// the CURRENT emergency, so they do nothing when nothing is wrong.
 		SkillQ = {
 			Id = "Toolbelt",
 			Name = "TOOLBELT",
-			Text = "Grab the tool the emergency needs",
+			Text = "Get the right tool for the emergency",
 			Emoji = "🧰",              -- shown until IconId is set
 			IconId = "rbxassetid://91158111919893",
 			CooldownSeconds = 18,
@@ -1624,7 +1624,7 @@ Config.Classes = {
 		MoneyMult = 1.25,
 		RecommendBonusMult = 2,
 		UltimateName = "SWEET TALK!",
-		UltimateText = "Refills one table's patience by half",
+		UltimateText = "Refill one table's patience by half",
 		--// ~4-8 collected payments per shift
 		UpgradeTrack = {
 			Counter = "PaymentsCollected", Label = "Payments collected",
@@ -1646,6 +1646,9 @@ Config.Skills = {
 	--// keyboard keys per slot (the client also wires touch buttons + gamepad)
 	QKey = "Q",
 	RKey = "R",
+	--// DISPLAY ONLY - the class shop shows it on the ultimate tile.
+	--// ChargeClient binds the ultimate to T itself; change both together.
+	UltKey = "T",
 }
 
 Config.ClassShop = {
