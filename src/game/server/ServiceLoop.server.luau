@@ -3399,7 +3399,54 @@ do
 			return false, "No plates on the pass!"
 		end
 
-		--// teleport to the pass (the grab)
+		--// INSTANT TRANSMISSION (same look as the Fixer's RUSH IN): black speed
+		--// lines + a quick fade out here, blink, fade in there. Server-side
+		--// transparency so the fade replicates to everyone.
+		local function itLines(pos)
+			for _ = 1, 16 do
+				local line = Instance.new("Part")
+				line.Anchored = true
+				line.CanCollide = false
+				line.CanQuery = false
+				line.CastShadow = false
+				line.Material = Enum.Material.SmoothPlastic
+				line.Color = Color3.new(0, 0, 0)
+				line.Size = Vector3.new(0.1, 3.4, 0.1)
+				local angle = math.random() * math.pi * 2
+				local radius = 0.4 + math.random() * 1.3
+				line.CFrame = CFrame.new(pos
+					+ Vector3.new(math.cos(angle) * radius, 0, math.sin(angle) * radius))
+					* CFrame.Angles(0, 0, math.rad((math.random() - 0.5) * 30))
+				line.Parent = workspace
+				TweenService:Create(line, TweenInfo.new(0.32, Enum.EasingStyle.Quad,
+					Enum.EasingDirection.Out),
+					{ CFrame = line.CFrame + Vector3.new(0, 2.5, 0), Transparency = 1 }):Play()
+				task.delay(0.4, function() line:Destroy() end)
+			end
+		end
+		local function itTeleport(destination)
+			if not (root and root.Parent) then return end
+			itLines(root.Position)
+			local originals = {}
+			for _, d in ipairs(character:GetDescendants()) do
+				if (d:IsA("BasePart") or d:IsA("Decal")) and d.Transparency < 1 then
+					originals[d] = d.Transparency
+					TweenService:Create(d, TweenInfo.new(0.14), { Transparency = 1 }):Play()
+				end
+			end
+			task.wait(0.14)
+			if not (root and root.Parent) then return end
+			root.CFrame = destination
+			itLines(destination)
+			for d, orig in pairs(originals) do
+				if d.Parent then
+					TweenService:Create(d, TweenInfo.new(0.2), { Transparency = orig }):Play()
+				end
+			end
+			task.wait(0.2)
+		end
+
+		--// 1. blink to the pass, pause a beat to "grab"
 		local passPart
 		for _, inst in ipairs(CollectionService:GetTagged("Pass")) do
 			if inst:IsDescendantOf(workspace) then
@@ -3410,38 +3457,69 @@ do
 			end
 		end
 		if passPart then
-			root.CFrame = CFrame.new(passPart.Position + Vector3.new(0, 3, 4))
-			task.wait(0.15)
+			itTeleport(CFrame.new(passPart.Position + Vector3.new(0, 3, 4)))
+			task.wait(0.45) --// a beat at the pass (the grab)
 		end
 
 		local function patienceFrac(party)
 			return math.clamp((party.BarRemaining or 0) / math.max(party.BarTotal or 1, 1), 0, 1)
 		end
 
-		local served = 0
-		for _, slot in ipairs(plated) do
-			--// neediest WAITING_FOOD table that ordered this exact plate
-			local best, bestFrac
-			for _, party in pairs(parties) do
-				if party.State == STATE.WAITING_FOOD and party.TableId
-					and table.find(party.Ticket or {}, slot.Dish) then
-					local frac = patienceFrac(party)
-					if not bestFrac or frac < bestFrac then
-						best, bestFrac = party, frac
+		--// 2. PLAN neediest-first: match each hungry table (lowest patience
+		--// first) to a pass plate it ordered, so we grab exactly what the table
+		--// we teleport to will want.
+		local waiting = {}
+		for _, party in pairs(parties) do
+			if party.State == STATE.WAITING_FOOD and party.TableId then
+				table.insert(waiting, party)
+			end
+		end
+		table.sort(waiting, function(a, b) return patienceFrac(a) < patienceFrac(b) end)
+
+		local usedSlot = {}
+		local plan = {} --// ordered { TableId, SlotId }, neediest table first
+		for _, party in ipairs(waiting) do
+			for _, wantDish in ipairs(party.Ticket or {}) do
+				for _, slot in ipairs(plated) do
+					if not usedSlot[slot.SlotId] and slot.Dish == wantDish then
+						usedSlot[slot.SlotId] = true
+						table.insert(plan, { TableId = party.TableId, SlotId = slot.SlotId })
+						break
 					end
 				end
 			end
-			if best then
-				local dish, quality = take:Invoke(slot.SlotId)
-				if dish then
-					local tpart = tableById[best.TableId]
-					if tpart and root.Parent then
-						root.CFrame = CFrame.new(tpart.Position + Vector3.new(0, 3, 4))
-						task.wait(0.12)
+		end
+		if #plan == 0 then return false, "No table wants what's on the pass!" end
+
+		--// 3. GRAB them all off the pass now (the plates leave the pass here -
+		--// the automatic "take everything" moment)
+		local carried = {}
+		for _, p in ipairs(plan) do
+			local dish, quality = take:Invoke(p.SlotId)
+			if dish then carried[p.SlotId] = { Dish = dish, Quality = quality } end
+		end
+
+		--// 4. blink table to table (neediest first), serving what each wants
+		local served, lastTable = 0, nil
+		for _, p in ipairs(plan) do
+			local item = carried[p.SlotId]
+			local party = item and tableOccupant[p.TableId]
+			if party and party.State == STATE.WAITING_FOOD
+				and table.find(party.Ticket or {}, item.Dish) then
+				if p.TableId ~= lastTable then
+					local tpart = tableById[p.TableId]
+					if tpart and root and root.Parent then
+						itTeleport(CFrame.new(tpart.Position + Vector3.new(0, 3, 4)))
+						task.wait(0.3)
 					end
-					serveDishToParty(best, best.TableId, dish, quality, slot.SlotId, player)
-					served += 1
+					lastTable = p.TableId
 				end
+				serveDishToParty(party, p.TableId, item.Dish, item.Quality, p.SlotId, player)
+				served += 1
+			elseif item then
+				--// table left mid-run: send the grabbed plate home, no leak
+				local ret = ServerStorage:FindFirstChild("PassReturnPlate")
+				if ret then pcall(ret.Invoke, ret, p.SlotId, "express: table left") end
 			end
 		end
 
