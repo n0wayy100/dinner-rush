@@ -412,27 +412,6 @@ Config.Whack = {
 }
 
 ----------------------------------------------------------------
--- THE PLATE-THROW SLINGSHOT (Waiter's Plate Juggler, Sep 22 2026): a GUI
--- minigame. Press R holding a plated dish -> a slingshot panel opens with
--- one target card per table that ORDERED that dish (up to MaxTargets).
--- Drag the plate back (Angry Birds) and release; the plate arcs in 2D
--- under Gravity and, landing on a table card, serves that real table.
--- Miss = the plate resets to the sling to try again; the panel's X cancels
--- (nothing lost). All render + intent client-side; the SERVE is server-
--- validated (the client only reports which table it hit).
-----------------------------------------------------------------
-Config.PlateThrow = {
-	MaxTargets = 4,          -- most table cards shown (there are 4 tables)
-	Gravity = 2200,          -- panel gravity (px/s^2) - bigger = snappier drop
-	PowerScale = 6.5,        -- pull distance (px) -> launch speed (px/s)
-	MaxPullPixels = 240,     -- clamp the slingshot pull
-	MinPullPixels = 12,      -- ignore a tiny drag (a stray tap)
-	PlateRadiusPx = 26,      -- the flying plate's hit size
-	TargetRadiusPx = 54,     -- a table card's catch size (generous)
-	TrailDots = 22,          -- dotted trajectory preview length
-}
-
-----------------------------------------------------------------
 -- THE TUTORIAL (owner design, Sep 2026): a guided first shift in the
 -- real restaurant. Opt-in only - a live server enters it via lobby
 -- teleport data (Mode = "TUTORIAL"; button lands with the lobby
@@ -1562,8 +1541,15 @@ Config.Classes = {
 			Emoji = "🍽️",
 			IconId = "rbxassetid://138988630662839",
 			CooldownSeconds = 30, -- a strong shortcut (serve without walking), so it's rationed
-			--// The aiming is a GUI SLINGSHOT MINIGAME (Config.PlateThrow) - press
-			--// R holding a plated dish and it opens.
+			--// 3D THROW (Sep 26 2026): press R holding a plated dish - the plate
+			--// arcs to the NEAREST table in range that ordered it. In range =
+			--// highlighted blue (client). No aiming.
+			ThrowRangeStuds = 45,  -- how close to a table you must be to throw it
+			ThrowSeconds = 0.55,   -- arc flight time
+			ArcHeightStuds = 8,    -- how high the plate arcs
+			ThrowAnimId = "rbxassetid://133331799440670", -- the hired throw animation
+			ThrowReleaseDelay = 0.4, -- wait this long into the animation before the
+			                         -- plate leaves the hand (sync to the throw beat)
 		},
 		UltimateName = "EXPRESS RUN!",
 		UltimateText = "Grab every ready plate and serve the neediest tables",

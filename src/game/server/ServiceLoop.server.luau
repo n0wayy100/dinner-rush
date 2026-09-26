@@ -488,6 +488,7 @@ local function publishParty(party)
 	pawn:SetAttribute("PartySize", party.Size)
 	pawn:SetAttribute("IsVIP", party.IsVIP == true)
 	pawn:SetAttribute("PartyState", party.State or "")
+	pawn:SetAttribute("TableId", party.TableId or 0) --// so clients can match a pawn to its table (Waiter throw highlight)
 	pawn:SetAttribute("BarKind", party.BarKind or "")
 	pawn:SetAttribute("PatienceRemaining", party.BarRemaining or 0)
 	pawn:SetAttribute("PatienceTotal", party.BarTotal or 0)
@@ -3329,10 +3330,10 @@ do
 		return true
 	end)
 
-	--// PLATE JUGGLER (Waiter SkillR): a GUI slingshot minigame. WaiterThrow
-	--// Targets tells the skill which dish the waiter holds and which tables
-	--// ordered it - one becomes a target card in the panel. The held plate is
-	--// NOT touched here; it only leaves the hand on a landed serve.
+	--// PLATE JUGGLER (Waiter SkillR, 3D throw): serve the NEAREST table within
+	--// range that ordered the held plated dish. The client highlights valid
+	--// in-range tables blue; this does the serve (credit) and returns the throw
+	--// endpoints so the skill can arc a plate visual.
 	local function firstHeldPlate(character, player)
 		for _, container in ipairs({ character, player:FindFirstChildOfClass("Backpack") }) do
 			if container then
@@ -3346,40 +3347,40 @@ do
 		return nil
 	end
 
-	makeBridge("WaiterThrowTargets", function(player)
+	--// dryRun = just CHECK a valid throw exists (for the pre-check that fires
+	--// the animation); a real call serves + hands back the throw endpoints.
+	makeBridge("WaiterThrowNearest", function(player, range, dryRun)
 		local character = player and player.Character
-		if not character then return nil end
+		local root = character and character:FindFirstChild("HumanoidRootPart")
+		if not root then return nil end
 		local tool = firstHeldPlate(character, player)
 		if not tool then return nil end
 		local dish = tool:GetAttribute("Dish")
-		local targets = {}
+
+		local best, bestDist, bestPos
 		for _, party in pairs(parties) do
 			if party.State == STATE.WAITING_FOOD and party.TableId
 				and table.find(party.Ticket or {}, dish) then
-				table.insert(targets, { TableId = party.TableId })
+				local tpart = tableById[party.TableId]
+				if tpart then
+					local d = (tpart.Position - root.Position).Magnitude
+					if d <= (range or 45) and (not bestDist or d < bestDist) then
+						best, bestDist, bestPos = party, d, tpart.Position
+					end
+				end
 			end
 		end
-		if #targets == 0 then return nil end --// no one wants it - no throw
-		return { Dish = dish, Targets = targets }
-	end)
+		if not best then return nil end
 
-	--// The minigame reports which table the plate landed on; serve it with the
-	--// waiter's credit. Server-authoritative: it re-finds the held plate and
-	--// re-checks the table wants it - the client only names the table.
-	makeBridge("WaiterServeThrown", function(player, tableId)
-		local character = player and player.Character
-		if not character then return false end
-		local party = tableOccupant[tableId]
-		if not party or party.State ~= STATE.WAITING_FOOD then return false end
-		local tool = firstHeldPlate(character, player)
-		if not tool then return false end
-		local dish = tool:GetAttribute("Dish")
-		if not table.find(party.Ticket or {}, dish) then return false end
+		local from = root.Position + Vector3.new(0, 2, 0)
+		if dryRun then
+			return { From = from, To = bestPos, Dish = dish } --// check only
+		end
 		local quality = tool:GetAttribute("Quality")
 		local plateSlot = tool:GetAttribute("PlateSlot")
-		tool:Destroy()
-		serveDishToParty(party, tableId, dish, quality, plateSlot, player)
-		return true
+		tool:Destroy() --// leaves the hand, flies to the table
+		serveDishToParty(best, best.TableId, dish, quality, plateSlot, player)
+		return { From = from, To = bestPos, Dish = dish }
 	end)
 
 	--// EXPRESS RUN (Waiter ULTIMATE, ChargeService): teleport the waiter to the

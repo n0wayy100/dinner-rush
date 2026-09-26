@@ -252,9 +252,31 @@ local function performDash(speed, seconds)
 	end)
 end
 
+--// PLATE JUGGLER throw: play the hired throw animation on our own character.
+--// Priority = Action so idle/walk don't override it. The server delays the
+--// plate's flight (ThrowReleaseDelay) so it leaves the hand on the throw beat.
+local function playAnim(animId)
+	if type(animId) ~= "string" or animId == "" then return end
+	local char = player.Character
+	local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+	local animator = humanoid and humanoid:FindFirstChildOfClass("Animator")
+	if not animator then return end
+	local anim = Instance.new("Animation")
+	anim.AnimationId = animId
+	local ok, track = pcall(function() return animator:LoadAnimation(anim) end)
+	if ok and track then
+		track.Priority = Enum.AnimationPriority.Action
+		track:Play()
+	end
+end
+
 skillRemote.OnClientEvent:Connect(function(action, a, b)
 	if action == "Dash" then
 		performDash(a, b) --// a = speed, b = seconds
+		return
+	end
+	if action == "PlayAnim" then
+		playAnim(a) --// a = animation id (the throw)
 		return
 	end
 	local slot = a

@@ -607,18 +607,59 @@ local function showDoubleBatchTag(player)
 	end)
 end
 
---// PLATE JUGGLER: open the GUI slingshot minigame. The server just checks the
---// waiter holds a plated dish someone ordered, then hands the client the dish
---// + target tables; PlateThrowClient runs the slingshot and reports the table
---// its plate lands on via a "ThrowHit" message (handled at the entry point).
-local function openThrowGame(player)
-	local targetsBridge = ServerStorage:FindFirstChild("WaiterThrowTargets")
-	if not targetsBridge then return false, "..." end
-	local ok, info = pcall(targetsBridge.Invoke, targetsBridge, player)
-	if not ok or type(info) ~= "table" then
-		return false, "Hold a plated dish someone ordered!"
+--// PLATE JUGGLER (3D throw): press R holding a plated dish with a table in
+--// range (the client highlights valid ones blue) and it throws - a dressed
+--// plate arcs from the waiter to the nearest ordering table, which is served.
+--// No aiming; range is the gate. Plays the hired throw animation client-side.
+local function flyPlate(from, to, dishName, arcHeight, seconds)
+	local plate = Instance.new("Part")
+	plate.Name = "ThrownPlate"
+	plate.Size = Vector3.new(1.7, 0.2, 1.7)
+	plate.Color = Color3.fromRGB(243, 236, 224)
+	plate.Material = Enum.Material.SmoothPlastic
+	plate.Anchored = true
+	plate.CanCollide = false
+	plate.CanQuery = false
+	plate.CFrame = CFrame.new(from)
+	plate.Parent = workspace
+	DishModels.dress(plate, dishName)
+
+	task.spawn(function()
+		local lift = Vector3.new(0, 1.5, 0)
+		local t0 = os.clock()
+		while plate.Parent do
+			local a = math.clamp((os.clock() - t0) / seconds, 0, 1)
+			local pos = (from + lift):Lerp(to + lift, a)
+				+ Vector3.new(0, math.sin(a * math.pi) * arcHeight, 0)
+			plate.CFrame = CFrame.new(pos) * CFrame.Angles(0, a * math.pi * 5, 0)
+			if a >= 1 then break end
+			task.wait()
+		end
+		plate:Destroy()
+	end)
+end
+
+local function doPlateThrow(player, skillDef)
+	local throw = ServerStorage:FindFirstChild("WaiterThrowNearest")
+	if not throw then return false, "..." end
+	local range = skillDef.ThrowRangeStuds or 45
+
+	--// PRE-CHECK: is there a valid throw right now? (dry run - no serve yet)
+	local okc, pre = pcall(throw.Invoke, throw, player, range, true)
+	if not okc or type(pre) ~= "table" then
+		return false, "Get near a table that ordered it!"
 	end
-	skillRemote:FireClient(player, "ThrowGame", info.Dish, info.Targets)
+
+	--// play the throw animation now; the plate leaves the hand at the throw
+	--// beat (ThrowReleaseDelay in), then the serve + arc happen
+	skillRemote:FireClient(player, "PlayAnim", skillDef.ThrowAnimId or "")
+	task.delay(skillDef.ThrowReleaseDelay or 0.4, function()
+		local ok, result = pcall(throw.Invoke, throw, player, range, false)
+		if ok and type(result) == "table" then
+			flyPlate(result.From, result.To, result.Dish,
+				skillDef.ArcHeightStuds or 8, skillDef.ThrowSeconds or 0.55)
+		end
+	end)
 	return true
 end
 
@@ -670,7 +711,7 @@ local function runSkill(player, skillDef, aim)
 		return true
 
 	elseif id == "PlateJuggler" then
-		return openThrowGame(player) --// opens the GUI slingshot minigame
+		return doPlateThrow(player, skillDef) --// 3D throw to the nearest in-range table
 	end
 
 	return false, "Unknown skill"
@@ -680,15 +721,6 @@ end
 -- The one entry point
 ----------------------------------------------------------------
 skillRemote.OnServerEvent:Connect(function(player, action, a, b)
-	--// The plate-throw minigame reports the table it landed on
-	if action == "ThrowHit" then
-		local def = skillFor(player, "R")
-		if not def or def.Id ~= "PlateJuggler" then return end
-		local serve = ServerStorage:FindFirstChild("WaiterServeThrown")
-		if serve then pcall(serve.Invoke, serve, player, a) end --// a = tableId
-		return
-	end
-
 	if action ~= "Use" then return end
 	local slot, aim = a, b
 	if slot ~= "Q" and slot ~= "R" then return end
