@@ -682,6 +682,8 @@ local function runSkill(player, skillDef, aim)
 		return true
 
 	elseif id == "SousChef" then
+		--// the owning client plays the summon animation on its own character
+		skillRemote:FireClient(player, "PlayAnim", skillDef.AnimId or "")
 		return summonSousChef(player, skillDef)
 
 	elseif id == "Toolbelt" then

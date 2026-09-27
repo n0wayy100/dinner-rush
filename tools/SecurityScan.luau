@@ -65,8 +65,11 @@ local CRITICAL = {
 	--// The Sep 21 2026 attack: a teammate's model carried a fake
 	--// "Model corruption detected / Copy Code" dialog that tricked us into
 	--// pasting a command bar backdoor. IOCs from that exact kit:
-	{ "darksynapse",              "darksynapse - known backdoor payload (Sep 2026 teammate model)" },
-	{ "122935217379945",          "asset 122935217379945 - the Sep 2026 backdoor carrier model" },
+	{ "darksynapse",              "darksynapse - known backdoor payload (Sep 21 2026 teammate model)" },
+	{ "122935217379945",          "asset 122935217379945 - the Sep 21 2026 backdoor carrier model" },
+	--// Sep 27 2026: SAME scam, new IDs - carrier asset 105014713060576,
+	--// payload node named 'Connector' injected into StarterCharacterScripts.
+	{ "105014713060576",          "asset 105014713060576 - the Sep 27 2026 backdoor carrier model" },
 	{ "corruption detected",      "fake 'corruption detected' dialog - command-bar backdoor scam" },
 	{ "Model Parse Error",        "fake 'Model Parse Error' dialog - command-bar backdoor scam" },
 	{ "HttpEnabled",              "sets HttpEnabled from code - backdoors flip this to phone home" },

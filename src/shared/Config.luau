@@ -1497,6 +1497,7 @@ Config.Classes = {
 			ExtraCookSeconds = 5,     -- flat seconds ADDED to each cook (owner: longer, clearer cook)
 			GrabSeconds = 0.6,        -- pause at the fridge/shelf, reads as picking up
 			Quality = "Good",         -- what it plates: Good clears tickets with no rep bonus (kept un-OP)
+			AnimId = "rbxassetid://98127606934003", -- the hired summon animation
 		},
 		UltimateName = "FLASH FRY!",
 		UltimateText = "Instantly cook everything you're holding - perfectly",
@@ -2064,7 +2065,7 @@ Config.Ultimates = {
 	--// key "") when ultimate testing ends, or charge earning can never
 	--// be playtested in Studio.
 	StudioFullCharge = true, --// TEMP: testing the Waiter skills (Sep 22) - revert to false
-	StudioClassKey = "Fixer",
+	StudioClassKey = "Chef",
 
 	--// THE CAST BANNER (Sep 2026). Cosmetic only - nothing here touches
 	--// charge, abilities or THE LAW. Caster sees their own avatar posed
@@ -2432,7 +2433,7 @@ Config.StudioPreSeat = true --// TEMP (Sep 22) - revert to false
 --// STUDIO-ONLY (live-ignored): auto-fire this event a few seconds after
 --// the shift goes RUNNING, so an emergency test needs no command bar.
 --// "" = off. Names: Spill / ToiletEmergency / GreaseFire / PowerOutage.
-Config.StudioForceEventOnStart = "ToiletEmergency" --// TEMP: auto-fire so Fixer RUSH IN has a target to test - set "" for normal play
+Config.StudioForceEventOnStart = "" --// off (was ToiletEmergency for Fixer testing)
 Config.StudioForceEventDelaySeconds = 3
 
 --// Whether a given id is a real, playable map. The lobby server gates every
