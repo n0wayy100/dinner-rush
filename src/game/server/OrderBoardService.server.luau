@@ -339,7 +339,9 @@ local function updateDishes(card, dishes)
 			label.Font = Enum.Font.FredokaOne
 			label.TextScaled = true
 			label.TextColor3 = CHOC
-			label.Text = recipe and recipe.Display or dishName
+			--// Short first: this slot is under half a card wide, so a
+			--// two-word name gets cut in half.
+			label.Text = recipe and (recipe.Short or recipe.Display) or dishName
 			label.LayoutOrder = index
 			label.Parent = card.Icons
 		end

@@ -756,8 +756,10 @@ local function cookSoundStart(station)
 	end
 	entry.Count += 1
 	if not (entry.Handle and entry.Handle:IsPlaying()) then
-		local loopName = ({ Fry = "CookFry", Grill = "CookGrill", Ramen = "CookRamen" })
-			[station.Method] or "CookGrill"
+		--// From Config, so a new station method is a Config row rather
+		--// than an edit in here.
+		local loopName = (Config.Kitchen.CookSfxByMethod or {})[station.Method]
+			or "CookGrill"
 		entry.Handle = Sfx.Loop(loopName, station.Part)
 	end
 end
@@ -2140,8 +2142,15 @@ local function setupStation(instance)
 
 	local method = instance:GetAttribute("Method") or part:GetAttribute("Method")
 	if not method or not Config.CookMethodAliases[method] then
-		warn(("[Kitchen] %s has Method '%s' - needs \"Fry\" or \"Grill\"")
-			:format(instance:GetFullName(), tostring(method)))
+		--// List what IS valid, from Config - the old message named two
+		--// methods and there are now five.
+		local valid = {}
+		for name in pairs(Config.CookMethodAliases) do
+			table.insert(valid, name)
+		end
+		table.sort(valid)
+		warn(("[Kitchen] %s has Method '%s' - needs one of: %s")
+			:format(instance:GetFullName(), tostring(method), table.concat(valid, ", ")))
 		return
 	end
 
