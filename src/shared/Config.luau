@@ -1557,6 +1557,9 @@ Config.Classes = {
 			GrabSeconds = 0.6,        -- pause at the fridge/shelf, reads as picking up
 			Quality = "Good",         -- what it plates: Good clears tickets with no rep bonus (kept un-OP)
 			AnimId = "rbxassetid://98127606934003", -- the hired summon animation
+			SummonDelay = 0.6, -- play the animation this long BEFORE she poofs in
+			PickSeconds = 8,   -- with 2+ SousChefSpot markers, seconds to pick one
+			                   -- (orange glow); no pick in time = nearest is used
 		},
 		UltimateName = "FLASH FRY!",
 		UltimateText = "Instantly cook everything you're holding - perfectly",
@@ -2405,7 +2408,7 @@ Config.Maps = {
 		ImageId = "", --// owner's banner pending; shows a lettered placeholder
 		Available = true,
 		ShiftBarIcon = "🍚",
-		Menu = { SteamedRice = 5, Lumpia = 4, AdoboPork = 3 },
+		Menu = { SteamedRice = 1 }, --// TEMP: Rice-only for testing - restore { SteamedRice = 5, Lumpia = 4, AdoboPork = 3 }
 	},
 }
 

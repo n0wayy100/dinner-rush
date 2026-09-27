@@ -193,6 +193,31 @@ local function stationFor(method)
 	return nil
 end
 
+--// The cook station nearest a point (any method). The Sous Chef is a magic
+--// helper: she cooks whatever the ticket wants at her HOME station, so she
+--// never walks to a method-matched station across the map (that trip is what
+--// broke on cluttered maps). She summons at the nearest one and only shuttles
+--// the plated dish to the pass.
+local function nearestTagged(tag, pos)
+	local best, bestD = nil, math.huge
+	for _, inst in ipairs(CollectionService:GetTagged(tag)) do
+		if inst:IsDescendantOf(workspace) then
+			local part = (inst:IsA("BasePart") and inst)
+				or (inst:IsA("Model") and (inst.PrimaryPart
+					or inst:FindFirstChildWhichIsA("BasePart", true)))
+			if part then
+				local d = (part.Position - pos).Magnitude
+				if d < bestD then best, bestD = part, d end
+			end
+		end
+	end
+	return best
+end
+
+local function nearestStation(pos)
+	return nearestTagged("CookStation", pos)
+end
+
 --// Build the rig: owner's cook or the customer rig, grounded, anchored
 --// root (the Helper proves an anchored-root clone walks + renders fine).
 local function spawnCook(spawnPos, walkSpeed, ignore)
@@ -283,63 +308,112 @@ local function spawnCook(spawnPos, walkSpeed, ignore)
 	}
 end
 
---// Walk there as a REAL character: pathfind, then Humanoid:MoveTo each
---// waypoint. The Humanoid collides with anchored kitchen parts (no phasing)
---// and grounds itself. Distance + timeout so it never hangs on a stuck path.
+--// Walk there as a REAL character: compute ONE route and follow the whole
+--// path (so she commits to a direct route, not a wobble), stepping waypoint to
+--// waypoint. Only if she genuinely WEDGES does she side-step + re-path. Tight
+--// agent radius so she turns through kitchen gaps. NOTE: PathfindingService
+--// only routes around COLLIDABLE parts - the map's counters must be solid.
 local function cookWalkTo(cook, position)
 	if not cook or not position then return false end
 	local humanoid = cook.Humanoid
 	local root = cook.Root
 	if not humanoid or not root or not root.Parent then return false end
 
+	local function flatDist(a, b)
+		return (Vector3.new(a.X, 0, a.Z) - Vector3.new(b.X, 0, b.Z)).Magnitude
+	end
+
+	--// stop just short of the target part, never inside it
 	local toward = Vector3.new(position.X - root.Position.X, 0, position.Z - root.Position.Z)
 	local target = position
 	if toward.Magnitude > 3 then
 		target = position - toward.Unit * 2.5
 	end
 
-	local path = PathfindingService:CreatePath({
-		AgentRadius = 2.5, AgentHeight = 5, AgentCanJump = false,
-	})
-	local ok = pcall(function()
-		path:ComputeAsync(root.Position, target)
-	end)
+	--// PROJECT TO THE FLOOR: fridge/station/pass anchors sit up ON counters,
+	--// but pathfinding runs on the floor - an elevated target reads as
+	--// unreachable (NoPath). Drop the target straight down to the floor she
+	--// actually stands on, so a route can be found.
+	do
+		local rp = RaycastParams.new()
+		rp.FilterType = Enum.RaycastFilterType.Exclude
+		rp.FilterDescendantsInstances = { cook.Model }
+		local hit = workspace:Raycast(target + Vector3.new(0, 10, 0),
+			Vector3.new(0, -80, 0), rp)
+		if hit then
+			target = hit.Position + Vector3.new(0, 1, 0)
+		end
+	end
 
 	if cook.WalkTrack and not cook.WalkTrack.IsPlaying then
 		cook.WalkTrack:Play(0.15)
 	end
 
-	--// Steer toward one point until within reach or a short timeout
+	--// walk to ONE waypoint: returns "reached" / "stalled" / "gone"
 	local function stepTo(pos)
 		humanoid:MoveTo(pos)
-		local deadline = os.clock() + 5
+		local deadline = os.clock() + 4
+		local last, stalledSince = root.Position, os.clock()
 		while cook.Model and root.Parent and os.clock() < deadline do
-			local flat = Vector3.new(root.Position.X - pos.X, 0, root.Position.Z - pos.Z)
-			if flat.Magnitude < 3 then return true end
-			humanoid:MoveTo(pos) --// keep steering (re-paths past obstacles)
+			if flatDist(root.Position, pos) < 3 then return "reached" end
+			humanoid:MoveTo(pos)
+			if flatDist(root.Position, last) < 0.4 then
+				if os.clock() - stalledSince > 1.2 then return "stalled" end
+			else
+				stalledSince = os.clock()
+			end
+			last = root.Position
 			task.wait(0.12)
 		end
-		return cook.Model ~= nil
+		return cook.Model and "reached" or "gone"
 	end
 
-	local arrived = true
-	if ok and path.Status == Enum.PathStatus.Success then
-		local waypoints = path:GetWaypoints()
-		for index = 2, #waypoints do
-			if not stepTo(waypoints[index].Position) then
-				arrived = false
-				break
-			end
-			if not cook.Model then arrived = false; break end
+	local logged = false
+	local attempts = 0
+	while cook.Model and root.Parent and attempts < 5 do
+		attempts += 1
+		if flatDist(root.Position, target) < 3 then break end
+
+		local path = PathfindingService:CreatePath({
+			AgentRadius = 1.4, AgentHeight = 5, AgentCanJump = false,
+		})
+		local okc = pcall(function() path:ComputeAsync(root.Position, target) end)
+		if not logged then
+			logged = true
+			print(("[Skill] SousChef walk DIAG: pathStatus=%s  floor=%s  wp=%d")
+				:format(okc and tostring(path.Status) or "COMPUTE-ERROR",
+					tostring(humanoid.FloorMaterial),
+					okc and #path:GetWaypoints() or 0))
 		end
-	else
-		arrived = stepTo(target)
+
+		if okc and path.Status == Enum.PathStatus.Success then
+			--// commit to the WHOLE route, waypoint by waypoint
+			local wps = path:GetWaypoints()
+			local wedged = false
+			for i = 2, #wps do
+				local r = stepTo(wps[i].Position)
+				if r == "gone" then wedged = true break end
+				if r == "stalled" then
+					--// peel off the obstacle, then re-path from where she is
+					humanoid:MoveTo(root.Position + root.CFrame.RightVector * 4)
+					task.wait(0.3)
+					wedged = true
+					break
+				end
+				if flatDist(root.Position, target) < 3 then break end
+			end
+			if not wedged then break end --// finished the route cleanly
+		else
+			--// no route (target unreachable / open floor): head straight a bit
+			if stepTo(target) == "reached" then break end
+			task.wait(0.2)
+		end
 	end
 
 	if cook.Model and cook.WalkTrack and cook.WalkTrack.IsPlaying then
 		cook.WalkTrack:Stop(0.15)
 	end
-	return arrived and cook.Model ~= nil
+	return cook.Model ~= nil and flatDist(root.Position, target) < 5
 end
 
 --// Dress a small part into the right hand and carry it (raw or plated dish)
@@ -481,36 +555,39 @@ local function clearCookingCue(cue)
 	if cue.Steam then cue.Steam:Destroy() end
 end
 
---// The whole loop for one dish: fetch -> cook -> plate -> serve
+--// The loop for one dish: walk to the RIGHT station -> cook -> plate at pass.
+--// Only the fridge fetch is GONE (owner call): that cross-map supply walk broke
+--// and was never the fun. She still WALKS to whichever station the ticket needs
+--// (rice cooker for rice, fryer for fried) from wherever she is - that walk is
+--// the point - she just magics her own raw once she arrives.
 local function cookOneDish(cook, job, skillDef)
 	local recipe = job.Recipe
 
-	--// 1. Fetch the raw from its source (Fridge / DryShelf)
-	local ingredient = Config.Ingredients[recipe.Ingredient]
-	local source = ingredient and tagPart(ingredient.Source)
-	if source then cookWalkTo(cook, source.Position) end
-	if not cook.Model then return end
-	task.wait(skillDef.GrabSeconds or 0.6)
-	cookCarry(cook, recipe.Ingredient)
-
-	--// 2. Carry it to the matching cook station
-	local station = stationFor(recipe.Method)
+	--// 1. Walk to the station this dish needs. She spawns at a marker but
+	--// travels to the matching cooker (fryer -> rice cooker if the ticket is
+	--// rice). Falls back to her spawn spot only if no matching station exists.
+	local station = stationFor(recipe.Method) or cook.HomeStation
 	if station then cookWalkTo(cook, station.Position) end
 	if not cook.Model then return end
 
-	--// 3. Cook: stand at the station while the dish cooks (real timing;
-	--// this is the NPC's own wait, not a player's window - THE LAW holds).
-	--// A cue over the station tells players it is busy and with what.
+	--// a short "prepping" beat: she holds the raw, then it goes on the grill
+	cookCarry(cook, recipe.Ingredient)
+	task.wait(skillDef.GrabSeconds or 0.6)
+	if not cook.Model then return end
 	cookCarry(cook, nil) --// raw goes on the grill (empty hands)
+
+	--// 2. Cook: stand at the station while the dish cooks (real timing; this
+	--// is the NPC's own wait, not a player's window - THE LAW holds). A cue
+	--// over the station tells players it is busy and with what.
 	local timing = Config.Cooking[recipe.Timing]
 	local cookSecs = (timing and timing.CookTime or 10) * (skillDef.CookSpeedMult or 1)
 		+ (skillDef.ExtraCookSeconds or 0)
-	local cue = showCookingCue(station, job.Dish, cookSecs)
+	local cue = station and showCookingCue(station, job.Dish, cookSecs) or nil
 	task.wait(cookSecs)
 	clearCookingCue(cue)
 	if not cook.Model then return end
 
-	--// 4. Carry the finished dish to the PASS and plate it there. The sous
+	--// 3. Carry the finished dish to the PASS and plate it there. The sous
 	--// chef is a COOK, not a waiter (owner call): it leaves the plated dish
 	--// on the pass for a player/waiter/Helper to serve, then moves on.
 	cookCarry(cook, job.Dish)
@@ -521,24 +598,67 @@ local function cookOneDish(cook, job, skillDef)
 	cookCarry(cook, nil)
 end
 
-local function summonSousChef(player, skillDef)
+--// SUMMONING-JUTSU effect (owner call - "like Naruto"): a white smoke burst
+--// + a quick ground shockwave ring at the spot the Sous Chef materializes.
+local function summonPoof(pos)
+	local anchor = Instance.new("Part")
+	anchor.Name = "SummonPoof"
+	anchor.Anchored = true
+	anchor.CanCollide = false
+	anchor.CanQuery = false
+	anchor.Transparency = 1
+	anchor.Size = Vector3.new(1, 1, 1)
+	anchor.CFrame = CFrame.new(pos)
+	anchor.Parent = workspace
+
+	local smoke = Instance.new("ParticleEmitter")
+	smoke.Texture = "rbxassetid://243660364" --// soft smoke puff (Roblox stock)
+	smoke.Color = ColorSequence.new(Color3.fromRGB(245, 245, 245))
+	smoke.Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.15), NumberSequenceKeypoint.new(1, 1),
+	})
+	smoke.Size = NumberSequence.new(3, 7)
+	smoke.Lifetime = NumberRange.new(0.5, 0.95)
+	smoke.Speed = NumberRange.new(9, 15)
+	smoke.SpreadAngle = Vector2.new(180, 180)
+	smoke.Rate = 0
+	smoke.Parent = anchor
+	smoke:Emit(34) --// one big burst she appears out of
+
+	local ring = Instance.new("Part")
+	ring.Name = "SummonRing"
+	ring.Shape = Enum.PartType.Cylinder
+	ring.Anchored = true
+	ring.CanCollide = false
+	ring.CanQuery = false
+	ring.Material = Enum.Material.Neon
+	ring.Color = Color3.fromRGB(255, 255, 255)
+	ring.Size = Vector3.new(0.4, 2, 2)
+	ring.CFrame = CFrame.new(pos) * CFrame.Angles(0, 0, math.rad(90))
+	ring.Transparency = 0.15
+	ring.Parent = workspace
+	TweenService:Create(ring, TweenInfo.new(0.4, Enum.EasingStyle.Quad,
+		Enum.EasingDirection.Out),
+		{ Size = Vector3.new(0.4, 15, 15), Transparency = 1 }):Play()
+
+	Debris:AddItem(ring, 0.5)
+	Debris:AddItem(anchor, 1.3) --// let the smoke live out its lifetime
+end
+
+--// Bring her in at a chosen spot: play the summon anim, poof, spawn, then run
+--// her cook loop for the duration. homeStation is where she cooks; spawnPos is
+--// where she materializes.
+local function beginSousChef(player, skillDef, homeStation, spawnPos)
 	local character = player.Character
-	local playerRoot = character and character:FindFirstChild("HumanoidRootPart")
+	--// The animation plays FIRST; she POOFS in (smoke burst) after the wind-up.
+	skillRemote:FireClient(player, "PlayAnim", skillDef.AnimId or "")
 
-	--// Spawn right next to the Chef (3 studs to their side), or by the pass
-	--// if the Chef has no body
-	local spawnPos
-	if playerRoot then
-		spawnPos = (playerRoot.CFrame * CFrame.new(3, 0, 0)).Position
-	else
-		local pass = tagPart("Pass")
-		spawnPos = pass and (pass.Position + Vector3.new(3, 0, 3)) or Vector3.new(0, 5, 0)
-	end
+	task.delay(skillDef.SummonDelay or 0.6, function()
+		summonPoof(spawnPos) --// the jutsu smoke burst she appears from
+		local cook = spawnCook(spawnPos, skillDef.WalkSpeed or 15, character)
+		if not cook then return end
+		cook.HomeStation = homeStation --// spawn/idle spot; she walks to each ticket's station
 
-	local cook = spawnCook(spawnPos, skillDef.WalkSpeed or 15, character)
-	if not cook then return false, "Kitchen's not ready!" end
-
-	task.spawn(function()
 		local deadline = os.clock() + (skillDef.DurationSeconds or 26)
 		while os.clock() < deadline and cook.Model do
 			local job = pickJob()
@@ -546,16 +666,160 @@ local function summonSousChef(player, skillDef)
 				local ok, err = pcall(cookOneDish, cook, job, skillDef)
 				if not ok then warn("[Skill] Sous Chef cook failed: " .. tostring(err)) end
 			else
-				--// Nothing to cook right now: hover, re-check shortly
-				local pass = tagPart("Pass")
-				if pass and cook.Model
-					and (cook.Root.Position - pass.Position).Magnitude > 8 then
-					cookWalkTo(cook, pass.Position + Vector3.new(3, 0, 3))
+				--// Nothing to cook right now: idle at her station, re-check shortly
+				local station = cook.HomeStation
+				if station and cook.Model
+					and (cook.Root.Position - station.Position).Magnitude > 8 then
+					cookWalkTo(cook, station.Position)
 				end
 				task.wait(1)
 			end
 		end
 		cookPoof(cook)
+	end)
+end
+
+--// Light a spawn marker ORANGE with a floating "SUMMON HERE" prompt so a
+--// player can pick which one she appears at. Returns the built instances (for
+--// cleanup) with the ProximityPrompt at key .Prompt.
+local function markSpot(part)
+	local ORANGE = Color3.fromRGB(245, 140, 40)
+
+	local hi = Instance.new("Highlight")
+	hi.FillColor = ORANGE
+	hi.FillTransparency = 0.45
+	hi.OutlineColor = Color3.fromRGB(255, 200, 120)
+	hi.OutlineTransparency = 0
+	hi.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	hi.Adornee = part
+	hi.Parent = part
+	TweenService:Create(hi, TweenInfo.new(0.6, Enum.EasingStyle.Sine,
+		Enum.EasingDirection.InOut, -1, true), { FillTransparency = 0.12 }):Play()
+
+	--// a glowing orb hovering over the spot - visible across the kitchen
+	local orb = Instance.new("Part")
+	orb.Name = "SousChefPickOrb"
+	orb.Shape = Enum.PartType.Ball
+	orb.Anchored = true
+	orb.CanCollide = false
+	orb.CanQuery = false
+	orb.Material = Enum.Material.Neon
+	orb.Color = ORANGE
+	orb.Size = Vector3.new(1.4, 1.4, 1.4)
+	orb.CFrame = CFrame.new(part.Position + Vector3.new(0, 4, 0))
+	orb.Parent = workspace
+	TweenService:Create(orb, TweenInfo.new(0.8, Enum.EasingStyle.Sine,
+		Enum.EasingDirection.InOut, -1, true),
+		{ CFrame = orb.CFrame + Vector3.new(0, 0.8, 0) }):Play()
+
+	local label = Instance.new("BillboardGui")
+	label.Name = "SousChefPickLabel"
+	label.Size = UDim2.fromScale(5, 1.2)
+	label.StudsOffset = Vector3.new(0, 2.6, 0)
+	label.AlwaysOnTop = true
+	label.Adornee = orb
+	label.Parent = orb
+	local txt = Instance.new("TextLabel")
+	txt.Size = UDim2.fromScale(1, 1)
+	txt.BackgroundTransparency = 1
+	txt.Font = Enum.Font.FredokaOne
+	txt.TextScaled = true
+	txt.Text = "👩‍🍳 SUMMON HERE"
+	txt.TextColor3 = Color3.fromRGB(255, 240, 220)
+	txt.TextStrokeColor3 = Color3.fromRGB(80, 40, 10)
+	txt.TextStrokeTransparency = 0
+	txt.Parent = label
+
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.Name = "SousChefPickPrompt"
+	prompt.ActionText = "Summon here"
+	prompt.ObjectText = "Sous Chef"
+	prompt.HoldDuration = 0
+	prompt.RequiresLineOfSight = false
+	prompt.MaxActivationDistance = 12
+	prompt.Parent = part
+
+	return { hi, orb, prompt, Prompt = prompt }
+end
+
+--// Every SousChefSpot marker currently in the world (as parts).
+local function gatherSpots()
+	local spots = {}
+	for _, inst in ipairs(CollectionService:GetTagged("SousChefSpot")) do
+		if inst:IsDescendantOf(workspace) then
+			local part = (inst:IsA("BasePart") and inst)
+				or (inst:IsA("Model") and (inst.PrimaryPart
+					or inst:FindFirstChildWhichIsA("BasePart", true)))
+			if part then table.insert(spots, part) end
+		end
+	end
+	return spots
+end
+
+local function summonSousChef(player, skillDef)
+	local character = player.Character
+	local playerRoot = character and character:FindFirstChild("HumanoidRootPart")
+
+	--// need a rig to summon (deny cleanly if the kitchen has none)
+	if not (ServerStorage:FindFirstChild("SousChefRig")
+		or ServerStorage:FindFirstChild("CustomerRig")) then
+		return false, "Kitchen's not ready!"
+	end
+
+	local anchorPos = playerRoot and playerRoot.Position
+		or (tagPart("Pass") and tagPart("Pass").Position)
+		or Vector3.new(0, 5, 0)
+
+	local spots = gatherSpots()
+
+	--// NO markers placed: fall back to the nearest cook station, spawn at once.
+	if #spots == 0 then
+		local station = nearestStation(anchorPos)
+		local spawnPos = (station and (station.Position + Vector3.new(2, 0, 2)))
+			or (playerRoot and (playerRoot.CFrame * CFrame.new(0, 0, -5)).Position)
+			or (anchorPos + Vector3.new(3, 0, 3))
+		beginSousChef(player, skillDef, station, spawnPos)
+		return true
+	end
+
+	--// ONE marker: no choice to make, use it.
+	if #spots == 1 then
+		beginSousChef(player, skillDef, spots[1], spots[1].Position)
+		return true
+	end
+
+	--// SEVERAL markers (owner call): light them ORANGE and let the caster PICK
+	--// one. First one they trigger wins; a timeout auto-picks the nearest so a
+	--// cast is never wasted. Cooldown already started on the R press.
+	local markers, chosen, done = {}, nil, false
+	for _, part in ipairs(spots) do
+		local m = markSpot(part)
+		m.Prompt.Triggered:Connect(function(who)
+			if done or who ~= player then return end
+			done, chosen = true, part
+		end)
+		table.insert(markers, m)
+	end
+
+	task.spawn(function()
+		local deadline = os.clock() + (skillDef.PickSeconds or 8)
+		while not done and os.clock() < deadline do
+			task.wait(0.1)
+		end
+		for _, m in ipairs(markers) do
+			for _, item in ipairs(m) do
+				if typeof(item) == "Instance" then item:Destroy() end
+			end
+		end
+		if not chosen then --// no pick in time: nearest to the chef
+			local best, bestD = spots[1], math.huge
+			for _, part in ipairs(spots) do
+				local d = (part.Position - anchorPos).Magnitude
+				if d < bestD then best, bestD = part, d end
+			end
+			chosen = best
+		end
+		beginSousChef(player, skillDef, chosen, chosen.Position)
 	end)
 
 	return true
@@ -682,8 +946,6 @@ local function runSkill(player, skillDef, aim)
 		return true
 
 	elseif id == "SousChef" then
-		--// the owning client plays the summon animation on its own character
-		skillRemote:FireClient(player, "PlayAnim", skillDef.AnimId or "")
 		return summonSousChef(player, skillDef)
 
 	elseif id == "Toolbelt" then
