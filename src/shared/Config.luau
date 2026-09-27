@@ -1590,6 +1590,9 @@ Config.Classes = {
 			Emoji = "💨",
 			IconId = "rbxassetid://81174550748841",
 			CooldownSeconds = 28,
+			AnimId = "rbxassetid://100559736443155", -- the hired teleport animation
+			TeleportDelay = 0.5, -- play the animation this long BEFORE the blink
+			                     -- (so the teleport pose is visible first)
 		},
 		--// ~1-3 event fixes per shift; rarer actions, shorter track
 		UpgradeTrack = {
@@ -2061,7 +2064,7 @@ Config.Ultimates = {
 	--// key "") when ultimate testing ends, or charge earning can never
 	--// be playtested in Studio.
 	StudioFullCharge = true, --// TEMP: testing the Waiter skills (Sep 22) - revert to false
-	StudioClassKey = "Waiter",
+	StudioClassKey = "Fixer",
 
 	--// THE CAST BANNER (Sep 2026). Cosmetic only - nothing here touches
 	--// charge, abilities or THE LAW. Caster sees their own avatar posed
@@ -2429,8 +2432,8 @@ Config.StudioPreSeat = true --// TEMP (Sep 22) - revert to false
 --// STUDIO-ONLY (live-ignored): auto-fire this event a few seconds after
 --// the shift goes RUNNING, so an emergency test needs no command bar.
 --// "" = off. Names: Spill / ToiletEmergency / GreaseFire / PowerOutage.
-Config.StudioForceEventOnStart = "" --// off
-Config.StudioForceEventDelaySeconds = 6
+Config.StudioForceEventOnStart = "ToiletEmergency" --// TEMP: auto-fire so Fixer RUSH IN has a target to test - set "" for normal play
+Config.StudioForceEventDelaySeconds = 3
 
 --// Whether a given id is a real, playable map. The lobby server gates every
 --// party on this - never trust a MapId that arrived from a client.

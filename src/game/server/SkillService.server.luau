@@ -696,8 +696,15 @@ local function runSkill(player, skillDef, aim)
 		local character = player.Character
 		local root = character and character:FindFirstChild("HumanoidRootPart")
 		if not root then return false, "..." end
-		--// fade out, then blink in just above the problem (0.6s of vanish)
-		rushTeleport(character, root, target.Position + Vector3.new(0, 4, 0))
+		--// play the teleport animation NOW (visible), then blink after the
+		--// wind-up - the fade would otherwise hide the animation entirely
+		skillRemote:FireClient(player, "PlayAnim", skillDef.AnimId or "")
+		local dest = target.Position + Vector3.new(0, 4, 0)
+		task.delay(skillDef.TeleportDelay or 0.5, function()
+			if root and root.Parent then
+				rushTeleport(character, root, dest) --// fade out, blink in
+			end
+		end)
 		return true
 
 	elseif id == "Dash" then
