@@ -71,6 +71,12 @@ Config.CookMethodAliases = {
 	Fry = "Frying", Frying = "Frying",
 	Grill = "Grilling", Grilling = "Grilling",
 	Ramen = "Boiling", Boiling = "Boiling",
+	--// Manila's rice cooker and adobo pot. Both boil, so both borrow
+	--// Boiling's window - a new METHOD is not a new difficulty (THE LAW).
+	--// Split them into their own Config.Cooking entries if they ever need
+	--// different timing.
+	Rice = "Boiling",
+	Pot = "Boiling",
 }
 
 function Config.CookingFor(method)
@@ -126,6 +132,24 @@ Config.Ingredients = {
 		Source = "DryShelf", Color = Color3.fromRGB(238, 220, 150),
 		Stock = 12,
 	},
+
+	--// MANILA KITCHEN. Icons pending the owner's uploads - "" ships
+	--// ugly-but-working, the same as every other dish before its art.
+	RawPork = {
+		Display = "Pork Belly", Icon = "",
+		Source = "Fridge", Color = Color3.fromRGB(214, 146, 140),
+		Stock = 18,
+	},
+	RawRice = {
+		Display = "Rice", Icon = "",
+		Source = "DryShelf", Color = Color3.fromRGB(245, 240, 228),
+		Stock = 18,
+	},
+	RawLumpia = {
+		Display = "Lumpia Rolls", Icon = "",
+		Source = "Fridge", Color = Color3.fromRGB(236, 214, 170),
+		Stock = 15,
+	},
 }
 
 ----------------------------------------------------------------
@@ -145,7 +169,7 @@ Config.Recipes = {
 		Color = Color3.fromRGB(180, 120, 70), PriceMult = 1.0,
 	},
 	GrilledSteak = {
-		Display = "Grilled Steak", Icon = "rbxassetid://76036299162989",
+		Display = "Grilled Steak", Short = "Steak", Icon = "rbxassetid://76036299162989",
 		Ingredient = "RawSteak", Method = "Grill", Timing = "Grilling",
 		Color = Color3.fromRGB(140, 85, 70), PriceMult = 1.4,
 	},
@@ -164,7 +188,7 @@ Config.Recipes = {
 		Color = Color3.fromRGB(205, 140, 60), PriceMult = 1.0,
 	},
 	TempuraShrimp = {
-		Display = "Tempura Shrimp", Icon = "rbxassetid://81991543373834",
+		Display = "Tempura Shrimp", Short = "Tempura", Icon = "rbxassetid://81991543373834",
 		Ingredient = "RawShrimp", Method = "Fry", Timing = "Frying",
 		Color = Color3.fromRGB(236, 188, 108), PriceMult = 1.2,
 	},
@@ -172,6 +196,26 @@ Config.Recipes = {
 		Display = "Ramen", Icon = "rbxassetid://111083951169268",
 		Ingredient = "RawNoodles", Method = "Ramen", Timing = "Boiling",
 		Color = Color3.fromRGB(222, 190, 140), PriceMult = 1.4,
+	},
+
+	--// THE MANILA MENU. Lumpia shares the fryers; rice has its cooker and
+	--// adobo its pot. Price ladder mirrors the others: staple, mid, signature.
+	SteamedRice = {
+		--// Short is what the ORDER BOARD prints when a dish has no icon
+		--// yet - its text slot is narrow and long names get clipped.
+		Display = "Rice", Short = "Rice", Icon = "",
+		Ingredient = "RawRice", Method = "Rice", Timing = "Boiling",
+		Color = Color3.fromRGB(248, 244, 232), PriceMult = 0.8,
+	},
+	Lumpia = {
+		Display = "Lumpia", Short = "Lumpia", Icon = "",
+		Ingredient = "RawLumpia", Method = "Fry", Timing = "Frying",
+		Color = Color3.fromRGB(226, 176, 96), PriceMult = 1.0,
+	},
+	AdoboPork = {
+		Display = "Adobo Pork", Short = "Adobo", Icon = "",
+		Ingredient = "RawPork", Method = "Pot", Timing = "Boiling",
+		Color = Color3.fromRGB(120, 72, 44), PriceMult = 1.4,
 	},
 }
 
@@ -191,6 +235,8 @@ Config.CookMethodDisplay = {
 	Grill = { Label = "GRILL",     IconId = "" },
 	Fry   = { Label = "FRYER",     IconId = "" },
 	Ramen = { Label = "RAMEN POT", IconId = "" },
+	Rice  = { Label = "RICE COOKER", IconId = "" },
+	Pot   = { Label = "POT",         IconId = "" },
 }
 
 --// Where a raw ingredient is kept, in words. Keyed by Ingredients[x].Source.
@@ -647,7 +693,17 @@ Config.Kitchen = {
 	--// into the oil with just the tops peeking out - chicken, shrimp,
 	--// and the Diner's potatoes alike. 0.55 was the measured surface;
 	--// 0.0 puts the food's bottom half a stud under it.
-	StationFoodLiftStuds = { Grill = -0.49, Fry = 0.0, Ramen = 0.20 },
+	--// Rice and Pot start at the ramen cooker's lift; nudge per station
+	--// once the Manila props are placed.
+	StationFoodLiftStuds = { Grill = -0.49, Fry = 0.0, Ramen = 0.20,
+		Rice = 0.20, Pot = 0.20 },
+
+	--// Which looping sound a station makes while it cooks, by Method.
+	--// A method missing here falls back to the grill sizzle.
+	CookSfxByMethod = {
+		Fry = "CookFry", Grill = "CookGrill", Ramen = "CookRamen",
+		Rice = "CookRice", Pot = "CookPot",
+	},
 	PickupHoldSeconds = 0,        -- fridge / dry shelf prompt
 	StationLoadHoldSeconds = 0,   -- starting a cook
 	CollectHoldSeconds = 0,       -- taking the result off the station
@@ -823,6 +879,9 @@ Config.Supplier = {
 		RawPatty = 20,
 		RawSteak = 30,
 		RawPotato = 12,
+		RawPork = 30,
+		RawRice = 12,
+		RawLumpia = 20,
 	},
 
 	--// Placeholder delivery props, replaced by your own truck model later
@@ -2339,6 +2398,14 @@ Config.Maps = {
 		--// a map where leaving is a fade. Queue walkouts still walk.
 		LeaveByFade = true,
 	},
+	{
+		Id = "Filipino", --// MUST match the model name in ServerStorage.Maps
+		Display = "Manila Kitchen", --// rename freely; the Id is the plumbing
+		ImageId = "", --// owner's banner pending; shows a lettered placeholder
+		Available = true,
+		ShiftBarIcon = "🍚",
+		Menu = { SteamedRice = 5, Lumpia = 4, AdoboPork = 3 },
+	},
 }
 
 --// The map a party gets when nothing valid was chosen. Must be an Available
@@ -2414,7 +2481,7 @@ Config.PhaseBanner = {
 --// ingredients - without the lobby handoff or a per-test command line.
 --// "" falls back to DefaultMapId. Live servers ignore this completely:
 --// the lobby's teleport data always wins there.
-Config.StudioMapId = "Sushi" --// reviewing the ramen shift bar (Sep 18)
+Config.StudioMapId = "Filipino" --// building out Manila (Sep 27)
 
 --// STUDIO-ONLY spawn burst: this many parties march in the moment the
 --// shift goes RUNNING, so route/seating tests need no command bar.
@@ -2595,6 +2662,16 @@ Config.Sfx = {
 		},
 		--// The ramen cooker's bubbling broth. Id pending the sound
 		--// person - "" is silent, same as every unset sound here.
+		--// Manila: the rice cooker's hiss and the adobo pot's simmer
+		CookRice = {
+			Id = "", Volume = 0.45, Loop = true,
+			MinStuds = 8, MaxStuds = 25,
+		},
+		CookPot = {
+			Id = "", Volume = 0.5, Loop = true,
+			MinStuds = 8, MaxStuds = 28,
+		},
+
 		CookRamen = {
 			Id = "106600879170754", Volume = 0.5, Loop = true,
 			MinStuds = 8, MaxStuds = 25,
