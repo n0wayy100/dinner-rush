@@ -1753,6 +1753,7 @@ local function clearStation(station)
 	closeWhackSession(station, true)
 	station.ForcedQuality = nil
 	station.CookGame = nil
+	station.FlashReady = nil
 
 	station.State = "IDLE"
 	station.Dish = nil
@@ -1972,6 +1973,18 @@ function grantFromMinigame(station, player, quality)
 end
 
 local function beginCookSession(station, player)
+	--// FLASH FRY (Chef ultimate) finished this pan instantly: E just GRABS the
+	--// grab-ready dish - no game, no wait. Ages like any dish if left sitting.
+	if station.FlashReady then
+		if station.State == "BURNT" then
+			collect(station, player) --// only dumps a burnt one
+		else
+			grantFromMinigame(station, player,
+				(station.State == "PERFECT" and "Perfect") or "Overcooked")
+		end
+		return
+	end
+
 	--// RECIPE MATH and CARD MATCH cooks: the same E that would open
 	--// the arrow opens the drawn game instead (owner spec - every game
 	--// starts on the press at a READY station), and its result
@@ -2354,6 +2367,23 @@ end)
 --   ctl:Invoke("SetDisabled", id, on)   -> station prompt on/off; a disabled station
 --                                          refuses all interaction. true on success.
 ----------------------------------------------------------------
+--// FLASH FRY (Chef ultimate): finish a COOKING pan instantly. The heartbeat
+--// reads Elapsed to derive State, so jumping Elapsed to CookTime lands it in
+--// PERFECT; FlashReady makes the E-grab skip the minigame and hand over a
+--// Perfect dish. No open session exists mid-COOKING (games only open at READY),
+--// so there is nothing to close.
+local function flashFinishStation(station)
+	if station.State ~= "COOKING" then return false end
+	station.Elapsed = station.CookTime
+	station.State = "PERFECT"
+	station.ForcedQuality = "Perfect"
+	station.FlashReady = true
+	refreshStationFood(station)   --// raw -> cooked, visibly ready
+	refreshStationUi(station)
+	refreshStationPrompt(station)
+	return true
+end
+
 do
 	local bindable = Instance.new("BindableFunction")
 	bindable.Name = "KitchenStationControl"
@@ -2365,6 +2395,7 @@ do
 					Id = index,
 					Part = station.Part,
 					Method = station.Method,
+					State = station.State,   --// COOKING / PERFECT / ... (FLASH FRY reads this)
 					Busy = stationBusy(station),
 					Appliance = station.Appliance,
 					Disabled = station.Disabled == true,
@@ -2388,6 +2419,8 @@ do
 			station.Disabled = value == true
 			refreshStationPrompt(station)
 			return true
+		elseif action == "FlashFinish" then
+			return flashFinishStation(station)
 		end
 
 		return false

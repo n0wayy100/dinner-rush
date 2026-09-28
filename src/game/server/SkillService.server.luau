@@ -983,6 +983,20 @@ local function runSkill(player, skillDef, aim)
 
 	elseif id == "PlateJuggler" then
 		return doPlateThrow(player, skillDef) --// 3D throw to the nearest in-range table
+
+	elseif id == "WorkTheRoom" then
+		--// Charmer Q: sweep every uncollected table payment to the Charmer.
+		local ok, reason = bridgeInvoke("WorkTheRoom", player)
+		if not ok then return false, reason or "No tips to grab!" end
+		return true
+
+	elseif id == "Superfan" then
+		--// Charmer R: open the pick mode. The charm animation plays ON SELECT
+		--// (inside ServiceLoop), not on the press. Denies with no cooldown when
+		--// there is nobody to charm.
+		local ok, reason = bridgeInvoke("Superfan", player)
+		if not ok then return false, reason or "No table to charm!" end
+		return true
 	end
 
 	return false, "Unknown skill"

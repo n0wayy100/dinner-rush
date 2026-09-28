@@ -578,6 +578,25 @@ do
 	bridge.Parent = game:GetService("ServerStorage")
 end
 
+--// TILL BRIDGE: lets other systems bank money into the shared till (e.g. the
+--// Health Inspector's clean-bill bonus). EarnedTotal is bumped so the shift
+--// report counts it as money made.
+do
+	local bridge = Instance.new("BindableFunction")
+	bridge.Name = "AddToTill"
+	bridge.OnInvoke = function(amount, why)
+		amount = tonumber(amount)
+		if not amount or amount <= 0 then
+			return false
+		end
+		amount = math.floor(amount)
+		addToTill(amount, tostring(why or "bonus"))
+		shift.EarnedTotal += amount
+		return true
+	end
+	bridge.Parent = game:GetService("ServerStorage")
+end
+
 --// Lets other systems check whether the shift is live without duplicating
 --// the state machine
 do
@@ -2145,6 +2164,207 @@ local function collectPayment(tableId, collector)
 		collector and collector.Name or "The Helper", value, tableId))
 end
 
+--// WORK THE ROOM! bridge (the Charmer's Q): rake in EVERY uncollected table
+--// payment at once. The Charmer's MoneyMult applies inside collectPayment, and
+--// each grab credits their PaymentsCollected career. Returns false (no charge
+--// spent) when there is nothing on the tables to collect.
+do
+	local bridge = Instance.new("BindableFunction")
+	bridge.Name = "WorkTheRoom"
+	bridge.OnInvoke = function(player)
+		--// snapshot the ids first - collectPayment mutates the payments table
+		local ids = {}
+		for tableId in pairs(payments) do table.insert(ids, tableId) end
+		if #ids == 0 then
+			return false, "No tips to grab!"
+		end
+		--// only the CLOSEST few tables to the Charmer, not the whole room
+		--// (sweeping every payment at once was too strong). Position matters.
+		local character = player and player.Character
+		local root = character and character:FindFirstChild("HumanoidRootPart")
+		if root then
+			table.sort(ids, function(a, b)
+				local pa, pb = tableById[a], tableById[b]
+				local da = pa and (pa.Position - root.Position).Magnitude or math.huge
+				local db = pb and (pb.Position - root.Position).Magnitude or math.huge
+				return da < db
+			end)
+		end
+		local sq = Config.Classes.Charmer and Config.Classes.Charmer.SkillQ
+		local maxTables = (sq and sq.MaxTables) or 2
+		for i = 1, math.min(maxTables, #ids) do
+			collectPayment(ids[i], player)
+		end
+		return true
+	end
+	bridge.Parent = ServerStorage
+end
+
+--// Fire a class-skill animation to a player via SkillService's SkillRemote
+--// (the same "PlayAnim" the other hired skill animations use). Used here so a
+--// skill effect that resolves INSIDE ServiceLoop (Superfan's pick) can still
+--// play its animation on the caster.
+local function playSkillAnim(player, animId)
+	if not (player and animId and animId ~= "") then return end
+	local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+	local skillRemote = remotes and remotes:FindFirstChild("SkillRemote")
+	if skillRemote then
+		skillRemote:FireClient(player, "PlayAnim", animId)
+	end
+end
+
+--// A charmed party glows PINK (mirrors the Waiter R blue highlight) with a
+--// 💖 FAN billboard over the leader. All server-built, dies with the rigs.
+local SUPERFAN_FILL = Color3.fromRGB(255, 90, 150)  --// charmer pink
+local SUPERFAN_LINE = Color3.fromRGB(255, 160, 200) --// lighter pink outline
+local function markSuperfan(party)
+	--// pink glow + a 💖 FAN tag on EVERY fan in the party
+	for _, member in ipairs(party.Members or {}) do
+		local model, root = member.Model, member.Root
+		if model and not model:FindFirstChild("SuperfanGlow") then
+			local h = Instance.new("Highlight")
+			h.Name = "SuperfanGlow"
+			h.FillColor = SUPERFAN_FILL
+			h.FillTransparency = 0.55
+			h.OutlineColor = SUPERFAN_LINE
+			h.OutlineTransparency = 0
+			h.Adornee = model
+			h.Parent = model
+		end
+		if root and not root:FindFirstChild("SuperfanTag") then
+			local gui = Instance.new("BillboardGui")
+			gui.Name = "SuperfanTag"
+			gui.Size = UDim2.fromScale(2.4, 1.1)
+			gui.StudsOffsetWorldSpace = Vector3.new(0, 4.2, 0)
+			gui.AlwaysOnTop = true
+			gui.Parent = root
+			local label = Instance.new("TextLabel")
+			label.Size = UDim2.fromScale(1, 1)
+			label.BackgroundTransparency = 1
+			label.Font = Enum.Font.FredokaOne
+			label.TextScaled = true
+			label.Text = "💖 FAN"
+			label.TextColor3 = Color3.fromRGB(229, 72, 120)  --// charmer pink
+			label.TextStrokeColor3 = Color3.fromRGB(59, 43, 32)
+			label.TextStrokeTransparency = 0
+			label.Parent = gui
+		end
+	end
+end
+
+--// The Charmer's SUPERFAN pick uses LEFT-CLICK selection (SuperfanClient reads
+--// the SuperfanCandidate attribute the bridge stamps on each glowing customer).
+local superfanRemote do
+	local remotesFolder = ReplicatedStorage:FindFirstChild("Remotes")
+	if not remotesFolder then
+		remotesFolder = Instance.new("Folder")
+		remotesFolder.Name = "Remotes"
+		remotesFolder.Parent = ReplicatedStorage
+	end
+	superfanRemote = remotesFolder:FindFirstChild("SuperfanRemote")
+	if not superfanRemote then
+		superfanRemote = Instance.new("RemoteEvent")
+		superfanRemote.Name = "SuperfanRemote"
+		superfanRemote.Parent = remotesFolder
+	end
+end
+
+--// SUPERFAN! bridge (the Charmer's R): the caster PICKS which seated party
+--// becomes fans by LEFT-CLICKING a glowing candidate customer. Every eligible
+--// party glows dim pink; the first the caster clicks wins. If nobody is picked
+--// within PickSeconds the skill is LOST (its cooldown already started on the R
+--// press). Returns false (no charge spent) when there is nobody to charm.
+do
+	local bridge = Instance.new("BindableFunction")
+	bridge.Name = "Superfan"
+	bridge.OnInvoke = function(player)
+		local candidates = {}
+		for _, party in pairs(parties) do
+			if party.BarKind == "seated" and not party.Superfan
+				and party.Members and party.Members[1] then
+				table.insert(candidates, party)
+			end
+		end
+		if #candidates == 0 then
+			return false, "No table to charm into fans!"
+		end
+
+		local sr = Config.Classes.Charmer and Config.Classes.Charmer.SkillR
+		local marks, done, conn = {}, false, nil
+		local candidateByModel = {}
+
+		local function endPick()
+			for _, h in ipairs(marks) do
+				if typeof(h) == "Instance" then h:Destroy() end
+			end
+			marks = {}
+			for model in pairs(candidateByModel) do
+				if model and model.Parent then
+					model:SetAttribute("SuperfanCandidate", nil)
+				end
+			end
+			candidateByModel = {}
+			if conn then conn:Disconnect() conn = nil end
+			superfanRemote:FireClient(player, "End")
+		end
+
+		--// glow + flag every member of every candidate party (click ANY of them)
+		for _, party in ipairs(candidates) do
+			for _, member in ipairs(party.Members) do
+				local model = member.Model
+				if model then
+					local h = Instance.new("Highlight")
+					h.Name = "SuperfanCandidate"
+					h.FillColor = SUPERFAN_FILL
+					h.FillTransparency = 0.75
+					h.OutlineColor = SUPERFAN_LINE
+					h.OutlineTransparency = 0.2
+					h.Adornee = model
+					h.Parent = model
+					table.insert(marks, h)
+					model:SetAttribute("SuperfanCandidate", true)
+					candidateByModel[model] = party
+				end
+			end
+		end
+
+		local function choose(party)
+			if done then return end
+			done = true
+			endPick()
+			--// play the charm animation ON SELECT, then the fans land after the
+			--// wind-up (animation before the effect).
+			playSkillAnim(player, sr and sr.AnimId)
+			task.delay((sr and sr.AnimDelay) or 0.4, function()
+				party.Superfan = true
+				markSuperfan(party)
+				print(("[Service] Party %d charmed into SUPERFANS by %s"):format(
+					party.Id, player and player.Name or "?"))
+			end)
+		end
+
+		--// the client's LEFT-CLICK arrives as (player, "Pick", clickedModel)
+		superfanRemote:FireClient(player, "Begin")
+		conn = superfanRemote.OnServerEvent:Connect(function(who, action, model)
+			if who ~= player or action ~= "Pick" or done then return end
+			local party = model and candidateByModel[model]
+			if party then choose(party) end
+		end)
+
+		--// no pick in time = skill lost (cooldown already ticking)
+		task.delay((sr and sr.PickSeconds) or 10, function()
+			if not done then
+				done = true
+				endPick()
+				print("[Service] Superfan pick timed out - skill lost")
+			end
+		end)
+
+		return true
+	end
+	bridge.Parent = ServerStorage
+end
+
 local PAY_COLOR = {
 	GRACE = Color3.fromRGB(76, 175, 109),   -- basil: full value
 	DECAY = Color3.fromRGB(245, 184, 65),   -- mustard: melting
@@ -2162,10 +2382,17 @@ local function partyBill(party)
 		+ (good * Config.Kitchen.GoodPayMult)
 		+ (overcooked * Config.Kitchen.OvercookedPayMult)) / served
 
+	--// SUPERFAN (Charmer R): a charmed table tips big.
+	local superfanMult = 1
+	if party.Superfan then
+		local sr = Config.Classes.Charmer and Config.Classes.Charmer.SkillR
+		superfanMult = (sr and sr.SuperfanMoneyMult) or 1.5
+	end
+
 	--// BillUnits: the critic is one person who eats (and pays) for three
 	return math.floor(BASE_COINS_PER_PARTY * (party.BillUnits or party.Size)
 		* diff.Rewards.CoinMult
-		* (party.IsVIP and VIP_TIP_MULT or 1) * qualityMult)
+		* (party.IsVIP and VIP_TIP_MULT or 1) * superfanMult * qualityMult)
 end
 
 local function createPayment(party, tableId)
@@ -2541,6 +2768,12 @@ local function onPartyFinishedEating(party, tableId)
 	shift.Satisfied += 1
 	local repGain = party.IsVIP and diff.Reputation.VIPSatisfied or diff.Reputation.SatisfiedParty
 	repChange(repGain, party.IsVIP and "VIP satisfied" or "party satisfied")
+
+	--// SUPERFAN (Charmer R): a charmed table leaves a rave review on top.
+	if party.Superfan then
+		local sr = Config.Classes.Charmer and Config.Classes.Charmer.SkillR
+		repChange((sr and sr.SuperfanRepBonus) or 6, "superfan review")
+	end
 
 	--// THE REVIEW: the critic's verdict lands the moment he finishes
 	if party.IsCritic then
@@ -3544,6 +3777,22 @@ local function findFreeSpot()
 	return nil
 end
 
+--// TIDINESS REWARD (owner spec): while the restaurant is really tidy, rare
+--// customers (VIPs) roll more often. Reads the shared Tidiness bar (published
+--// to ShiftState by CleanlinessService).
+local function tidyVIPChance()
+	local base = diff.VIPChance
+	local T = Config.Tidiness
+	if not (T and T.Enabled) then return base end
+	local val = ShiftState:GetAttribute("Tidiness")
+	local max = ShiftState:GetAttribute("TidinessMax")
+	local frac = (val and max and max > 0) and (val / max) or 1
+	if frac >= (T.TidyBonusFraction or 0.75) then
+		return base * (T.TidyVIPMult or 2)
+	end
+	return base
+end
+
 --// options (all optional - absent means the classic roll): the
 --// TUTORIAL's scripted party passes { Plain = true (never VIP/critic),
 --// Size = n, Ticket = {dish, ...} (forced, in order) }; VIP = true
@@ -3585,7 +3834,7 @@ local function spawnParty(options)
 		Size = options.Size or (isCritic and 1 or rollPartySize()),
 		IsCritic = isCritic,
 		IsVIP = options.VIP == true or (not plain and not isCritic
-			and (forcedVIP or math.random() < diff.VIPChance)),
+			and (forcedVIP or math.random() < tidyVIPChance())),
 		State = STATE.QUEUED,
 		Spot = spot,
 		Greeted = false,

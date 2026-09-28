@@ -149,6 +149,8 @@ local fullSince = 0
 local humanoid = nil
 local sprintTrack = nil
 local animWarned = false
+local boostTrack = nil   --// DOUBLE TIME run animation (Waiter ultimate)
+local boostWarned = false
 
 --// Optional custom sprint animation. With the id empty this whole path is
 --// dormant and the default run animation's WalkSpeed scaling carries the feel.
@@ -173,6 +175,40 @@ local function playSprintAnim()
 	end
 
 	sprintTrack:Play(0.15)
+end
+
+--// DOUBLE TIME (Waiter ultimate): a looping run animation that plays for the
+--// whole speed boost and stops when it wears off (both driven off the
+--// SpeedBoostMult attribute below). Empty id = dormant, like the sprint anim.
+local function playBoostAnim()
+	local id = (Config.Ultimates and Config.Ultimates.WaiterRunAnim) or ""
+	if id == "" or not humanoid then return end
+	if not boostTrack then
+		local animator = humanoid:FindFirstChildOfClass("Animator")
+		if not animator then return end
+		local animation = Instance.new("Animation")
+		animation.AnimationId = id
+		local ok, track = pcall(animator.LoadAnimation, animator, animation)
+		if not ok then
+			if not boostWarned then
+				boostWarned = true
+				warn("[SprintClient] DOUBLE TIME anim failed to load: " .. tostring(track))
+			end
+			return
+		end
+		track.Looped = true
+		track.Priority = Enum.AnimationPriority.Action
+		boostTrack = track
+	end
+	if not boostTrack.IsPlaying then
+		boostTrack:Play(0.2)
+	end
+end
+
+local function stopBoostAnim()
+	if boostTrack and boostTrack.IsPlaying then
+		boostTrack:Stop(0.25)
+	end
 end
 
 local function stopSprintAnim()
@@ -210,10 +246,36 @@ end
 
 --// Boost starting or ending mid-stride re-applies whichever speed is
 --// current, so DOUBLE TIME kicks in (and wears off) instantly
+--// DOUBLE TIME run animation: only while boosted AND actually moving - a run
+--// pose while standing still looks wrong (owner call). Poll movement for the
+--// boost's life; a token ends the loop when the boost wears off or re-casts.
+local boostLoopToken = 0
+local function startBoostAnimLoop()
+	boostLoopToken += 1
+	local myToken = boostLoopToken
+	task.spawn(function()
+		while boostLoopToken == myToken and speedMult() > 1 do
+			if humanoid and humanoid.MoveDirection.Magnitude > 0.1 then
+				playBoostAnim()
+			else
+				stopBoostAnim()
+			end
+			task.wait(0.1)
+		end
+		stopBoostAnim()
+	end)
+end
+
 player:GetAttributeChangedSignal("SpeedBoostMult"):Connect(function()
 	if humanoid and humanoid.Health > 0 then
 		humanoid.WalkSpeed =
 			(active and Sprint.SprintSpeed or Sprint.BaseWalkSpeed) * speedMult()
+	end
+	if speedMult() > 1 then
+		startBoostAnimLoop()
+	else
+		boostLoopToken += 1 --// end any running loop
+		stopBoostAnim()
 	end
 end)
 
@@ -287,6 +349,7 @@ ContextActionService:SetPosition(ACTION, UDim2.new(0.75, 0, 0.05, 0))
 ----------------------------------------------------------------
 local function onCharacterAdded(character)
 	sprintTrack = nil --// old track died with the old Animator
+	boostTrack = nil  --// ...and so did the DOUBLE TIME run track
 	humanoid = character:WaitForChild("Humanoid")
 
 	--// Fresh spawn: full tank, normal speed - never stuck fast or slow

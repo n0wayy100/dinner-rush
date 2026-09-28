@@ -515,6 +515,96 @@ local function updateRepMeter(state, rep, repMax)
 end
 
 ----------------------------------------------------------------
+-- THE TIDINESS METER (Sep 27 2026): a sibling pill under the money
+-- readout - "TIDY" + a three-stage bar (basil clean, mustard, tomato
+-- filthy). Driven by ShiftState.Tidiness / TidinessMax.
+----------------------------------------------------------------
+local tidyMeterGui, tidyFill
+do
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "TidinessMeter_UI"
+	gui.ResetOnSpawn = false
+	gui.IgnoreGuiInset = true
+	gui.DisplayOrder = 20
+	gui.Enabled = false
+	gui.Parent = playerGui
+
+	local panel = Instance.new("Frame")
+	--// OPPOSITE END from the REP meter (owner request): top-RIGHT edge,
+	--// mirroring REP's top-left height.
+	panel.AnchorPoint = Vector2.new(1, 0)
+	local touchOnly = game:GetService("UserInputService").TouchEnabled
+		and not game:GetService("UserInputService").KeyboardEnabled
+	panel.Position = UDim2.fromScale(0.98, touchOnly and 0.19 or 0.1)
+	panel.Size = UDim2.fromScale(0.16, 0.045)
+	panel.BackgroundColor3 = CREAM
+	panel.Parent = gui
+
+	local pc = Instance.new("UICorner")
+	pc.CornerRadius = UDim.new(1, 0)
+	pc.Parent = panel
+
+	local ps = Instance.new("UIStroke")
+	ps.Thickness = 3
+	ps.Color = CHOC
+	ps.Parent = panel
+
+	local tag = Instance.new("TextLabel")
+	tag.AnchorPoint = Vector2.new(0, 0.5)
+	tag.Position = UDim2.fromScale(0.06, 0.5)
+	tag.Size = UDim2.fromScale(0.30, 0.72)
+	tag.BackgroundTransparency = 1
+	tag.Font = Enum.Font.FredokaOne
+	tag.TextScaled = true
+	tag.TextColor3 = CHOC
+	tag.Text = "TIDY"
+	tag.Parent = panel
+
+	local back = Instance.new("Frame")
+	back.AnchorPoint = Vector2.new(1, 0.5)
+	back.Position = UDim2.fromScale(0.94, 0.5)
+	back.Size = UDim2.fromScale(0.54, 0.55)
+	back.BackgroundColor3 = Color3.fromRGB(235, 220, 200)
+	back.ClipsDescendants = true
+	back.Parent = panel
+
+	local bc = Instance.new("UICorner")
+	bc.CornerRadius = UDim.new(1, 0)
+	bc.Parent = back
+
+	local bs = Instance.new("UIStroke")
+	bs.Thickness = 2
+	bs.Color = CHOC
+	bs.Parent = back
+
+	tidyFill = Instance.new("Frame")
+	tidyFill.Size = UDim2.fromScale(1, 1)
+	tidyFill.BackgroundColor3 = BASIL
+	tidyFill.BorderSizePixel = 0
+	tidyFill.Parent = back
+
+	local tfc = Instance.new("UICorner")
+	tfc.CornerRadius = UDim.new(1, 0)
+	tfc.Parent = tidyFill
+
+	tidyMeterGui = gui
+end
+
+local function updateTidinessMeter(state, tidy, tidyMax, active)
+	--// the bar shows during play UNTIL the inspection ends the tidiness
+	--// challenge for the shift (CleanlinessService clears TidinessActive)
+	local onDuty = (state == "RUNNING" or state == "CLOSING") and active ~= false
+	tidyMeterGui.Enabled = onDuty and not focusHidden()
+	if not onDuty then return end
+
+	local fraction = math.clamp(tidy / math.max(tidyMax, 1), 0, 1)
+	tidyFill.Size = UDim2.fromScale(fraction, 1)
+	tidyFill.BackgroundColor3 = fraction >= 0.6 and BASIL
+		or fraction >= 0.3 and MUSTARD
+		or TOMATO
+end
+
+----------------------------------------------------------------
 -- THE CRITIC'S REVIEW BANNER (owner request, Sep 2026): the verdict
 -- pops in just below the shift bar, one star at a time, holds, then
 -- shrinks away. Driven by ShiftState.CriticStars (0 = shift reset).
@@ -697,6 +787,8 @@ local function refresh()
 	--// these two code-built pieces are the whole shift readout now
 	updateShiftBar(state)
 	updateRepMeter(state, attr("Reputation", 0), attr("ReputationMax", 100))
+	updateTidinessMeter(state, attr("Tidiness", 100), attr("TidinessMax", 100),
+		attr("TidinessActive", true))
 
 	--// The shared shift till, not anyone's personal balance
 	setText(ui.till, ("Money: $%d"):format(attr("Till", 0)))

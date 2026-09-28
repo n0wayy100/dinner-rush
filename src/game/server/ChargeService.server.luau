@@ -208,46 +208,44 @@ local function pickDish(candidates, wants)
 	return pick
 end
 
+--// FLASH FRY (reworked Sep 27 2026): instead of cooking carried raws, it
+--// instantly FINISHES up to 2 pans that are CURRENTLY cooking - no wait, no
+--// minigame. Each lands grab-ready as a Perfect dish at its station (its cooked
+--// icon shows "READY"), for anyone to grab. All the work is KitchenService's
+--// FlashFinish; here we find the cooking pans and fire it.
 local function flashFry(player)
-	local character = player.Character
-	if not character then
-		return false, "No character!"
+	local control = ServerStorage:FindFirstChild("KitchenStationControl")
+	if not control then
+		return false, "Kitchen's not ready!"
+	end
+	local ok, list = pcall(function() return control:Invoke("List") end)
+	if not ok or type(list) ~= "table" then
+		return false, "Kitchen's not ready!"
 	end
 
-	--// EVERY carried raw - the equipped one and the pocketed one both
-	local raws = {}
-	local containers = { character, player:FindFirstChildOfClass("Backpack") }
-	for _, container in ipairs(containers) do
-		if container then
-			for _, child in ipairs(container:GetChildren()) do
-				if child:IsA("Tool") and child:GetAttribute("Ingredient") then
-					table.insert(raws, child)
-				end
-			end
+	local cooking = {}
+	for _, entry in ipairs(list) do
+		if entry.State == "COOKING" then
+			table.insert(cooking, entry.Id)
 		end
 	end
-	if #raws == 0 then
-		return false, "Grab a raw ingredient first!"
+	if #cooking == 0 then
+		return false, "Nothing's cooking to flash-fry!"
 	end
 
-	local wants = openWants()
-	local cookedNames = {}
-	for _, held in ipairs(raws) do
-		local candidates = recipesFor(held:GetAttribute("Ingredient"))
-		if #candidates > 0 then
-			local pick = pickDish(candidates, wants)
-			local home = held.Parent
-			held:Destroy()
-			makeDishTool(pick.Recipe, pick.Name).Parent = home
-			table.insert(cookedNames, pick.Recipe.Display)
-		end
+	local maxPans = ULT.FlashFryMaxPans or 2
+	local finished = 0
+	for _, id in ipairs(cooking) do
+		if finished >= maxPans then break end
+		local okf, done = pcall(function() return control:Invoke("FlashFinish", id) end)
+		if okf and done then finished += 1 end
 	end
-	if #cookedNames == 0 then
-		return false, "That can't be cooked!"
+	if finished == 0 then
+		return false, "Nothing's cooking to flash-fry!"
 	end
 
-	print(("[Charge] FLASH FRY! %s instantly cooked: Perfect %s"):format(
-		player.Name, table.concat(cookedNames, ", Perfect ")))
+	print(("[Charge] FLASH FRY! %s instantly finished %d cooking pan(s)"):format(
+		player.Name, finished))
 	return true
 end
 
@@ -256,19 +254,29 @@ end
 --// it. All the work is in ServiceLoop's WaiterExpress bridge (it owns the
 --// tables, patience and serve flow); here we just fire it. No plates / no
 --// matching tables = it keeps the charge.
-local function expressRun(player)
-	local bridge = ServerStorage:FindFirstChild("WaiterExpress")
-	if not bridge then
-		return false, "The floor's not ready!"
+--// DOUBLE TIME (Waiter ultimate, reworked Sep 27 2026): a big speed burst -
+--// SpeedBoostMult on the Player for SpeedBoostSeconds. SprintClient scales
+--// every WalkSpeed it writes by it AND plays/stops the run animation off the
+--// same attribute. A token guards against an earlier cast's timer cutting a
+--// later one short.
+local function doubleTime(player)
+	if not player.Character then
+		return false, "Get on the floor first!"
 	end
-	local ok, served, reason = pcall(function() return bridge:Invoke(player) end)
-	if not ok then
-		return false, "Delivery jammed!"
-	end
-	if served then
-		print(("[Charge] EXPRESS RUN! %s flash-served the neediest tables"):format(player.Name))
-	end
-	return served, reason
+	local mult = ULT.SpeedBoostMult or 2
+	local seconds = ULT.SpeedBoostSeconds or 20
+	player:SetAttribute("SpeedBoostMult", mult)
+	local token = (player:GetAttribute("SpeedBoostToken") or 0) + 1
+	player:SetAttribute("SpeedBoostToken", token)
+	task.delay(seconds, function()
+		if player and player.Parent
+			and player:GetAttribute("SpeedBoostToken") == token then
+			player:SetAttribute("SpeedBoostMult", nil) --// boost + run anim end
+		end
+	end)
+	print(("[Charge] DOUBLE TIME! %s at x%.2g speed for %ds"):format(
+		player.Name, mult, seconds))
+	return true
 end
 
 local function speedDial(player)
@@ -305,9 +313,240 @@ local function sweetTalk(player)
 	return charmed, reason
 end
 
+--// The code-built parts REMOTE (a handheld body + a big red button). Pure
+--// parts, no Toolbox. The Fixer taps it to SPEED DIAL the fix.
+local function buildCodeRemote()
+	local remote = Instance.new("Model")
+	remote.Name = "SpeedDialRemote"
+
+	local body = Instance.new("Part")
+	body.Name = "Body"
+	body.Size = Vector3.new(1.0, 0.45, 1.7)
+	body.Color = Color3.fromRGB(45, 48, 55)
+	body.Material = Enum.Material.SmoothPlastic
+	body.CanCollide = false
+	body.CanQuery = false
+	body.Massless = true
+	body.Parent = remote
+	remote.PrimaryPart = body
+
+	local button = Instance.new("Part")
+	button.Name = "RedButton"
+	button.Shape = Enum.PartType.Cylinder
+	button.Size = Vector3.new(0.3, 0.75, 0.75) --// cylinder along X -> a disc once rolled
+	button.Color = Color3.fromRGB(229, 45, 45)
+	button.Material = Enum.Material.Neon
+	button.CanCollide = false
+	button.CanQuery = false
+	button.Massless = true
+	button.Parent = remote
+	local bw = Instance.new("WeldConstraint")
+	bw.Part0 = body
+	bw.Part1 = button
+	bw.Parent = button
+	--// the big red button sits on TOP of the body, toward the front, facing up
+	button.CFrame = body.CFrame * CFrame.new(0, 0.3, -0.45) * CFrame.Angles(0, 0, math.rad(90))
+
+	return remote
+end
+
+--// A code-built parts ROSE (green stem + red bud + leaves) - the Charmer's
+--// SWEET TALK fallback if no SweetTalkRose model is provided. Pure parts.
+local function buildCodeRose()
+	local rose = Instance.new("Model")
+	rose.Name = "SweetTalkRose"
+
+	local stem = Instance.new("Part")
+	stem.Name = "Stem"
+	stem.Size = Vector3.new(0.12, 2.2, 0.12)
+	stem.Color = Color3.fromRGB(76, 130, 70)
+	stem.Material = Enum.Material.Grass
+	stem.CanCollide = false
+	stem.CanQuery = false
+	stem.Massless = true
+	stem.Parent = rose
+	rose.PrimaryPart = stem
+
+	local bud = Instance.new("Part")
+	bud.Name = "Bud"
+	bud.Shape = Enum.PartType.Ball
+	bud.Size = Vector3.new(0.7, 0.85, 0.7)
+	bud.Color = Color3.fromRGB(200, 40, 60)
+	bud.Material = Enum.Material.SmoothPlastic
+	bud.CanCollide = false
+	bud.CanQuery = false
+	bud.Massless = true
+	bud.Parent = rose
+	local bw = Instance.new("WeldConstraint")
+	bw.Part0 = stem
+	bw.Part1 = bud
+	bw.Parent = bud
+	bud.CFrame = stem.CFrame * CFrame.new(0, 1.2, 0)
+
+	local function leaf(sign)
+		local l = Instance.new("Part")
+		l.Name = "Leaf"
+		l.Size = Vector3.new(0.5, 0.08, 0.24)
+		l.Color = Color3.fromRGB(90, 150, 80)
+		l.Material = Enum.Material.Grass
+		l.CanCollide = false
+		l.CanQuery = false
+		l.Massless = true
+		l.Parent = rose
+		local w = Instance.new("WeldConstraint")
+		w.Part0 = stem
+		w.Part1 = l
+		w.Parent = l
+		l.CFrame = stem.CFrame
+			* CFrame.new(sign * 0.3, 0.2, 0) * CFrame.Angles(0, 0, math.rad(sign * 25))
+	end
+	leaf(1)
+	leaf(-1)
+
+	return rose
+end
+
+--// Owner may drop a SAFE parts/MeshPart prop of the given name in ServerStorage
+--// - NEVER a Toolbox model (scripts = the backdoor vector). Every script is
+--// STRIPPED on clone as a guard, so even a scripted model runs no code here. A
+--// mesh is inert geometry and is fine. Returns a Model with a PrimaryPart.
+local function makeProp(templateName, buildFn)
+	local template = ServerStorage:FindFirstChild(templateName)
+	if not template then
+		return buildFn()
+	end
+	local clone = template:Clone()
+
+	for _, d in ipairs(clone:GetDescendants()) do
+		if d:IsA("LuaSourceContainer") then d:Destroy() end
+	end
+
+	local function tidy(p)   --// inert + weld-friendly
+		p.CanCollide = false
+		p.CanQuery = false
+		p.Massless = true
+		p.Anchored = false
+	end
+
+	--// a single MeshPart template: wrap it in a Model so the weld is uniform
+	if clone:IsA("BasePart") then
+		tidy(clone)
+		local model = Instance.new("Model")
+		model.Name = templateName
+		clone.Parent = model
+		model.PrimaryPart = clone
+		return model
+	end
+
+	--// a Model template
+	if clone:IsA("Model") then
+		clone.Name = templateName
+		for _, d in ipairs(clone:GetDescendants()) do
+			if d:IsA("BasePart") then tidy(d) end
+		end
+		if not clone.PrimaryPart then
+			clone.PrimaryPart = clone:FindFirstChildWhichIsA("BasePart", true)
+		end
+		if clone.PrimaryPart then return clone end
+	end
+
+	--// unexpected template shape - fall back to the code build
+	clone:Destroy()
+	return buildFn()
+end
+
+--// WELD a prop into the caster's RIGHT hand for the cast, remove after
+--// `seconds`. Positions the WHOLE model then welds EVERY part to the hand so a
+--// multi-part model rides as one (nothing falls off). grip = { Offset={x,y,z},
+--// TiltDegrees={x,y,z} }, tunable so it sits right against each animation.
+local function attachHandProp(character, seconds, prop, grip)
+	if not prop then return end
+	local hand = character:FindFirstChild("RightHand")
+		or character:FindFirstChild("Right Arm")
+	local body = prop.PrimaryPart
+	if not hand or not body then prop:Destroy() return end
+
+	grip = grip or {}
+	local offset = grip.Offset or { 0, 0.4, 0 }        --// studs from the hand center
+	local tilt = grip.TiltDegrees or { 0, 0, 0 }       --// rotate the prop in-grip
+	local target = hand.CFrame
+		* CFrame.new(offset[1], offset[2], offset[3])
+		* CFrame.Angles(math.rad(tilt[1]), math.rad(tilt[2]), math.rad(tilt[3]))
+
+	prop.Parent = character
+	prop:PivotTo(target)
+	for _, p in ipairs(prop:GetDescendants()) do
+		if p:IsA("BasePart") then
+			local w = Instance.new("WeldConstraint")
+			w.Part0 = hand
+			w.Part1 = p
+			w.Parent = p
+		end
+	end
+
+	game:GetService("Debris"):AddItem(prop, seconds)
+end
+
+--// The cast's in-world flourish: the caster plays their ultimate animation
+--// (client-side, via the same PlayAnim channel the skills use, so it shows to
+--// everyone) plus any class particle - the Chef sprinkles salt from the hand.
+local function playCastEffect(player, classKey)
+	local character = player.Character
+	if not character then return end
+
+	local animId = ULT.ClassCastAnim and ULT.ClassCastAnim[classKey]
+	if animId and animId ~= "" then
+		local remotes = game:GetService("ReplicatedStorage"):FindFirstChild("Remotes")
+		local skillRemote = remotes and remotes:FindFirstChild("SkillRemote")
+		if skillRemote then
+			skillRemote:FireClient(player, "PlayAnim", animId)
+		end
+	end
+
+	--// CHEF: SALT BAE sprinkle off the right hand, timed to the move
+	if classKey == "Chef" then
+		local hand = character:FindFirstChild("RightHand")
+			or character:FindFirstChild("Right Arm")
+		if hand then
+			local salt = Instance.new("ParticleEmitter")
+			salt.Name = "SaltSprinkle"
+			salt.Texture = "rbxassetid://243660364" --// soft white grain
+			salt.Color = ColorSequence.new(Color3.fromRGB(255, 255, 255))
+			salt.Size = NumberSequence.new(0.14, 0.02)
+			salt.Transparency = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 0.1),
+				NumberSequenceKeypoint.new(1, 1),
+			})
+			salt.Lifetime = NumberRange.new(0.5, 0.9)
+			salt.Rate = 70
+			salt.Speed = NumberRange.new(1, 3)
+			salt.SpreadAngle = Vector2.new(18, 18)
+			salt.Acceleration = Vector3.new(0, -22, 0) --// the grains fall
+			salt.Rotation = NumberRange.new(0, 360)
+			salt.EmissionDirection = Enum.NormalId.Bottom
+			salt.Parent = hand
+			task.delay(ULT.SaltSeconds or 1.5, function()
+				salt.Enabled = false
+				game:GetService("Debris"):AddItem(salt, 1.2)
+			end)
+		end
+	end
+
+	--// FIXER: SPEED DIAL taps a remote (big red button). CHARMER: SWEET TALK
+	--// offers a rose. Both welded into the hand for the cast (the animation
+	--// poses the empty hand; the prop rides along). Owner may supply the model.
+	if classKey == "Fixer" then
+		attachHandProp(character, ULT.RemoteSeconds or 2,
+			makeProp("SpeedDialRemote", buildCodeRemote), ULT.RemoteGrip)
+	elseif classKey == "Charmer" then
+		attachHandProp(character, ULT.RoseSeconds or 2,
+			makeProp("SweetTalkRose", buildCodeRose), ULT.RoseGrip)
+	end
+end
+
 local ABILITIES = {
 	Chef = flashFry,
-	Waiter = expressRun,
+	Waiter = doubleTime,
 	Fixer = speedDial,
 	Charmer = sweetTalk,
 }
@@ -345,6 +584,9 @@ ultimateRemote.OnServerEvent:Connect(function(player, action)
 		--// big. Fires only after the ability actually succeeded, so a denied
 		--// press stays silent.
 		Sfx.Play("UltimateUsed", player.Character)
+
+		--// in-world cast animation + class particle (Chef's salt)
+		playCastEffect(player, classKey)
 
 		ultimateRemote:FireClient(player, "Result", true)
 		--// Everyone hears about it - ultimates are social moments. Sent

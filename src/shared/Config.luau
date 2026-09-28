@@ -136,17 +136,17 @@ Config.Ingredients = {
 	--// MANILA KITCHEN. Icons pending the owner's uploads - "" ships
 	--// ugly-but-working, the same as every other dish before its art.
 	RawPork = {
-		Display = "Pork Belly", Icon = "",
+		Display = "Pork Belly", Icon = "rbxassetid://133374495233508", -- raw_pork
 		Source = "Fridge", Color = Color3.fromRGB(214, 146, 140),
 		Stock = 18,
 	},
 	RawRice = {
-		Display = "Rice", Icon = "",
+		Display = "Rice", Icon = "rbxassetid://120240808119103", -- uncooked_rice
 		Source = "DryShelf", Color = Color3.fromRGB(245, 240, 228),
 		Stock = 18,
 	},
 	RawLumpia = {
-		Display = "Lumpia Rolls", Icon = "",
+		Display = "Lumpia Rolls", Icon = "rbxassetid://91680745975302", -- uncooked_lumpia
 		Source = "Fridge", Color = Color3.fromRGB(236, 214, 170),
 		Stock = 15,
 	},
@@ -203,17 +203,17 @@ Config.Recipes = {
 	SteamedRice = {
 		--// Short is what the ORDER BOARD prints when a dish has no icon
 		--// yet - its text slot is narrow and long names get clipped.
-		Display = "Rice", Short = "Rice", Icon = "",
+		Display = "Rice", Short = "Rice", Icon = "rbxassetid://87007459314481", -- cooked_rice
 		Ingredient = "RawRice", Method = "Rice", Timing = "Boiling",
 		Color = Color3.fromRGB(248, 244, 232), PriceMult = 0.8,
 	},
 	Lumpia = {
-		Display = "Lumpia", Short = "Lumpia", Icon = "",
+		Display = "Lumpia", Short = "Lumpia", Icon = "rbxassetid://102396531470381", -- cooked_lumpia
 		Ingredient = "RawLumpia", Method = "Fry", Timing = "Frying",
 		Color = Color3.fromRGB(226, 176, 96), PriceMult = 1.0,
 	},
 	AdoboPork = {
-		Display = "Adobo Pork", Short = "Adobo", Icon = "",
+		Display = "Adobo Pork", Short = "Adobo", Icon = "rbxassetid://126823141441254", -- cooked_pork
 		Ingredient = "RawPork", Method = "Pot", Timing = "Boiling",
 		Color = Color3.fromRGB(120, 72, 44), PriceMult = 1.4,
 	},
@@ -903,6 +903,61 @@ Config.Reputation = {
 	UpdateEventScale = { EASY = 0.7, NORMAL = 1.0, HARD = 1.3 },
 }
 
+--// TIDINESS: the restaurant's cleanliness bar (Sep 27 2026). A second shared
+--// meter beside Reputation - it drips down over the shift and from messes, and
+--// players raise it by CLEANING (vacuuming grime spots, sweeping). The Health
+--// Inspector event judges it. Per-difficulty drip/grime rate is DEMAND (like
+--// spawn rate), NOT a skill window - so THE LAW holds: the clean action's power
+--// (CleanRestore) is FLAT on every difficulty.
+Config.Tidiness = {
+	Enabled = true,
+	Start = 100,
+	Max = 100,
+	--// passive ambient drip per second (DEMAND - scales by difficulty)
+	DripPerSecond = { EASY = 0.15, NORMAL = 0.25, HARD = 0.40 },
+	--// GRIME SPOTS: cleanable messes that splat on the floor over the shift.
+	--// Each that appears knocks tidiness down; cleaning one restores some.
+	GrimeSpawnEverySeconds = { EASY = 13, NORMAL = 9, HARD = 6 }, -- DEMAND (frequent mess)
+	MaxGrimeSpots = 8,           -- cap on active grime at once
+	GrimeDropOnSpawn = 4,        -- tidiness lost when a grime spot appears
+	CleanRestore = 10,           -- tidiness restored per spot cleaned (FLAT - skill)
+	--// VACUUM HOVER minigame: dust specks scattered in the panel, hover the
+	--// nozzle over each to suck it up. Fixer's ChannelMult trims the count.
+	DustSpecks = 6,              -- dust specks to suck to clean one spot
+	DustTimeoutSeconds = 20,     -- abandoned panel frees the grime
+	DustWalkAwayStuds = 14,      -- drift further from the spot and the panel closes
+	GrimeOffsetStuds = 9,        -- how far from a random table a spot can splat
+	--// POOP in the toilet: cleaned with the PLUNGER via the toilet TAP panel
+	--// (Config.PlungeTap drives the tap mechanic). Ambient, one at a time.
+	PoopChance = 0.30,           -- chance per grime tick a poop appears
+	PoopDropOnSpawn = 6,         -- tidiness lost when a poop appears
+	PoopCleanRestore = 15,       -- tidiness restored for plunging it (bigger mess)
+	--// HUD bar colour thresholds (fraction of Max)
+	CleanFraction = 0.70,        -- at/above = basil (clean)
+	DirtyFraction = 0.35,        -- below = tomato (filthy)
+
+	--// REWARD (owner spec): while the place is REALLY tidy (bar at/above this
+	--// fraction), rare customers (VIPs) spawn more often - VIPChance is
+	--// multiplied by TidyVIPMult. Keeping it clean pays off.
+	TidyBonusFraction = 0.75,
+	TidyVIPMult = 2.0,
+}
+
+--// THE HEALTH INSPECTOR (reworked Sep 27 2026): a WARNING event. He announces
+--// he is coming in WarningSeconds, then judges how TIDY the place is right now
+--// (the ambient mess spawns all shift - Config.Tidiness - and players vacuum
+--// it). Tidiness bar at/above PassFraction = PASS + money CleanBonus; below =
+--// a rep FINE that scales with how far below (FineScale). Fine/bonus/warn per
+--// difficulty in Difficulty[*].Consequences.Inspector*. PassFraction is DEMAND
+--// (harder = must be tidier); cleaning power stays flat (THE LAW).
+Config.HealthInspector = {
+	WarningSeconds = 30,   -- heads-up before he judges (owner spec)
+	--// tidiness fraction (0-1) needed to PASS
+	PassFraction = { EASY = 0.40, NORMAL = 0.55, HARD = 0.70 },
+	--// each ~1/FineScale of tidiness below the pass line = one FinePerMess unit
+	FineScale = 10,
+}
+
 ----------------------------------------------------------------
 -- DIFFICULTY: the three evenings
 --
@@ -1562,7 +1617,7 @@ Config.Classes = {
 			                   -- (orange glow); no pick in time = nearest is used
 		},
 		UltimateName = "FLASH FRY!",
-		UltimateText = "Instantly cook everything you're holding - perfectly",
+		UltimateText = "Instantly finish the pans that are cooking - perfectly",
 		--// Levels 1->5: finish the task, then PAY to upgrade. Steps[L] is the
 		--// cumulative counter needed to leave level L; Costs[L] the coins.
 		--// Tuned for ~10-15 perfects per focused shift: Lv2 in a shift or two,
@@ -1614,8 +1669,8 @@ Config.Classes = {
 			ThrowReleaseDelay = 0.4, -- wait this long into the animation before the
 			                         -- plate leaves the hand (sync to the throw beat)
 		},
-		UltimateName = "EXPRESS RUN!",
-		UltimateText = "Grab every ready plate and serve the neediest tables",
+		UltimateName = "DOUBLE TIME!",
+		UltimateText = "Move at double speed for 20 seconds",
 		--// ~10-15 serves per focused shift
 		UpgradeTrack = {
 			Counter = "DishesServed", Label = "Dishes served",
@@ -1675,6 +1730,29 @@ Config.Classes = {
 		--// patience bonus when their recommendation lands.
 		MoneyMult = 1.25,
 		RecommendBonusMult = 2,
+		--// TWO ACTIVE SKILLS (Q + R, cooldown-based)
+		SkillQ = {
+			Id = "WorkTheRoom",
+			Name = "WORK THE ROOM",
+			Text = "Grab the tips off the nearest couple of tables",
+			Emoji = "💰",
+			IconId = "rbxassetid://76938945213347",
+			CooldownSeconds = 40,
+			MaxTables = 2, -- how many of the CLOSEST paying tables it sweeps at once
+		},
+		SkillR = {
+			Id = "Superfan",
+			Name = "SUPERFAN",
+			Text = "Charm a table into fans - they tip big and leave a rave review",
+			Emoji = "💖",
+			IconId = "rbxassetid://84924677383004",
+			CooldownSeconds = 60, -- strong single-table buff (money + rep); kept rare
+			AnimId = "rbxassetid://135597748643578", -- hired charm animation; plays BEFORE the pick opens
+			AnimDelay = 0.4,         -- play the animation this long before the pick mode opens
+			PickSeconds = 10,        -- seconds to pick a table; miss it = skill lost, still on cooldown
+			SuperfanMoneyMult = 1.5, -- their bill is multiplied by this when they pay
+			SuperfanRepBonus = 6,    -- extra reputation when they leave happy
+		},
 		UltimateName = "SWEET TALK!",
 		UltimateText = "Refill one table's patience by half",
 		--// ~4-8 collected payments per shift
@@ -2104,18 +2182,46 @@ Config.Ultimates = {
 	--// Ability numbers
 	SweetTalkRefillFraction = 0.5,   -- half the table's patience bar back
 
-	--// DOUBLE TIME (Waiter, Sep 2026 - replaced THIRD HAND's carry slot):
-	--// a burst of serious hustle. Walk AND sprint speeds scale; the feel
-	--// is applied by SprintClient (the documented client-side movement
-	--// exception), the truth (attribute + timer) stays server-owned.
-	SpeedBoostMult = 1.35,
-	SpeedBoostSeconds = 12,          -- owner spec: 10-15s
+	--// DOUBLE TIME (Waiter ultimate, reworked Sep 27 2026): a big burst of
+	--// hustle. Walk AND sprint speeds scale; the feel is applied by
+	--// SprintClient (the documented client-side movement exception), the truth
+	--// (attribute + timer) stays server-owned. SprintClient also plays the run
+	--// animation below for the whole boost, stopping it when it wears off.
+	SpeedBoostMult = 2,              -- owner spec: 2x speed
+	SpeedBoostSeconds = 20,          -- owner spec: 20s
+	WaiterRunAnim = "rbxassetid://74191612940709", -- the DOUBLE TIME run (Sep 27 2026)
 
-	--// FLASH FRY cooks EVERY carried raw at once. When an ingredient has
-	--// dish VARIANTS (future: RawSteak -> grilled OR pan-fried), the
-	--// ultimate cooks what an open ticket wants, neediest table first;
-	--// with nobody asking, the first method listed here wins.
+	--// FLASH FRY (reworked Sep 27 2026): instantly FINISHES the pans that are
+	--// currently cooking (up to FlashFryMaxPans) - grab-ready Perfect at the
+	--// station, no wait, no minigame. FlashFryMethodOrder is kept for the old
+	--// carried-raw resolution helpers (now unused by the ultimate).
+	FlashFryMaxPans = 2,        -- how many currently-cooking pans it finishes
 	FlashFryMethodOrder = { "Grill", "Fry", "Ramen" },
+
+	--// IN-WORLD CAST ANIMATION per class (hired, plays on the caster - the same
+	--// PlayAnim channel the skills use, so everyone sees it). "" = no animation.
+	ClassCastAnim = {
+		Chef = "rbxassetid://139680062857395", -- SALT BAE (Sep 27 2026)
+		Fixer = "rbxassetid://79766154892612", -- REMOTE TAP (Sep 27 2026)
+		Charmer = "rbxassetid://83399392691489", -- SWEET TALK rose (Sep 27 2026)
+	},
+	SaltSeconds = 1.5,          -- how long the Chef's salt sprinkles from the hand
+
+	--// HAND PROPS welded in for the cast (owner may supply a SAFE parts/MeshPart
+	--// model of the matching name in ServerStorage - never a Toolbox model).
+	--// Grips are tunable so each prop sits right against its animation.
+	--// FIXER: "SpeedDialRemote" (big red button, SPEED DIAL).
+	RemoteSeconds = 2,          -- how long the remote stays welded (match the anim)
+	RemoteGrip = {
+		Offset = { 0, 0.4, 0 },      -- studs from the hand center (X, Y, Z)
+		TiltDegrees = { 0, 0, 0 },   -- rotate the remote in-grip if it sits wrong
+	},
+	--// CHARMER: "SweetTalkRose" (a rose offered on SWEET TALK).
+	RoseSeconds = 2,            -- how long the rose stays welded (match the anim)
+	RoseGrip = {
+		Offset = { 0, 0.4, 0 },       -- studs from the hand center (X, Y, Z)
+		TiltDegrees = { 0, 0, -90 },  -- stem straight UP, bud at the top (presented)
+	},
 
 	--// Bar feel (client)
 	BarTweenSeconds = 0.2,
@@ -2127,7 +2233,7 @@ Config.Ultimates = {
 	--// key "") when ultimate testing ends, or charge earning can never
 	--// be playtested in Studio.
 	StudioFullCharge = true, --// TEMP: testing the Waiter skills (Sep 22) - revert to false
-	StudioClassKey = "Chef",
+	StudioClassKey = "Charmer", --// TEMP: testing SWEET TALK rose (Sep 27) - revert to "" for real play
 
 	--// THE CAST BANNER (Sep 2026). Cosmetic only - nothing here touches
 	--// charge, abilities or THE LAW. Caster sees their own avatar posed
@@ -2175,8 +2281,18 @@ Config.Ultimates = {
 		--// Chest-up only, so legs are never posed; missing joints are
 		--// skipped. STARTING POINTS - signs may need flipping once seen.
 		Poses = {
-			--// Chef: NO entry on purpose - natural stance + toque + zoom
-			--// (per-class second poses live in Motion below)
+			--// Chef: SALT BAE (Sep 27 2026) - right arm up pinched to sprinkle,
+			--// left forearm held across the body, head tilted down watching.
+			--// Swings into Motion.Chef (the sprinkle downstroke). Signs may need
+			--// flipping once seen on the rig.
+			Chef = {
+				Waist = { 0, 15, 0 },
+				Neck = { 12, 0, 0 },
+				RightShoulder = { -100, 0, 25 },
+				RightElbow = { 70, 0, 0 },
+				LeftShoulder = { -30, 0, -20 },
+				LeftElbow = { 90, 0, 0 },
+			},
 			Waiter = {   -- mid-SPRINT, stride A: lean in, arms pumping
 				Waist = { 15, -10, 0 },
 				Neck = { -10, 10, 0 },
@@ -2213,6 +2329,14 @@ Config.Ultimates = {
 		--// entirely inside the viewport. NOT animation assets, NOT the
 		--// live character. Classes without an entry stay a static pose.
 		Motion = {
+			Chef = {     -- SALT BAE sprinkle: the right forearm swings DOWN and
+				Waist = { 0, 12, 0 },     -- back up, releasing the salt; left arm holds
+				Neck = { 16, 0, 0 },
+				RightShoulder = { -85, 0, 25 },
+				RightElbow = { 40, 0, 0 },
+				LeftShoulder = { -30, 0, -20 },
+				LeftElbow = { 90, 0, 0 },
+			},
 			Waiter = {   -- stride B: the OPPOSITE arm swing - swinging
 				Waist = { 15, 10, 0 },   -- between A and B is a run cycle
 				Neck = { -10, -10, 0 },
@@ -2408,7 +2532,7 @@ Config.Maps = {
 		ImageId = "", --// owner's banner pending; shows a lettered placeholder
 		Available = true,
 		ShiftBarIcon = "🍚",
-		Menu = { SteamedRice = 1 }, --// TEMP: Rice-only for testing - restore { SteamedRice = 5, Lumpia = 4, AdoboPork = 3 }
+		Menu = { SteamedRice = 5, Lumpia = 4, AdoboPork = 3 },
 	},
 }
 
@@ -2503,7 +2627,13 @@ Config.StudioPreSeat = true --// TEMP (Sep 22) - revert to false
 --// STUDIO-ONLY (live-ignored): auto-fire this event a few seconds after
 --// the shift goes RUNNING, so an emergency test needs no command bar.
 --// "" = off. Names: Spill / ToiletEmergency / GreaseFire / PowerOutage.
-Config.StudioForceEventOnStart = "" --// off (was ToiletEmergency for Fixer testing)
+Config.StudioForceEventOnStart = "" --// off (rapid events below drive testing now)
+
+--// STUDIO ONLY (live-ignored): keep emergencies coming for testing. When on,
+--// the scheduler shrinks its gaps so a new event rolls a few seconds after the
+--// last one clears. Set false for real pacing.
+Config.StudioRapidEvents = true
+Config.StudioRapidGapSeconds = 6 --// seconds of quiet before the next event rolls
 Config.StudioForceEventDelaySeconds = 3
 
 --// Whether a given id is a real, playable map. The lobby server gates every

@@ -135,6 +135,7 @@ local eventStats = {
 	OutagesFixed = 0,
 	WaterIncidents = 0,
 	SpillsSwept = 0,
+	InspectionsPassed = 0,
 }
 local lastShiftState = "WAITING"
 
@@ -1958,6 +1959,119 @@ function stopOutage(fixedBy)
 end
 
 ----------------------------------------------------------------
+-- THE HEALTH INSPECTOR (reworked Sep 27 2026): a 30s WARNING that he is
+-- coming, then he judges how TIDY the place is RIGHT NOW. The mess is
+-- ambient (CleanlinessService spawns grime all shift; players vacuum it),
+-- so this event dumps nothing - it just warns, counts down, and grades the
+-- tidiness bar. Bar at/above the pass line = PASS + a money CleanBonus; below
+-- = a rep FINE that scales with how dirty it is. First visit warns on EASY.
+-- SPEED DIAL = an instant pass. Report card gets InspectionsPassed.
+----------------------------------------------------------------
+local INSPECTOR = Config.HealthInspector
+local inspector = {
+	Active = false,
+	Remaining = 0,
+	Total = 0,
+	Judged = false,
+}
+local inspectorVisits = 0 --// per shift (reset with eventStats on RUNNING)
+local inspectorDone = false --// once he has judged, no second inspection this shift
+
+local function bankTill(amount, why)
+	local bridge = ServerStorage:FindFirstChild("AddToTill")
+	if bridge then pcall(bridge.Invoke, bridge, amount, why) end
+end
+
+--// End the tidiness challenge for the shift: the bar hides and grime stops.
+local function endTidiness()
+	local bridge = ServerStorage:FindFirstChild("GrimeControl")
+	if bridge then pcall(bridge.Invoke, bridge, "Stop") end
+end
+
+local function tidinessFraction()
+	local bridge = ServerStorage:FindFirstChild("GetTidiness")
+	if not bridge then return 1 end
+	local ok, result = pcall(bridge.Invoke, bridge)
+	if ok and type(result) == "table" and result.Fraction then
+		return result.Fraction
+	end
+	return 1
+end
+
+local function refreshInspectorUi()
+	if not inspector.Active then return end
+	publish("HealthInspector", "WARNING",
+		math.max(0, inspector.Remaining), inspector.Total,
+		("Health Inspector coming in %ds - tidy up!")
+			:format(math.ceil(math.max(0, inspector.Remaining))))
+end
+
+local stopInspector
+
+local function judgeInspection()
+	if inspector.Judged then return end
+	inspector.Judged = true
+
+	local diff, dname = difficultyBlock()
+	local cons = diff.Consequences or {}
+	local frac = tidinessFraction()
+	local pct = math.floor(frac * 100)
+	local passFrac = (INSPECTOR.PassFraction and INSPECTOR.PassFraction[dname]) or 0.55
+	local firstWarn = inspectorVisits <= 1 and cons.InspectorFirstVisitWarns == true
+
+	if frac >= passFrac then
+		bankTill(cons.InspectorCleanBonus or 40, "passed health inspection")
+		eventStats.InspectionsPassed += 1
+		publish("", "", 0, 0, ("PASSED inspection - %d%% clean!"):format(pct))
+	elseif firstWarn then
+		publish("", "", 0, 0, "The inspector let it slide - a WARNING this time.")
+	else
+		--// fine scales with how far BELOW the pass line the tidiness sits
+		local units = math.max(1, math.ceil((passFrac - frac) * (INSPECTOR.FineScale or 10)))
+		local fine = (cons.InspectorFinePerMess or 5) * units
+		applyRep(-fine, ("failed inspection: %d%% clean"):format(pct))
+		publish("", "", 0, 0,
+			("FAILED! Only %d%% clean - a fine hits your rating."):format(pct))
+	end
+
+	--// the inspection is the CLIMAX of the tidiness challenge: end it for the
+	--// shift whatever the verdict - the bar goes away and grime stops.
+	inspectorDone = true
+	endTidiness()
+
+	task.delay(3, function()
+		if not inspector.Active then publish() end
+	end)
+	stopInspector()
+end
+
+local function startInspector()
+	if inspector.Active then return end
+	inspector.Active = true
+	inspector.Judged = false
+	inspectorVisits += 1
+
+	local seconds = INSPECTOR.WarningSeconds or 30
+	inspector.Total = seconds
+	inspector.Remaining = seconds
+
+	Sfx.Play("SpillAlert") --// reuse an alert sting for now
+	refreshInspectorUi()
+	print(("[Events] health inspector WARNING - judging tidiness in %ds"):format(seconds))
+end
+
+stopInspector = function()
+	if not inspector.Active then return end
+	inspector.Active = false
+
+	local elapsed = shiftInfo().Elapsed
+	scheduler.LastEndedAt = elapsed
+	scheduler.NextRollAt = elapsed + SCHEDULER.RollIntervalSeconds
+
+	print("[Events] health inspector left")
+end
+
+----------------------------------------------------------------
 -- THE WIRE FIX (gated by Difficulty.Interactions.BreakerMinigame - the
 -- first minigame under the EASY FREEZE). The server DEALS the shuffle
 -- and CHECKS the answer; the client only renders and reports taps. One
@@ -2266,7 +2380,10 @@ local function pickEvent(difficultyName)
 	local pool, total = {}, 0
 	for name, definition in pairs(EVENTS) do
 		local weight = Config.WeightFor(name, difficultyName)
-		if weight > 0 and not definition.IsActive() then
+		--// an optional Eligible() gate lets an event restrict WHEN it may roll
+		--// (the Health Inspector only during the middle phase, once per shift)
+		local eligible = definition.Eligible == nil or definition.Eligible()
+		if weight > 0 and eligible and not definition.IsActive() then
 			table.insert(pool, { Name = name, Weight = weight, Definition = definition })
 			total += weight
 		end
@@ -2310,6 +2427,8 @@ do
 			stopSpill(player)
 			return true
 		end
+		--// NOTE: the Health Inspector is deliberately NOT here - SPEED DIAL must
+		--// not shortcut the tidiness challenge (owner ruling Sep 27 2026).
 		return false, "No emergency right now!"
 	end
 	bridge.Parent = ServerStorage
@@ -2377,6 +2496,8 @@ RunService.Heartbeat:Connect(function(dt)
 			for key in pairs(eventStats) do
 				eventStats[key] = 0
 			end
+			inspectorVisits = 0 --// "first visit" is per shift
+			inspectorDone = false --// the inspector may visit again next shift
 		end
 		lastShiftState = info.State
 	end
@@ -2394,6 +2515,9 @@ RunService.Heartbeat:Connect(function(dt)
 		end
 		if outage.Active then
 			stopOutage(nil)
+		end
+		if inspector.Active then
+			stopInspector()
 		end
 		return
 	end
@@ -2441,6 +2565,17 @@ RunService.Heartbeat:Connect(function(dt)
 		if outage.DrainAccum >= 10 then
 			outage.DrainAccum -= 10
 			applyRep(-OUTAGE.RepDrainPer10s, "power outage")
+		end
+	end
+
+	--// Tick the inspector: grace fuse down to the verdict, UI mirrors the
+	--// mess count as it drops
+	if inspector.Active and not inspector.Judged then
+		inspector.Remaining -= dt
+		if inspector.Remaining <= 0 then
+			judgeInspection()
+		else
+			refreshInspectorUi()
 		end
 	end
 
@@ -2529,13 +2664,20 @@ RunService.Heartbeat:Connect(function(dt)
 		end
 	end
 
-	--// Roll for a new event
-	if info.Elapsed < SCHEDULER.FirstEventAfterSeconds then return end
+	--// Roll for a new event. STUDIO rapid mode (Config.StudioRapidEvents,
+	--// live-ignored) shrinks every gap so emergencies keep coming for testing.
+	local rapid = RunService:IsStudio() and Config.StudioRapidEvents == true
+	local gap = rapid and (Config.StudioRapidGapSeconds or 6) or nil
+	local firstAfter = gap or SCHEDULER.FirstEventAfterSeconds
+	local minGap = gap or SCHEDULER.MinGapSeconds
+	local rollInterval = gap or SCHEDULER.RollIntervalSeconds
+
+	if info.Elapsed < firstAfter then return end
 	if anyEventActive() then return end
-	if info.Elapsed < scheduler.LastEndedAt + SCHEDULER.MinGapSeconds then return end
+	if info.Elapsed < scheduler.LastEndedAt + minGap then return end
 	if info.Elapsed < scheduler.NextRollAt then return end
 
-	scheduler.NextRollAt = info.Elapsed + SCHEDULER.RollIntervalSeconds
+	scheduler.NextRollAt = info.Elapsed + rollInterval
 
 	local difficultyName = Config.IsValidDifficulty(info.Difficulty) and info.Difficulty or "NORMAL"
 	local entry = pickEvent(difficultyName)
@@ -2602,6 +2744,31 @@ task.spawn(function()
 			Stop = function() stopSpill(nil) end,
 			IsActive = function() return spill.Active end,
 		})
+	end
+
+	--// THE HEALTH INSPECTOR needs the tidiness system (CleanlinessService's
+	--// grime + vacuum). Only register when it is enabled and its GrimeControl
+	--// bridge is up (give it a moment, like the kitchen bridge above).
+	if Config.Tidiness and Config.Tidiness.Enabled then
+		local grimeWaited = 0
+		while not ServerStorage:FindFirstChild("GrimeControl") and grimeWaited < 10 do
+			task.wait(0.5)
+			grimeWaited += 0.5
+		end
+		if ServerStorage:FindFirstChild("GrimeControl") then
+			registerEvent("HealthInspector", {
+				Start = startInspector,
+				Stop = stopInspector,
+				IsActive = function() return inspector.Active end,
+				--// owner spec: only in the MIDDLE phase (internal "Building" =
+				--// HUD "BUSY"), and only once per shift.
+				Eligible = function()
+					return not inspectorDone and shiftInfo().Phase == "Building"
+				end,
+			})
+		else
+			warn("[Events] HealthInspector not registered - GrimeControl bridge never appeared")
+		end
 	end
 
 	local names = {}

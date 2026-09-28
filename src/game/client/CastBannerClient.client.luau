@@ -386,6 +386,12 @@ local function showBanner(caster, classKey)
 			local cloneHumanoid = clone:FindFirstChildOfClass("Humanoid")
 			local isR6 = cloneHumanoid ~= nil
 				and cloneHumanoid.RigType == Enum.HumanoidRigType.R6
+			--// Some bundles report R15 but have R6-style one-piece arms (no
+			--// elbow motors). Detect that structurally so the elbow angles fold
+			--// into the shoulder instead of being dropped ("joint not found").
+			if not isR6 and not findMotor(clone, "RightElbow") then
+				isR6 = true
+			end
 			--// Posing is PARKED (Config.PosesEnabled) - natural stance +
 			--// camera push. When re-enabled: R6 hand-tuned tables beat
 			--// axis-translated R15 numbers whenever one exists.
