@@ -28,6 +28,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
+local CollectionService = game:GetService("CollectionService")
 
 local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
 local TUT = Config.Tutorial
@@ -294,11 +295,17 @@ task.spawn(function()
 	end
 	local tableCount = #secondTicket > 0 and 2 or 1
 
+	--// the cleaning lesson only happens if the tidiness system is live AND the
+	--// map has a vacuum to grab (no mount prompt = nothing to fetch = wedge)
+	local hasVacuumMount = Config.Tidiness and Config.Tidiness.Enabled
+		and #CollectionService:GetTagged("VacuumMount") > 0
+
 	--// welcome/greet/seat/patience/order/cooking-intro + 3 per dish +
-	--// the second table's seat and order + fire drill + VIP + collect
-	--// + wrap
+	--// the second table's seat and order + collect + (tidy) + fire drill
+	--// + critic + wrap
 	State:SetAttribute("StepCount",
-		6 + #ticket * 3 + (tableCount == 2 and 2 or 0) + 4)
+		6 + #ticket * 3 + (tableCount == 2 and 2 or 0) + 4
+			+ (hasVacuumMount and 1 or 0))
 	print(("[Tutorial] teaching with: %s"):format(table.concat(ticket, ", ")))
 
 	if game:GetService("RunService"):IsStudio()
@@ -435,6 +442,29 @@ task.spawn(function()
 	waitSeconds(TUT.StepSettleSeconds)
 
 	ffwd = false --// fast-forward ends HERE: the finale plays for real
+
+	--// THE CLEANING LESSON (Sep 29 2026): hands on the vacuum. Only if the
+	--// map actually has a VacuumMount to grab from - otherwise there is
+	--// nothing to fetch, so we skip the whole beat (never wedge). One grime
+	--// is dropped through the same SpawnBatch the inspector event uses; the
+	--// clean fires GrimeCleaned on the AddScore bus, which we count here.
+	if hasVacuumMount and TUT.Text.Tidy and not skipRequested then
+		local grimeBridge = ServerStorage:FindFirstChild("GrimeControl")
+		local cleanedBefore = stat("GrimeCleaned")
+		--// arrow to the vacuum mount; the grime wears its own floating cue
+		setStep(TUT.Text.Tidy, nil, "VacuumMount", nil, "Free")
+		if grimeBridge and not skipRequested then
+			pcall(grimeBridge.Invoke, grimeBridge, "SpawnBatch", 1)
+			waitUntil(function()
+				return stat("GrimeCleaned") > cleanedBefore
+			end)
+		end
+		--// leave no mess behind if they skipped mid clean
+		if skipRequested and grimeBridge then
+			pcall(grimeBridge.Invoke, grimeBridge, "ClearAll")
+		end
+		waitSeconds(TUT.StepSettleSeconds)
+	end
 
 	--// FINALE 1: THE FIRE DRILL - a real grease fire, started on
 	--// purpose, so the first one in a live shift is old news. The

@@ -2022,14 +2022,17 @@ local function judgeInspection()
 	if frac >= passFrac then
 		bankTill(cons.InspectorCleanBonus or 40, "passed health inspection")
 		eventStats.InspectionsPassed += 1
+		EventState:SetAttribute("InspectorResult", 1) --// Bruno's PASS line
 		publish("", "", 0, 0, ("PASSED inspection - %d%% clean!"):format(pct))
 	elseif firstWarn then
+		EventState:SetAttribute("InspectorResult", 0) --// a warning, no verdict line
 		publish("", "", 0, 0, "The inspector let it slide - a WARNING this time.")
 	else
 		--// fine scales with how far BELOW the pass line the tidiness sits
 		local units = math.max(1, math.ceil((passFrac - frac) * (INSPECTOR.FineScale or 10)))
 		local fine = (cons.InspectorFinePerMess or 5) * units
 		applyRep(-fine, ("failed inspection: %d%% clean"):format(pct))
+		EventState:SetAttribute("InspectorResult", -1) --// Bruno's FAIL line
 		publish("", "", 0, 0,
 			("FAILED! Only %d%% clean - a fine hits your rating."):format(pct))
 	end
@@ -2498,6 +2501,7 @@ RunService.Heartbeat:Connect(function(dt)
 			end
 			inspectorVisits = 0 --// "first visit" is per shift
 			inspectorDone = false --// the inspector may visit again next shift
+			EventState:SetAttribute("InspectorResult", 0) --// clear last verdict
 		end
 		lastShiftState = info.State
 	end

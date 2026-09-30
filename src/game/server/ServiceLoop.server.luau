@@ -126,6 +126,9 @@ local debugFirstVIPDone = false
 local DEBUG_FORCE_FIRST_CRITIC = false -- first party to SPAWN is the critic, once
                                        -- per server - set false for real play
 local debugFirstCriticDone = false
+local DEBUG_FORCE_FIRST_RECOMMEND = true -- TEMP: first party CAN'T DECIDE (order
+                                         -- tablet recommend test) - set false for real play
+local debugFirstRecommendDone = false
 local VIP_TIP_MULT = 2.0
 local BASE_COINS_PER_PARTY = 15
 local WALK_SPEED = 12               -- NPC amble (untimed by design)
@@ -2833,6 +2836,18 @@ if not dialogueRemote then
 	dialogueRemote.Parent = remotes
 end
 
+--// THE ORDER TABLET (owner design Sep 29 2026): a black-tablet minigame that
+--// REPLACES the take-order dialogue when Config.OrderTablet.Enabled. The
+--// customer's order shows on the blue screen; the waiter presses the matching
+--// food icons. OrderTabletClient renders it. Same take-order resolution
+--// (resolveDialogue) as the dialogue, so the ticket/board/state flow is shared.
+local orderTabletRemote = remotes:FindFirstChild("OrderTabletRemote")
+if not orderTabletRemote then
+	orderTabletRemote = Instance.new("RemoteEvent")
+	orderTabletRemote.Name = "OrderTabletRemote"
+	orderTabletRemote.Parent = remotes
+end
+
 local dialogueByToken = {}
 local nextDialogueToken = 0
 
@@ -2862,7 +2877,11 @@ local function resolveDialogue(dlg, pickedKey, notifyClient)
 	end
 
 	if notifyClient and dlg.Player.Parent then
-		dialogueRemote:FireClient(dlg.Player, "Cancel", dlg.Token)
+		if dlg.Kind == "tablet" then
+			orderTabletRemote:FireClient(dlg.Player, "Close", dlg.Token, false)
+		else
+			dialogueRemote:FireClient(dlg.Player, "Cancel", dlg.Token)
+		end
 	end
 
 	--// Shift over / party gone: nothing left to order
@@ -2932,7 +2951,11 @@ cancelDialogue = function(party)
 	dialogueByToken[dlg.Token] = nil
 	party.Dialogue = nil
 	if dlg.Player.Parent then
-		dialogueRemote:FireClient(dlg.Player, "Cancel", dlg.Token)
+		if dlg.Kind == "tablet" then
+			orderTabletRemote:FireClient(dlg.Player, "Close", dlg.Token, false)
+		else
+			dialogueRemote:FireClient(dlg.Player, "Cancel", dlg.Token)
+		end
 	end
 end
 
@@ -3033,6 +3056,122 @@ dialogueRemote.OnServerEvent:Connect(function(player, action, token, pickedKey)
 	end
 
 	resolveDialogue(dlg, pickedKey, false)
+end)
+
+--// THE ORDER TABLET flow: opens the tablet minigame instead of the dialogue.
+--// The order is the party's FIXED ticket; the waiter just inputs it by pressing
+--// the matching food icons. Resolves through resolveDialogue (Kind = tablet),
+--// so the ticket / order board / state flow is exactly the same.
+local function beginOrderTablet(player, party, tableId)
+	nextDialogueToken += 1
+	local token = nextDialogueToken
+	--// same roll as the dialogue: sometimes the customer CAN'T DECIDE and asks
+	--// for a recommendation (the waiter picks a dish); tutorial pins the flow.
+	local flow = (math.random() < Config.Dialogue.RecommendChance) and "recommend" or "direct"
+	if party.ForceFlow then flow = party.ForceFlow end
+	local dlg = { Player = player, Party = party, Token = token, Flow = flow, Kind = "tablet" }
+	party.Dialogue = dlg
+	dialogueByToken[token] = dlg
+
+	Sfx.Play("OrderTaken", party.Pawn)
+	playGesture(party, "Point", true) --// the party points their order out
+
+	--// the ACTIVE map's menu as icon buttons
+	local menu = {}
+	for dishName in pairs(Config.MenuForMap(workspace:GetAttribute("MatchMapId"))) do
+		local recipe = Config.Recipes[dishName]
+		if recipe then
+			table.insert(menu, {
+				Key = dishName, Display = recipe.Display, Icon = recipe.Icon or "",
+			})
+		end
+	end
+	table.sort(menu, function(a, b) return a.Display < b.Display end)
+
+	--// DIRECT: the order to input (the party's ticket). RECOMMEND: no fixed
+	--// order - the waiter picks any dish and that becomes the recommendation.
+	local wanted = {}
+	if flow == "direct" then
+		for _, dishName in ipairs(party.Ticket or {}) do
+			local recipe = Config.Recipes[dishName]
+			table.insert(wanted, {
+				Key = dishName, Display = recipe and recipe.Display or dishName,
+				Icon = recipe and recipe.Icon or "",
+			})
+		end
+	end
+
+	--// SHORT interactive line: they order (direct) or ask for a rec (recommend);
+	--// the waiter confirms on completion. No small talk - the tablet is the input.
+	local plural = party.Size > 1
+	local orderLine
+	if flow == "recommend" then
+		orderLine = pickVoiced(Config.Dialogue.CustomerAsksRecommend, plural)
+	else
+		orderLine = pickVoiced(Config.Dialogue.CustomerOrders, plural)
+		orderLine = orderLine:gsub("{DISH}", ticketText(party))
+	end
+
+	orderTabletRemote:FireClient(player, "Open", {
+		Token = token, Menu = menu, Wanted = wanted, Flow = flow,
+		--// recommend one dish PER customer (the whole indecisive party)
+		RecommendCount = math.max(#(party.Ticket or {}), 1),
+		Speaker = party.Root,
+		OrderLine = orderLine,
+		ConfirmLine = pickLine(Config.Dialogue.WaiterConfirms),
+	})
+
+	--// walked off / timed out: the party orders what it was always going to
+	task.delay(Config.Dialogue.TimeoutSeconds, function()
+		local pending = dialogueByToken[token]
+		if pending then
+			print(("[Service] Order tablet for Table %d timed out - auto-resolving")
+				:format(tableId))
+			resolveDialogue(pending, nil, true)
+		end
+	end)
+end
+
+--// The tablet finishes two ways: "Done" (DIRECT - every ordered dish pressed;
+--// the order is the fixed ticket) or "Recommend" (the waiter picked a dish for
+--// an indecisive customer). resolveDialogue takes it either way.
+orderTabletRemote.OnServerEvent:Connect(function(player, action, token, pickedKey)
+	local dlg = dialogueByToken[token]
+	if not dlg or dlg.Player ~= player or dlg.Kind ~= "tablet" then return end
+
+	if action == "Done" then
+		resolveDialogue(dlg, nil, false)
+	elseif action == "Recommend" then
+		--// pickedKey is a LIST of dish keys (one per customer). Validate each
+		--// (on the active menu, and within the tutorial's allowed set); set the
+		--// WHOLE ticket to the valid picks so no dish is auto-chosen. Empty =
+		--// keep the party's roll.
+		local party = dlg.Party
+		local menuMap = Config.MenuForMap(workspace:GetAttribute("MatchMapId"))
+		local picks = {}
+		if type(pickedKey) == "table" then
+			for _, key in ipairs(pickedKey) do
+				if type(key) == "string" and Config.Recipes[key] and menuMap[key]
+					and (not party.RecommendOnly or table.find(party.RecommendOnly, key)) then
+					table.insert(picks, key)
+				end
+			end
+		end
+		if #picks > 0 then
+			party.Ticket = picks
+			party.DishesRemaining = #picks
+			if dlg.Player and dlg.Player.Parent then
+				creditStat(dlg.Player, "Recommendations", 1)
+			end
+			if Config.Dialogue.RecommendPatienceBonus > 0 then
+				--// CHARMER PASSIVE: their recommendations soothe harder
+				local mult = (dlg.Player and dlg.Player:GetAttribute("RecommendBonusMult")) or 1
+				extendBar(party, Config.Dialogue.RecommendPatienceBonus * mult,
+					"great recommendation")
+			end
+		end
+		resolveDialogue(dlg, nil, false) --// finalize with the ticket we just set
+	end
 end)
 
 --// THE ONE SERVE FLOW, shared by the table prompt (a player's plated
@@ -3193,7 +3332,15 @@ local function setupTable(tableId, tablePart)
 				task.delay(1.5, function() refreshTablePrompt(tableId) end)
 				return
 			end
-			beginDialogue(player, party, tableId)
+			if Config.OrderTablet and Config.OrderTablet.Enabled then
+				--// the tablet is the real order flow now, tutorial included:
+				--// beginOrderTablet honours the scripted ForceFlow/Ticket/
+				--// RecommendOnly, and OrdersTaken fires the same way, so the
+				--// lesson teaches exactly what live play uses.
+				beginOrderTablet(player, party, tableId)
+			else
+				beginDialogue(player, party, tableId)
+			end
 
 		elseif party.State == STATE.WAITING_FOOD then
 			if not tutorialGateAllows("Serve") then
@@ -3853,6 +4000,13 @@ local function spawnParty(options)
 	--// narrows the lesson's menu to the scripted dish. Nil on live spawns.
 	party.ForceFlow = options.Flow
 	party.RecommendOnly = options.RecommendOnly
+	--// TEMP DEBUG: force the FIRST party to be indecisive so the tablet's
+	--// recommend flow can be tested. Set DEBUG_FORCE_FIRST_RECOMMEND false after.
+	if DEBUG_FORCE_FIRST_RECOMMEND and not debugFirstRecommendDone
+		and not plain and not isCritic then
+		debugFirstRecommendDone = true
+		party.ForceFlow = "recommend"
+	end
 	if options.Ticket and #options.Ticket > 0 then
 		--// the tutor's forced ticket replaces the roll entirely - and
 		--// a forced-ticket critic bills for exactly what they ordered

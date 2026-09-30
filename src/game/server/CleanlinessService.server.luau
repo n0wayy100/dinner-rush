@@ -217,9 +217,19 @@ local function removeGrime(part)
 	if part then part:Destroy() end
 end
 
+--// score-only signal (unmapped in Config.Score, so it awards nothing today -
+--// it is here so the tutorial's AddScore-bus watcher can count a clean, and so
+--// a future "tidy" score/stat is a one-line Config addition, not a rewire).
+local function creditClean(player)
+	if typeof(player) ~= "Instance" or not player:IsA("Player") then return end
+	local bus = ServerStorage:FindFirstChild("AddScore")
+	if bus then bus:Fire(player, "GrimeCleaned", 1) end
+end
+
 local function cleanGrime(part, player)
 	removeGrime(part)
 	adjust(TID.CleanRestore, ("%s vacuumed grime"):format(player and player.Name or "?"))
+	creditClean(player)
 end
 
 --// ---- DUST cleaning via the VACUUM HOVER minigame (owner spec Sep 27) -------

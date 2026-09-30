@@ -158,6 +158,25 @@ ShiftState:GetAttributeChangedSignal("Reputation"):Connect(function()
 end)
 
 ----------------------------------------------------------------
+-- Tidiness: a "getting filthy" nudge when the bar drops low, with
+-- hysteresis so Bruno warns once until it is cleaned back up. Silent
+-- once the inspection has ended the challenge (TidinessActive = false).
+----------------------------------------------------------------
+local tidyMood = "fine"
+ShiftState:GetAttributeChangedSignal("Tidiness"):Connect(function()
+	if ShiftState:GetAttribute("TidinessActive") == false then return end
+	local val = ShiftState:GetAttribute("Tidiness") or 100
+	local max = ShiftState:GetAttribute("TidinessMax") or 100
+	local fraction = val / math.max(max, 1)
+	if tidyMood == "fine" and fraction <= (MANAGER.TidyLowFraction or 0.35) then
+		tidyMood = "low"
+		speak("TidyLow", true)
+	elseif tidyMood ~= "fine" and fraction >= (MANAGER.TidyRecoverFraction or 0.6) then
+		tidyMood = "fine"
+	end
+end)
+
+----------------------------------------------------------------
 -- Dine and dash: the ❗ alert is an important stage - the chase call
 -- cuts through. (Catch/escape commentary is unwired: owner ruling,
 -- important stages only. Walkout grumbles unwired for the same reason.)
@@ -203,6 +222,7 @@ end
 ShiftState:GetAttributeChangedSignal("State"):Connect(function()
 	if ShiftState:GetAttribute("State") == "RUNNING" then
 		repMood = "fine"
+		tidyMood = "fine"
 		linesSpoken = 0
 	end
 end)
@@ -217,6 +237,7 @@ local EVENT_POOLS = {
 	GreaseFire = { Start = "FireStart" },
 	PowerOutage = { Start = "OutageStart" },
 	Spill = { Start = "SpillStart" },
+	HealthInspector = { Start = "InspectorStart" },
 }
 
 task.spawn(function()
@@ -235,6 +256,17 @@ task.spawn(function()
 			speak(EVENT_POOLS[active].Start, true)
 		end
 		lastEvent = active
+	end)
+
+	--// The inspector's VERDICT: EventSystem sets InspectorResult to 1 (pass)
+	--// or -1 (fail); 0 is the new-shift reset (ignored).
+	EventState:GetAttributeChangedSignal("InspectorResult"):Connect(function()
+		local r = EventState:GetAttribute("InspectorResult") or 0
+		if r > 0 then
+			speak("InspectorPass", true)
+		elseif r < 0 then
+			speak("InspectorFail", true)
+		end
 	end)
 
 	--// The flood is its own scream, once per flood

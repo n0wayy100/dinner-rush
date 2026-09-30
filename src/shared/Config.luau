@@ -545,8 +545,11 @@ Config.Tutorial = {
 			Objective = "",
 		},
 		Order = {
-			Bruno = { "Time to take their order. Remember what they want!" },
-			Objective = "Take the order!",
+			Bruno = {
+				"Time to take their order! A tablet slides in on the right.",
+				"Just tap the food they ask for. Tick off every dish on their ticket and it sends!",
+			},
+			Objective = "Take the order on the tablet!",
 		},
 		Cooking = {
 			Bruno = {
@@ -622,9 +625,9 @@ Config.Tutorial = {
 		Order2 = {
 			Bruno = {
 				"Take their order too. Every table wants something!",
-				"This one cannot decide. They will ask what you recommend, so pick a dish for them!",
+				"This one cannot decide! They will ask what YOU recommend, so tap a dish on the tablet to pick for them.",
 			},
-			Objective = "Take the order!",
+			Objective = "Recommend a dish on the tablet!",
 		},
 		Collect = {
 			Bruno = {
@@ -632,6 +635,17 @@ Config.Tutorial = {
 				"Collecting also sends your plates back to the pass, ready for the next dish!",
 			},
 			Objective = "Collect the payments at the tables!",
+		},
+		--// THE CLEANING LESSON (Sep 29 2026): hands on the vacuum, plus a
+		--// spoken heads up about the Health Inspector. Skipped whole if the
+		--// map has no VacuumMount (nothing to grab), so it never wedges.
+		Tidy = {
+			Bruno = {
+				"One more floor skill, rookie! See that TIDY bar? A messy diner makes everyone grumpy.",
+				"Grime builds up as you work. Grab the vacuum off the wall, then clean the mess up!",
+				"Oh, and watch for the HEALTH INSPECTOR. He drops by to judge how clean we are, so keep that bar high and he will love us!",
+			},
+			Objective = "Vacuum up the grime!",
 		},
 		--// THE FINALE (owner spec, Sep 2026): a taste of what a real
 		--// shift throws at you - a live fire drill, then a VIP served
@@ -2057,7 +2071,11 @@ Config.Manager = {
 	RepWorryFraction = 0.5,       -- rep below this = worried lines
 	RepPanicFraction = 0.25,      -- rep below this = panic lines
 	RepRecoverFraction = 0.6,     -- back above this = relief (hysteresis)
+	TidyLowFraction = 0.35,       -- tidiness below this = "getting filthy" line
+	TidyRecoverFraction = 0.6,    -- back above this = ready to warn again (hysteresis)
 
+	--// PUNCTUATION RULE (owner ruling Sep 29 2026): Bruno's lines use
+	--// : ; ! ? , ' . and ellipses (...). NO dashes. Keep new lines to that set.
 	Lines = {
 		ShiftStart = {
 			"Doors are open! Make me proud out there!",
@@ -2066,13 +2084,13 @@ Config.Manager = {
 		},
 		PhaseBusy = {
 			"It's filling up... look alive, team!",
-			"Word's getting out about us - stay sharp!",
+			"Word's getting out about us, stay sharp!",
 			"More hungry faces incoming!",
 		},
 		PhaseRush = {
 			"HERE COMES THE DINNER RUSH!!",
 			"This is it, people! RUSH TIME!",
-			"Hold onto your aprons - it's RUSH hour!",
+			"Hold onto your aprons, it's RUSH hour!",
 		},
 		Closing = {
 			"Last call! Finish those tables and collect!",
@@ -2100,7 +2118,7 @@ Config.Manager = {
 		},
 		FireDone = {
 			"Fire's out... someone check my eyebrows.",
-			"Crisis over. Back to cooking - CAREFULLY!",
+			"Crisis over. Back to cooking, CAREFULLY!",
 		},
 		OutageStart = {
 			"The power's out! Someone hit the breaker!",
@@ -2120,7 +2138,7 @@ Config.Manager = {
 		},
 		RepRecovered = {
 			"That's more like it! They love us again!",
-			"Smiles everywhere - keep it going!",
+			"Smiles everywhere, keep it going!",
 		},
 		Walkout = {
 			"We just lost a table! Move faster!",
@@ -2154,7 +2172,37 @@ Config.Manager = {
 			"A TERRIBLE review!! My grandmother's recipes...",
 			"The review is bad. Do NOT read the review.",
 		},
+		InspectorStart = {
+			"Health inspector's on the way! Get this place SPOTLESS!",
+			"Inspector incoming! Vacuum, plunge, SCRUB, go go go!",
+			"He's coming to judge us! No dust, no mess, MOVE!",
+		},
+		InspectorPass = {
+			"PASSED! Cleanest little diner in town, baby!",
+			"Spotless! The inspector LOVED us!",
+			"Top marks! I could frame that clipboard!",
+		},
+		InspectorFail = {
+			"He was NOT impressed... keep it tidy next time!",
+			"A fine?! My money! CLEAN as you go, team!",
+			"Failed the inspection... my poor reputation.",
+		},
+		TidyLow = {
+			"This place is getting FILTHY! Clean it up!",
+			"I see dust everywhere, grab a vacuum!",
+			"We're a mess! Somebody tidy up before the inspector!",
+		},
 	},
+}
+
+--// THE ORDER TABLET (owner design Sep 29 2026): take orders by pressing food
+--// icons on a black tablet with a blue screen. When Enabled, the take-order
+--// prompt opens this minigame INSTEAD of the dialogue conversation
+--// (OrderTabletClient renders it). No recommend flow - the order is the party's
+--// fixed ticket; the waiter just inputs it visually. Set false for the old
+--// chat-bubble dialogue.
+Config.OrderTablet = {
+	Enabled = true,
 }
 
 ----------------------------------------------------------------
@@ -2232,8 +2280,8 @@ Config.Ultimates = {
 	--// Ignored on live servers. Set StudioFullCharge = false (and the
 	--// key "") when ultimate testing ends, or charge earning can never
 	--// be playtested in Studio.
-	StudioFullCharge = true, --// TEMP: testing the Waiter skills (Sep 22) - revert to false
-	StudioClassKey = "Charmer", --// TEMP: testing SWEET TALK rose (Sep 27) - revert to "" for real play
+	StudioFullCharge = false, --// real play (set true to keep the ultimate charged for testing)
+	StudioClassKey = "", --// real play (set a class name to force-test that kit in Studio)
 
 	--// THE CAST BANNER (Sep 2026). Cosmetic only - nothing here touches
 	--// charge, abilities or THE LAW. Caster sees their own avatar posed
@@ -2615,14 +2663,14 @@ Config.StudioMapId = "Filipino" --// building out Manila (Sep 27)
 --// shift goes RUNNING, so route/seating tests need no command bar.
 --// The normal spawn trickle continues after the burst. 0 = off (normal
 --// opening). Ignored on live servers - set 0 anyway when map testing ends.
-Config.StudioSpawnBurst = 4 --// TEMP: busy room for the Chef skill test (Sep 21) - revert to 0
+Config.StudioSpawnBurst = 0 --// real pacing (set N to spawn a busy room at the start for testing)
 
 --// STUDIO-ONLY (live-ignored): the moment the shift goes RUNNING, auto-spawn
 --// a full house AND auto-seat + auto-order them, so a skill/cooking test has
 --// open orders instantly with no manual seating. Uses StudioSpawnBurst for
 --// the count (min 4). true = on. TEMP for the Sous Chef test - set false for
 --// normal play.
-Config.StudioPreSeat = true --// TEMP (Sep 22) - revert to false
+Config.StudioPreSeat = false --// was TEMP-on for skill tests; off so orders are taken manually (tablet)
 
 --// STUDIO-ONLY (live-ignored): auto-fire this event a few seconds after
 --// the shift goes RUNNING, so an emergency test needs no command bar.
@@ -2632,7 +2680,7 @@ Config.StudioForceEventOnStart = "" --// off (rapid events below drive testing n
 --// STUDIO ONLY (live-ignored): keep emergencies coming for testing. When on,
 --// the scheduler shrinks its gaps so a new event rolls a few seconds after the
 --// last one clears. Set false for real pacing.
-Config.StudioRapidEvents = true
+Config.StudioRapidEvents = false --// real event pacing (set true to spam events for testing)
 Config.StudioRapidGapSeconds = 6 --// seconds of quiet before the next event rolls
 Config.StudioForceEventDelaySeconds = 3
 
