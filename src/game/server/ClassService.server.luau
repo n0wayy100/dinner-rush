@@ -13,6 +13,7 @@
 	  ChannelMult         Fixer: plunge / douse / breaker channels
 	  MoneyMult           Charmer: payment collection bonus
 	  RecommendBonusMult  Charmer: recommendation patience bonus
+	  CleanMult           Janitor: dust specks / plunge taps a clean needs
 	  (CollectHoldMult is still published for back-compat but every class
 	   sits at 1 now - E is press-everywhere, so there is no hold to scale.)
 
@@ -50,6 +51,7 @@ local MODIFIERS = {
 	ChannelMult = "ChannelMult",
 	MoneyMult = "MoneyMult",
 	RecommendBonusMult = "RecommendBonusMult",
+	CleanMult = "CleanMult",
 }
 
 local function shiftRunning()

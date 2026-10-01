@@ -180,9 +180,21 @@ end
 --// DOUBLE TIME (Waiter ultimate): a looping run animation that plays for the
 --// whole speed boost and stops when it wears off (both driven off the
 --// SpeedBoostMult attribute below). Empty id = dormant, like the sprint anim.
+local boostTrackId = nil
 local function playBoostAnim()
-	local id = (Config.Ultimates and Config.Ultimates.WaiterRunAnim) or ""
+	--// the boost is shared (Waiter DOUBLE TIME, Janitor FLOOR BUFFER), the
+	--// animation is per class: the Waiter's run must never play on a Janitor
+	local ult = Config.Ultimates or {}
+	local classKey = player:GetAttribute("ClassKey")
+	local id = (classKey == "Waiter" and ult.WaiterRunAnim)
+		or (classKey == "Janitor" and ult.JanitorBufferAnim)
+		or ""
 	if id == "" or not humanoid then return end
+	if boostTrack and boostTrackId ~= id then
+		boostTrack:Stop(0)
+		boostTrack = nil
+	end
+	boostTrackId = id
 	if not boostTrack then
 		local animator = humanoid:FindFirstChildOfClass("Animator")
 		if not animator then return end

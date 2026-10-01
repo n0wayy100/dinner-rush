@@ -997,6 +997,20 @@ local function runSkill(player, skillDef, aim)
 		local ok, reason = bridgeInvoke("Superfan", player)
 		if not ok then return false, reason or "No table to charm!" end
 		return true
+
+	elseif id == "QuickSweep" then
+		--// Janitor Q: the nearest mess in range is cleaned on the spot.
+		--// Nothing close = denied, and the cooldown is not spent.
+		local ok, reason = bridgeInvoke("JanitorQuickSweep", player, skillDef.RangeStuds)
+		if not ok then return false, reason or "No mess nearby!" end
+		return true
+
+	elseif id == "GuardedZone" then
+		--// Janitor R: a caution cone a few steps ahead; new messes stay out
+		--// of its ring (CleanlinessService owns the spawn rule)
+		local ok, reason = bridgeInvoke("JanitorGuardZone", player, skillDef)
+		if not ok then return false, reason or "Can't place that here!" end
+		return true
 	end
 
 	return false, "Unknown skill"

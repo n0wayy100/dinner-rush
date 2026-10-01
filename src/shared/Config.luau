@@ -955,6 +955,15 @@ Config.Tidiness = {
 	--// multiplied by TidyVIPMult. Keeping it clean pays off.
 	TidyBonusFraction = 0.75,
 	TidyVIPMult = 2.0,
+
+	--// AFTER THE INSPECTION (owner spec, Sep 30 2026): the bar still hides and
+	--// poop stops, but GRIME KEEPS COMING as DIRTY TABLES - a seated party
+	--// whose table has grime next to it loses patience faster until it is
+	--// cleaned. Keeps cleaning (and the Janitor) useful through the rush.
+	AfterInspectionSpawnMult = 0.6, -- grime spawns this often vs before (0.6 = 60%)
+	--// consequence severity per difficulty (multiplies the seated bar's drain)
+	DirtyTableDrainMult = { EASY = 1.15, NORMAL = 1.25, HARD = 1.35 },
+	DirtyFace = "🤢",               -- shown over a party eating next to grime
 }
 
 --// THE HEALTH INSPECTOR (reworked Sep 27 2026): a WARNING event. He announces
@@ -1776,6 +1785,54 @@ Config.Classes = {
 			Costs = { 800, 1600, 3200, 5500 },
 		},
 	},
+	--// THE JANITOR (Sep 30 2026): owns the TIDINESS system (CleanlinessService).
+	--// Cleaning is a chore, not a skill window, so every number here is legal
+	--// under THE LAW. After the inspection grime keeps coming as DIRTY TABLES
+	--// (Config.Tidiness.AfterInspection*), so the kit works all shift.
+	Janitor = {
+		Display = "The Janitor",
+		Rarity = "Rare", RarityColor = Color3.fromRGB(245, 184, 65),
+		Price = 4000,
+		IconId = "rbxassetid://114280558316062", -- class card (Sep 30 2026)
+		FlavorText = "Mops first, asks questions never.",
+		PassiveText = "Cleans messes faster",
+		--// ELBOW GREASE: multiplies the dust specks (vacuum) and plunge taps
+		--// (poop) a clean needs. Its OWN attribute (CleanMult), separate from
+		--// the Fixer's ChannelMult.
+		CleanMult = 0.6,
+		SkillQ = {
+			Id = "QuickSweep",
+			Name = "QUICK SWEEP",
+			Text = "Instantly clean the nearest mess",
+			Emoji = "🧹",
+			IconId = "rbxassetid://84930654118988", -- QUICK SWEEP (Sep 30 2026)
+			CooldownSeconds = 25,
+			RangeStuds = 25, -- the mess must be this close (no cross-map zaps)
+		},
+		SkillR = {
+			Id = "GuardedZone",
+			Name = "GUARDED ZONE",
+			Text = "Drop a caution cone - new messes stay out of its ring",
+			Emoji = "🚧",
+			IconId = "rbxassetid://85896301718590", -- GUARDED ZONE (Sep 30 2026)
+			CooldownSeconds = 45,
+			PlaceAheadStuds = 6,   -- the cone lands this far in front of you
+			RadiusStuds = 14,      -- the protected ring's radius
+			DurationSeconds = 25,  -- then the cone tips over and fades
+			--// A mess that would spawn inside the ring rolls this chance to be
+			--// cancelled; if it survives, grime MOVES outside the ring and a
+			--// poop WAITS until the cone is gone (one toilet - nowhere to move).
+			CancelChance = 0.5,
+		},
+		UltimateName = "FLOOR BUFFER!",
+		UltimateText = "Ride a floor buffer - faster, and you clean any mess you run over",
+		--// ~15-25 cleans in a busy shift
+		UpgradeTrack = {
+			Counter = "MessesCleaned", Label = "Messes cleaned",
+			Steps = { 25, 70, 140, 250 },
+			Costs = { 500, 1000, 2000, 3500 },
+		},
+	},
 }
 
 --// CLASS SKILLS (Sep 21 2026): each class has up to TWO active, cooldown-
@@ -1796,7 +1853,7 @@ Config.Skills = {
 }
 
 Config.ClassShop = {
-	CardOrder = { "Trainee", "Chef", "Waiter", "Fixer", "Charmer" },
+	CardOrder = { "Trainee", "Chef", "Waiter", "Fixer", "Charmer", "Janitor" },
 	VendorGreetings = {
 		"Lookin' to move up in the world?",
 		"Aprons, skills, destinies - take your pick!",
@@ -1839,6 +1896,7 @@ Config.PlayerStats = {
 		{ Key = "PaymentsCollected", Source = "TaskProgress", Label = "Payments Collected", Format = "int",      Default = 0 },
 		{ Key = "Greetings",         Source = "TaskProgress", Label = "Warm Greetings",     Format = "int",      Default = 0 },
 		{ Key = "Recommendations",   Source = "TaskProgress", Label = "Recommendations",    Format = "int",      Default = 0 },
+		{ Key = "MessesCleaned",     Source = "TaskProgress", Label = "Messes Cleaned",     Format = "int",      Default = 0 },
 		{ Key = "MoneyDeposited",    Source = "Stats",        Label = "Lifetime Earnings",  Format = "money",    Default = 0 },
 		{ Key = "TimeOnFloorSeconds", Source = "Stats",       Label = "Time On Floor",      Format = "duration", Default = 0 },
 		{ Key = "KitchenCrimes",     Source = "Stats",        Label = "Kitchen Crimes",     Format = "int",      Default = 0 },
@@ -1996,6 +2054,7 @@ Config.Score = {
 		OvercookedCooks = 2,    -- near-zero so bad dishes can't be farmed (score-only)
 		EventChannels = 20,     -- any emergency fixed - rare, worth ~a table,
 		                        -- low enough that nobody drops a pan to race for it
+		MessesCleaned = 4,      -- grime vacuumed / poop plunged (a routine chore, like Seats)
 		DashesCaught = 12,      -- punching a dine-and-dasher (rare, heroic)
 		KitchenCrimes = -20,    -- water on a grease fire
 	},
@@ -2010,6 +2069,7 @@ Config.Score = {
 		{ Name = "Fix-It Hero",   Emoji = "🔧", Keys = { "EventChannels" } },
 		{ Name = "Smooth Talker", Emoji = "😎", Keys = { "OrdersTaken", "Recommendations" } },
 		{ Name = "Door Guard",    Emoji = "🚓", Keys = { "DashesCaught" } },
+		{ Name = "Clean Machine", Emoji = "🧹", Keys = { "MessesCleaned" } },
 	},
 	--// Nobody leaves empty-handed - warm, never mocking
 	FallbackTitles = {
@@ -2033,6 +2093,7 @@ Config.Score = {
 		PaymentsCollected = "%d payments collected",
 		EventChannels = "%d emergencies fixed",
 		DashesCaught = "%d dashers punched",
+		MessesCleaned = "%d messes cleaned",
 	},
 	MaxReceipts = 3,            -- evidence lines under the crown
 
@@ -2225,6 +2286,7 @@ Config.Ultimates = {
 		Greetings = 5,
 		Recommendations = 12,
 		EventChannels = 25,
+		MessesCleaned = 8,      -- every class earns it; the Janitor just cleans the most
 	},
 
 	--// Ability numbers
@@ -2245,6 +2307,16 @@ Config.Ultimates = {
 	--// carried-raw resolution helpers (now unused by the ultimate).
 	FlashFryMaxPans = 2,        -- how many currently-cooking pans it finishes
 	FlashFryMethodOrder = { "Grill", "Fry", "Ramen" },
+
+	--// FLOOR BUFFER (Janitor ultimate, Sep 30 2026): ride a parts-built floor
+	--// polisher. Reuses DOUBLE TIME's SpeedBoostMult attribute (SprintClient
+	--// scales WalkSpeed by it) - kept BELOW the Waiter's x2 so the Waiter stays
+	--// the speed class. Any floor GRIME within the clean radius of your feet is
+	--// cleaned on contact (poop is not floor mess - the buffer skips it).
+	BufferSpeedMult = 1.4,
+	BufferSeconds = 10,
+	BufferCleanRadiusStuds = 5,
+	JanitorBufferAnim = "", -- a hired "pushing" animation slots in here later ("" = none)
 
 	--// IN-WORLD CAST ANIMATION per class (hired, plays on the caster - the same
 	--// PlayAnim channel the skills use, so everyone sees it). "" = no animation.
@@ -2280,8 +2352,8 @@ Config.Ultimates = {
 	--// Ignored on live servers. Set StudioFullCharge = false (and the
 	--// key "") when ultimate testing ends, or charge earning can never
 	--// be playtested in Studio.
-	StudioFullCharge = false, --// real play (set true to keep the ultimate charged for testing)
-	StudioClassKey = "", --// real play (set a class name to force-test that kit in Studio)
+	StudioFullCharge = true, --// TEMP Janitor test (Sep 30 2026) - set false for real play
+	StudioClassKey = "Janitor", --// TEMP Janitor test - set "" for real play
 
 	--// THE CAST BANNER (Sep 2026). Cosmetic only - nothing here touches
 	--// charge, abilities or THE LAW. Caster sees their own avatar posed
@@ -3134,6 +3206,7 @@ Config.Profile = {
 			PaymentsCollected = 0,
 			Greetings = 0,
 			Recommendations = 0,
+			MessesCleaned = 0,
 		},
 
 		TutorialDone = false,         -- false = next shift runs guided (spec 7)

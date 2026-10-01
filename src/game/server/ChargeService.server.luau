@@ -259,12 +259,9 @@ end
 --// every WalkSpeed it writes by it AND plays/stops the run animation off the
 --// same attribute. A token guards against an earlier cast's timer cutting a
 --// later one short.
-local function doubleTime(player)
-	if not player.Character then
-		return false, "Get on the floor first!"
-	end
-	local mult = ULT.SpeedBoostMult or 2
-	local seconds = ULT.SpeedBoostSeconds or 20
+--// shared by DOUBLE TIME and FLOOR BUFFER: SprintClient scales WalkSpeed by
+--// SpeedBoostMult (and picks the class's boost animation off ClassKey)
+local function applySpeedBoost(player, mult, seconds)
 	player:SetAttribute("SpeedBoostMult", mult)
 	local token = (player:GetAttribute("SpeedBoostToken") or 0) + 1
 	player:SetAttribute("SpeedBoostToken", token)
@@ -274,6 +271,15 @@ local function doubleTime(player)
 			player:SetAttribute("SpeedBoostMult", nil) --// boost + run anim end
 		end
 	end)
+end
+
+local function doubleTime(player)
+	if not player.Character then
+		return false, "Get on the floor first!"
+	end
+	local mult = ULT.SpeedBoostMult or 2
+	local seconds = ULT.SpeedBoostSeconds or 20
+	applySpeedBoost(player, mult, seconds)
 	print(("[Charge] DOUBLE TIME! %s at x%.2g speed for %ds"):format(
 		player.Name, mult, seconds))
 	return true
@@ -487,6 +493,112 @@ local function attachHandProp(character, seconds, prop, grip)
 	game:GetService("Debris"):AddItem(prop, seconds)
 end
 
+--// FLOOR BUFFER (Janitor ultimate): a parts-built floor polisher - a dark pad
+--// on the floor, a motor housing, a pole back up to a mustard handlebar. Built
+--// around the PAD (PrimaryPart) facing -Z; no assets, no Toolbox. The owner may
+--// drop a safe "FloorBuffer" model in ServerStorage (scripts are stripped).
+local function buildCodeBuffer()
+	local model = Instance.new("Model")
+	model.Name = "FloorBuffer"
+	local function part(name, size, cframe, color, shape)
+		local p = Instance.new("Part")
+		p.Name = name
+		p.Shape = shape or Enum.PartType.Block
+		p.Size = size
+		p.CFrame = cframe
+		p.Color = color
+		p.Material = Enum.Material.SmoothPlastic
+		p.CanCollide = false
+		p.CanQuery = false
+		p.CanTouch = false
+		p.Massless = true
+		p.Parent = model
+		return p
+	end
+	--// an invisible, UNROTATED anchor at the pad centre is the pivot (the pad
+	--// itself is a cylinder turned upright, which would tilt the whole prop)
+	local anchor = part("Anchor", Vector3.new(0.2, 0.2, 0.2), CFrame.new(0, 0, 0),
+		Color3.new(1, 1, 1))
+	anchor.Transparency = 1
+	model.PrimaryPart = anchor
+	local up = CFrame.Angles(0, 0, math.rad(90)) --// cylinders lie on X; stand them up
+	local pad = part("Pad", Vector3.new(0.35, 3, 3), CFrame.new(0, 0, 0) * up,
+		Color3.fromRGB(45, 45, 50), Enum.PartType.Cylinder)
+	part("Housing", Vector3.new(0.9, 2, 2), CFrame.new(0, 0.6, 0) * up,
+		Color3.fromRGB(229, 72, 77), Enum.PartType.Cylinder)
+	--// the pole runs back toward the rider (+Z) and up to hand height
+	local poleFrom, poleTo = Vector3.new(0, 1, 0.4), Vector3.new(0, 3.3, 2.3)
+	part("Pole", Vector3.new(0.22, 0.22, (poleTo - poleFrom).Magnitude),
+		CFrame.lookAt((poleFrom + poleTo) / 2, poleTo), Color3.fromRGB(180, 180, 185))
+	part("Handlebar", Vector3.new(1.8, 0.28, 0.28), CFrame.new(poleTo),
+		Color3.fromRGB(245, 184, 65))
+
+	--// a little shine kicking up off the pad while it runs
+	local shine = Instance.new("ParticleEmitter")
+	shine.Color = ColorSequence.new(Color3.fromRGB(255, 246, 233))
+	shine.LightEmission = 0.5
+	shine.Size = NumberSequence.new(0.35, 0)
+	shine.Lifetime = NumberRange.new(0.3, 0.6)
+	shine.Rate = 25
+	shine.Speed = NumberRange.new(2, 4)
+	shine.SpreadAngle = Vector2.new(70, 70)
+	shine.EmissionDirection = Enum.NormalId.Top
+	shine.Parent = pad
+	return model
+end
+
+--// WELD a prop to the caster's ROOT (the buffer rides along the floor in
+--// front of them, not in a hand). Same weld-every-part rule as hand props.
+local function attachRootProp(character, seconds, prop, aheadStuds)
+	if not prop then return end
+	local root = character:FindFirstChild("HumanoidRootPart")
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	local body = prop.PrimaryPart
+	if not root or not humanoid or not body then prop:Destroy() return end
+
+	--// root height above the floor: R15 stands on HipHeight, R6 on its legs
+	local height = humanoid.RigType == Enum.HumanoidRigType.R15
+		and (humanoid.HipHeight + root.Size.Y / 2) or 3
+	prop.Parent = character
+	prop:PivotTo(root.CFrame * CFrame.new(0, -height + 0.2, -(aheadStuds or 2.6)))
+	for _, p in ipairs(prop:GetDescendants()) do
+		if p:IsA("BasePart") then
+			p.Anchored = false
+			p.CanCollide = false
+			p.Massless = true
+			local w = Instance.new("WeldConstraint")
+			w.Part0 = root
+			w.Part1 = p
+			w.Parent = p
+		end
+	end
+	game:GetService("Debris"):AddItem(prop, seconds)
+end
+
+--// FLOOR BUFFER (Janitor ultimate, Sep 30 2026): ride the polisher for
+--// BufferSeconds - a speed boost (kept under DOUBLE TIME's) while
+--// CleanlinessService cleans any floor grime the rider passes over.
+local function floorBuffer(player)
+	local character = player.Character
+	if not character or not character:FindFirstChild("HumanoidRootPart") then
+		return false, "Get on the floor first!"
+	end
+	local seconds = ULT.BufferSeconds or 10
+	local bridge = ServerStorage:FindFirstChild("JanitorBufferStart")
+	if not bridge then
+		return false, "No floor to buff!"
+	end
+	local ok, started, reason = pcall(bridge.Invoke, bridge, player, seconds,
+		ULT.BufferCleanRadiusStuds or 5)
+	if not ok or not started then
+		return false, reason or "No floor to buff!"
+	end
+	applySpeedBoost(player, ULT.BufferSpeedMult or 1.4, seconds)
+	attachRootProp(character, seconds, makeProp("FloorBuffer", buildCodeBuffer))
+	print(("[Charge] FLOOR BUFFER! %s buffs the floor for %ds"):format(player.Name, seconds))
+	return true
+end
+
 --// The cast's in-world flourish: the caster plays their ultimate animation
 --// (client-side, via the same PlayAnim channel the skills use, so it shows to
 --// everyone) plus any class particle - the Chef sprinkles salt from the hand.
@@ -549,6 +661,7 @@ local ABILITIES = {
 	Waiter = doubleTime,
 	Fixer = speedDial,
 	Charmer = sweetTalk,
+	Janitor = floorBuffer,
 }
 
 ----------------------------------------------------------------

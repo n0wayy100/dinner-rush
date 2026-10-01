@@ -4410,6 +4410,58 @@ local function patienceMultiplier()
 	return value
 end
 
+--// DIRTY TABLES (owner spec, Sep 30 2026): after the health inspection,
+--// CleanlinessService marks a tagged Table "Dirty" while grime sits next to
+--// it. The SEATED party there loses patience faster and shows a gross face
+--// until somebody cleans it. This only reads the attribute.
+local tableInstById = {}
+local function tableInstance(tableId)
+	local inst = tableInstById[tableId]
+	if inst and inst.Parent then return inst end
+	for _, t in ipairs(CollectionService:GetTagged("Table")) do
+		if t:GetAttribute("TableId") == tableId then
+			tableInstById[tableId] = t
+			return t
+		end
+	end
+	return nil
+end
+
+local function partyTableDirty(party)
+	if party.BarKind ~= "seated" or not party.TableId then return false end
+	local inst = tableInstance(party.TableId)
+	return inst ~= nil and inst:GetAttribute("Dirty") == true
+end
+
+local function dirtyDrainMult()
+	local mults = Config.Tidiness and Config.Tidiness.DirtyTableDrainMult
+	return (mults and mults[DIFFICULTY]) or 1
+end
+
+--// the 🤢 over a party eating next to grime (on the leader, above the bar)
+local function setGrossFace(party, on)
+	if on == (party.GrossFace ~= nil and party.GrossFace.Parent ~= nil) then return end
+	if party.GrossFace then
+		party.GrossFace:Destroy()
+		party.GrossFace = nil
+	end
+	if not on or not party.Root then return end
+	local gui = Instance.new("BillboardGui")
+	gui.Name = "GrossFace"
+	gui.Size = UDim2.fromOffset(34, 34)
+	gui.StudsOffsetWorldSpace = Vector3.new(0, 6.6, 0)
+	gui.AlwaysOnTop = true
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.fromScale(1, 1)
+	label.BackgroundTransparency = 1
+	label.Font = Enum.Font.FredokaOne
+	label.TextScaled = true
+	label.Text = (Config.Tidiness and Config.Tidiness.DirtyFace) or "🤢"
+	label.Parent = gui
+	gui.Parent = party.Root
+	party.GrossFace = gui
+end
+
 ----------------------------------------------------------------
 -- Heartbeat: the one clock that drains every bar
 ----------------------------------------------------------------
@@ -4452,8 +4504,11 @@ RunService.Heartbeat:Connect(function(dt)
 	end
 
 	for _, party in pairs(parties) do
+		local dirty = partyTableDirty(party)
+		setGrossFace(party, dirty)
 		if party.BarRemaining then
 			party.BarRemaining -= dt * patienceMultiplier()
+				* (dirty and dirtyDrainMult() or 1)
 			updateBarVisual(party, party.BarRemaining / party.BarTotal)
 			if shouldPublish then publishParty(party) end
 			if party.BarRemaining <= 0 then
@@ -4552,6 +4607,22 @@ task.spawn(function()
 			return true
 		end
 		debugSpawn.Parent = game:GetService("ServerStorage")
+	end
+
+	--// STUDIO-ONLY DEBUG: end the shift NOW to check the end screens (awards
+	--// ceremony + report card). Command bar (server view):
+	--//   game.ServerStorage.DebugEndShift:Invoke()       -- a completed shift
+	--//   game.ServerStorage.DebugEndShift:Invoke(false)  -- a failed shift
+	--// Never exists in live servers.
+	if game:GetService("RunService"):IsStudio()
+		and not game:GetService("ServerStorage"):FindFirstChild("DebugEndShift") then
+		local debugEnd = Instance.new("BindableFunction")
+		debugEnd.Name = "DebugEndShift"
+		debugEnd.OnInvoke = function(success)
+			endShift(success ~= false, "debug end (Studio)")
+			return true
+		end
+		debugEnd.Parent = game:GetService("ServerStorage")
 	end
 
 	task.wait(2)

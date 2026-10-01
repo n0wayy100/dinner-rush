@@ -447,16 +447,16 @@ task.spawn(function()
 	--// map actually has a VacuumMount to grab from - otherwise there is
 	--// nothing to fetch, so we skip the whole beat (never wedge). One grime
 	--// is dropped through the same SpawnBatch the inspector event uses; the
-	--// clean fires GrimeCleaned on the AddScore bus, which we count here.
+	--// clean fires MessesCleaned on the AddScore bus, which we count here.
 	if hasVacuumMount and TUT.Text.Tidy and not skipRequested then
 		local grimeBridge = ServerStorage:FindFirstChild("GrimeControl")
-		local cleanedBefore = stat("GrimeCleaned")
+		local cleanedBefore = stat("MessesCleaned")
 		--// arrow to the vacuum mount; the grime wears its own floating cue
 		setStep(TUT.Text.Tidy, nil, "VacuumMount", nil, "Free")
 		if grimeBridge and not skipRequested then
 			pcall(grimeBridge.Invoke, grimeBridge, "SpawnBatch", 1)
 			waitUntil(function()
-				return stat("GrimeCleaned") > cleanedBefore
+				return stat("MessesCleaned") > cleanedBefore
 			end)
 		end
 		--// leave no mess behind if they skipped mid clean
