@@ -312,49 +312,183 @@ function DishModels.plateDrop(itemName)
 	return meshDrop[itemName] or PLATE_DROP[itemName] or 0
 end
 
+--// The Manila plate is not flat - it has a shallow well in the middle,
+--// so a dish resting on the plate's TOP face reads as hovering above
+--// its own dinnerware. This is the EXTRA drop that settles a dish down
+--// into that well.
+--//
+--// It belongs to the PLATE, not to the model, which is why it lives
+--// apart from plateDrop: the same dish on a cooking station must not
+--// sink, or it ends up buried in the counter (see KitchenService's
+--// station placement). Only plateOffset below adds it in.
+local PLATE_SINK = {
+	AdoboPork = 0.2,
+	SteamedRice = 0.2,
+	Lumpia = 0.2,
+}
+
+--// Placing a dish ON A PLATE: how far down from the plate's surface the
+--// model's centre goes. Stations want plateDrop on its own instead.
+function DishModels.plateOffset(itemName)
+	return DishModels.plateDrop(itemName) + (PLATE_SINK[itemName] or 0)
+end
+
 --// The reference depth: every model's bottom is this far below its
 --// (dropped) centre. anchor + BottomDepth - plateDrop(item) puts a
 --// model's BOTTOM exactly at the anchor.
 DishModels.BottomDepth = 0.61
+
+--// One warning per problem per item: a dish taken fifty times a shift
+--// must not bury the output window
+local warned = {}
+local function warnOnce(key, message)
+	if warned[key] then return end
+	warned[key] = true
+	warn("[DishModels] " .. message)
+end
+
+--// TOOL GRIPS ONLY. A mesh is modelled centred on its pivot (see the
+--// pivot rule above), so welding it straight onto a Handle puts the
+--// player's fist in the MIDDLE of the food - half a bowl of adobo
+--// swallowed by the hand. Lifting it by half its own height plus a gap
+--// rests its base on the grip plane, and the hand reads as holding it
+--// up. Height-derived, so a tall bowl and a flat plate both sit right.
+--//
+--// Plates and stations do NOT get this: there the caller already places
+--// the food off the anchor maths (see BottomDepth).
+local GRIP_GAP = 0.15
+
+--// Half-height works for something deep like a bowl, but a FLAT prop -
+--// a cutting board, a plate of lumpia - is barely moved by half of
+--// almost nothing, and the fist stays inside it. This is the floor on
+--// the lift, so flat food rests on an open palm instead.
+local GRIP_MIN_LIFT = 0.45
+
+--// Fine-tuning on top of the lift, in HANDLE space:
+--//   +X out to the character's right (the tool hand) - away from the torso
+--//   +Y further up
+--//   -Z forward, away from the chest
+--// Height is handled by the lift; this is for WIDTH. A prop wider than
+--// about two studs reaches back across the chest when the hand holds its
+--// middle, and no amount of lifting fixes that - it has to move out.
+--// If a nudge sends a dish the wrong way, flip the sign.
+local GRIP_NUDGE = {
+	RawPork = Vector3.new(0.35, 0, -0.35), --// the board is wide; hold it nearer one end
+}
 
 --// THE MESH SWAP PATH (Sep 2026): the team's OWN generated meshes -
 --// GLBs from Claude Design, imported via Import 3D, NEVER Toolbox.
 --// Drop each imported Model into ServerStorage.DishMeshes named EXACTLY
 --// as its item (Karaage, RawChicken, ...). Any item with a mesh there
 --// wears it; everything else keeps its parts build. Callers unchanged.
-local function dressWithMesh(basePart, itemName)
+--//
+--// Everything past the clone is defence against what Import 3D actually
+--// hands you: sometimes a Model, sometimes one loose MeshPart, often at
+--// the wrong scale, and with the pivot left at the file's origin rather
+--// than on the food. Each of those used to end the same way - dress()
+--// reported success, the caller hid the plain block (see makeTool), and
+--// the player held an invisible grip. Now each one names itself.
+local function dressWithMesh(basePart, itemName, forGrip)
 	local folder = game:GetService("ServerStorage"):FindFirstChild("DishMeshes")
 	local template = folder and folder:FindFirstChild(itemName)
 	if not template or not basePart then
 		return false
 	end
 
-	local model = template:Clone()
+	--// Normalise to a Model: GetBoundingBox is Model-only, and a lone
+	--// MeshPart has no descendants for the weld loop to find
+	local model
+	if template:IsA("Model") then
+		model = template:Clone()
+	elseif template:IsA("BasePart") then
+		model = Instance.new("Model")
+		local only = template:Clone()
+		only.Parent = model
+		model.PrimaryPart = only
+		model:PivotTo(only.CFrame)
+	else
+		warnOnce("class:" .. itemName,
+			("DishMeshes.%s is a %s - it has to be a Model or a MeshPart"):format(itemName, template.ClassName))
+		return false
+	end
+
+	local parts = {}
+	for _, inst in ipairs(model:GetDescendants()) do
+		if inst:IsA("BasePart") then
+			table.insert(parts, inst)
+		end
+	end
+	if #parts == 0 then
+		--// An honest ugly cube beats invisible food, so hand the plain
+		--// build back to the caller
+		warnOnce("empty:" .. itemName,
+			("DishMeshes.%s holds no parts - keeping the plain block"):format(itemName))
+		model:Destroy()
+		return false
+	end
+
+	local boxCF, boxSize = model:GetBoundingBox()
 	local pivot = model:GetPivot()
+
+	--// Import 3D leaves the pivot wherever the file's origin was, which
+	--// can sit well off the food. Welding against that puts the meal an
+	--// arm's length from the hand, so measure off the geometry instead.
+	local stray = (pivot.Position - boxCF.Position).Magnitude
+	if stray > boxSize.Magnitude then
+		warnOnce("pivot:" .. itemName,
+			("DishMeshes.%s has its pivot %.1f studs off the mesh - using the mesh's centre instead")
+				:format(itemName, stray))
+		pivot = CFrame.new(boxCF.Position) * pivot.Rotation
+	end
+
+	--// Scale is the usual reason a mesh loads yet cannot be seen. The
+	--// parts builds are about 1.5 studs across; match that.
+	local widest = math.max(boxSize.X, boxSize.Y, boxSize.Z)
+	if widest < 0.2 or widest > 12 then
+		warnOnce("scale:" .. itemName,
+			("DishMeshes.%s is %.2f studs across (%.2f x %.2f x %.2f) - resize it in ServerStorage; the parts builds are about 1.5")
+				:format(itemName, widest, boxSize.X, boxSize.Y, boxSize.Z))
+	end
 
 	--// How deep this mesh reaches below its pivot decides its plate
 	--// drop, same convention as the parts builds (see BottomDepth)
 	if meshDrop[itemName] == nil then
-		local boxCF, boxSize = model:GetBoundingBox()
 		local depth = pivot.Position.Y - (boxCF.Position.Y - boxSize.Y / 2)
 		meshDrop[itemName] = DishModels.BottomDepth - depth
 	end
 
-	for _, inst in ipairs(model:GetDescendants()) do
-		if inst:IsA("BasePart") then
-			inst.Anchored = false
-			inst.CanCollide = false
-			inst.CanQuery = false
-			inst.CanTouch = false
-			inst.Massless = true
-			inst.CastShadow = false
-			inst.CFrame = basePart.CFrame * pivot:ToObjectSpace(inst.CFrame)
-			local weld = Instance.new("WeldConstraint")
-			weld.Part0 = basePart
-			weld.Part1 = inst
-			weld.Parent = inst
-		end
+	--// Deliberately after the meshDrop measurement: plate placement is
+	--// measured off the real pivot, never off the lifted grip position
+	local anchor = basePart.CFrame
+	if forGrip then
+		local nudge = GRIP_NUDGE[itemName] or Vector3.zero
+		local lift = math.max(boxSize.Y / 2 + GRIP_GAP, GRIP_MIN_LIFT)
+		anchor = anchor * CFrame.new(nudge.X, lift + nudge.Y, nudge.Z)
 	end
+
+	local allInvisible = true
+	for _, inst in ipairs(parts) do
+		if inst.Transparency < 1 then
+			allInvisible = false
+		end
+		inst.Anchored = false
+		inst.CanCollide = false
+		inst.CanQuery = false
+		inst.CanTouch = false
+		inst.Massless = true
+		inst.CastShadow = false
+		inst.CFrame = anchor * pivot:ToObjectSpace(inst.CFrame)
+		local weld = Instance.new("WeldConstraint")
+		weld.Part0 = basePart
+		weld.Part1 = inst
+		weld.Parent = inst
+	end
+
+	if allInvisible then
+		warnOnce("transparent:" .. itemName,
+			("every part of DishMeshes.%s is fully transparent"):format(itemName))
+	end
+
 	model.Parent = basePart
 	return true
 end
@@ -363,8 +497,10 @@ end
 --// True = dressed (the caller should hide the plain base); false = no
 --// builder for that name, keep the plain look. A mesh in
 --// ServerStorage.DishMeshes wins over the parts build.
-function DishModels.dress(basePart, itemName)
-	if dressWithMesh(basePart, itemName) then
+--// forGrip: this base part is a Tool Handle in someone's hand, so an
+--// imported mesh gets lifted clear of the fist (see GRIP_GAP)
+function DishModels.dress(basePart, itemName, forGrip)
+	if dressWithMesh(basePart, itemName, forGrip) then
 		return true
 	end
 	local builder = itemName and BUILDERS[itemName]
@@ -377,7 +513,7 @@ end
 
 --// Tool convenience: dresses its Handle
 function DishModels.decorate(tool, itemName)
-	return DishModels.dress(tool:FindFirstChild("Handle"), itemName)
+	return DishModels.dress(tool:FindFirstChild("Handle"), itemName, true)
 end
 
 return DishModels

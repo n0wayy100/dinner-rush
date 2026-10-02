@@ -1277,7 +1277,11 @@ local function platePlacement(tableId, seatIndex)
 	--// Horizontal direction from the middle of the table out toward the seat
 	local flat = Vector3.new(seat.X - centre.X, 0, seat.Z - centre.Z)
 	local distance = flat.Magnitude
-	local lift = Config.Pass.TablePlateLiftStuds
+	--// makeTablePlate already rests the plate's MEASURED bottom on this
+	--// height, so the lift is pure air above the wood - nothing here is
+	--// correcting for a plate's pivot any more
+	local lift = Config.Pass.TablePlateLiftByMap[workspace:GetAttribute("MatchMapId")]
+		or Config.Pass.TablePlateLiftStuds
 
 	local decorTolerance = Config.Pass.TablePlateDecorToleranceStuds
 
@@ -1286,7 +1290,7 @@ local function platePlacement(tableId, seatIndex)
 		--// real wood, which can sit a stud off the anchor's box - trust it
 		--// within a broad two-stud sanity band, not the decor tolerance
 		local y = surfaceYAt(centre.X, centre.Z, boxTop)
-		if not y or math.abs(y - boxTop) > 2 then
+		if not y or math.abs(y - boxTop) > Config.Pass.TablePlateSanityStuds then
 			y = boxTop
 		end
 		return CFrame.new(Vector3.new(centre.X, y + lift, centre.Z))
@@ -1322,9 +1326,17 @@ local function platePlacement(tableId, seatIndex)
 	--// is the fallback spot.
 	local candidates = {}
 	local heights = {}
+	local sanity = Config.Pass.TablePlateSanityStuds
 	for _, nudge in ipairs({ 0, 0.7, -0.7, 1.3, -1.3 }) do
 		local candidate = spot + sideways * nudge
 		local y = surfaceYAt(candidate.X, candidate.Z, boxTop)
+		--// Nowhere near the tagged part's top, so it is not the table: the
+		--// floor past the edge, or the floor straight through a tabletop
+		--// that IS the tagged part and so was excluded from the ray. Drop
+		--// it before it can poison the median below.
+		if y and math.abs(y - boxTop) > sanity then
+			y = nil
+		end
 		table.insert(candidates, { Point = candidate, Y = y })
 		if y then
 			table.insert(heights, y)
@@ -2861,6 +2873,113 @@ local function pickVoiced(pool, isPlural)
 	return pickLine(isPlural and pool.Plural or pool.Singular)
 end
 
+--// THE WAITER'S ORDER ANIMATION. Two clips on the player who pressed E:
+--// the tablet comes out once, then the tapping loops until the order
+--// resolves. Played SERVER-side so the whole room sees it, not just the
+--// waiter.
+--//
+--// Returns a handle with Stop(), or nil when there is nothing to play -
+--// no asset ids yet, no Animator, a reset on the walk over. Every caller
+--// treats nil as "no animation" and carries on: taking an order must
+--// never depend on a piece of art having landed.
+local function startOrderAnimation(player)
+	local settings = Config.Dialogue.OrderAnim
+	if not settings or settings.Enabled == false then return nil end
+
+	local character = player and player.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	local animator = humanoid and humanoid:FindFirstChildOfClass("Animator")
+	if not animator then
+		warn(("[Service] %s has no Animator - no order animation"):format(
+			player and player.Name or "?"))
+		return nil
+	end
+
+	local fade = settings.FadeSeconds or 0.15
+
+	local function load(id)
+		if type(id) ~= "string" or id == "" or id == "rbxassetid://0" then
+			return nil
+		end
+		local animation = Instance.new("Animation")
+		--// Accepts a bare number or a full rbxassetid, same as the sounds
+		animation.AnimationId = id:match("^%d+$") and ("rbxassetid://" .. id) or id
+		local ok, track = pcall(animator.LoadAnimation, animator, animation)
+		if not ok or not track then
+			warn(("[Service] order animation '%s' would not load - is it published "
+				.. "under the account that owns this place?"):format(id))
+			return nil
+		end
+		--// Action outranks walking and idling, so the arms actually move
+		track.Priority = Enum.AnimationPriority.Action
+		return track
+	end
+
+	local pullOut = load(settings.PullOut)
+	local tap = load(settings.Tap)
+	if not pullOut and not tap then
+		--// Both ids set and both refused: almost always an animation
+		--// published by an account that does not own this experience.
+		--// LoadAnimation still SUCCEEDS for those, so the failure shows
+		--// up here as a track that never moves, never as an error.
+		warn("[Service] neither order animation loaded - check "
+			.. "Config.Dialogue.OrderAnim")
+		return nil
+	end
+	print(("[Service] %s order anim: pullOut=%s tap=%s"):format(
+		player.Name, tostring(pullOut ~= nil), tostring(tap ~= nil)))
+
+	local handle = { Alive = true }
+
+	function handle.Stop()
+		handle.Alive = false
+		--// Both pcall'd: a player who reset mid-order left these tracks
+		--// attached to an Animator that no longer exists
+		pcall(function() if pullOut then pullOut:Stop(fade) end end)
+		pcall(function() if tap then tap:Stop(fade) end end)
+	end
+
+	task.spawn(function()
+		if pullOut then
+			pullOut.Looped = false
+			pullOut:Play(fade)
+
+			--// Length reads 0 until the asset finishes downloading, so the
+			--// handover is timed off it only once it is real. Same lesson
+			--// the music handover taught: the finished signal fires too
+			--// late to blend against, so measure instead of listening.
+			local deadline = os.clock() + 3
+			while pullOut.Length <= 0 and handle.Alive and os.clock() < deadline do
+				task.wait()
+			end
+
+			--// Start the loop a fade EARLY so the two clips blend rather
+			--// than dropping to idle for a frame between them
+			if pullOut.Length <= 0 then
+				--// Three seconds and the asset still has no length: it
+				--// never downloaded. Roblox does not raise an error for
+				--// an animation the place owner does not own - it just
+				--// stays silent, which looks exactly like this.
+				warn(("[Service] order animation '%s' loaded but has no "
+					.. "length - is it published under this place's owner?")
+					:format(tostring(settings.PullOut)))
+			end
+
+			local hold = math.max(pullOut.Length - fade, 0)
+			if hold > 0 then
+				task.wait(hold)
+			end
+		end
+
+		if handle.Alive and tap then
+			tap.Looped = true
+			tap:Play(fade)
+		end
+	end)
+
+	return handle
+end
+
 --// Ends a dialogue and, if the order is still takeable, completes it -
 --// the same sequence the old instant take-order ran. pickedKey (recommend
 --// flow only, already validated) swaps the ASKING customer's dish, which
@@ -2870,6 +2989,12 @@ end
 local function resolveDialogue(dlg, pickedKey, notifyClient)
 	if dialogueByToken[dlg.Token] ~= dlg then return end
 	dialogueByToken[dlg.Token] = nil
+
+	--// Tablet away: the order is in, or the clock ran out on it
+	if dlg.Anim then
+		dlg.Anim.Stop()
+		dlg.Anim = nil
+	end
 
 	local party = dlg.Party
 	if party.Dialogue == dlg then
@@ -2950,6 +3075,10 @@ cancelDialogue = function(party)
 	if not dlg then return end
 	dialogueByToken[dlg.Token] = nil
 	party.Dialogue = nil
+	if dlg.Anim then
+		dlg.Anim.Stop()
+		dlg.Anim = nil
+	end
 	if dlg.Player.Parent then
 		if dlg.Kind == "tablet" then
 			orderTabletRemote:FireClient(dlg.Player, "Close", dlg.Token, false)
@@ -2973,6 +3102,7 @@ local function beginDialogue(player, party, tableId)
 	local dlg = { Player = player, Party = party, Token = token, Flow = flow }
 	party.Dialogue = dlg
 	dialogueByToken[token] = dlg
+	dlg.Anim = startOrderAnimation(player)
 
 	--// The greeting beat plays the MOMENT you press E on the table (owner
 	--// ask, Sep 19), not when the order finally resolves - the "hi!" is
@@ -3072,6 +3202,7 @@ local function beginOrderTablet(player, party, tableId)
 	local dlg = { Player = player, Party = party, Token = token, Flow = flow, Kind = "tablet" }
 	party.Dialogue = dlg
 	dialogueByToken[token] = dlg
+	dlg.Anim = startOrderAnimation(player)
 
 	Sfx.Play("OrderTaken", party.Pawn)
 	playGesture(party, "Point", true) --// the party points their order out

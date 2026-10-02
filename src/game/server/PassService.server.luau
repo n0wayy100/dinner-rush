@@ -221,7 +221,7 @@ local function attachFood(slot, dishName)
 	--// and the cylinder becomes an invisible base. Children of Food, so
 	--// clone/destroy/hide all carry the whole meal.
 	food.CFrame = CFrame.new(food.Position
-		- Vector3.new(0, DishModels.plateDrop(dishName), 0))
+		- Vector3.new(0, DishModels.plateOffset(dishName), 0))
 	if DishModels.dress(food, dishName) then
 		food.Transparency = 1
 		food:SetAttribute("Dressed", true)
@@ -510,7 +510,7 @@ local function buildPlateTool(slot, dishName, quality)
 		food.Anchored = true
 		food.CFrame = plate.CFrame * slot.FoodOffset
 		local upright = CFrame.new(food.Position
-			- Vector3.new(0, DishModels.plateDrop(dishName), 0))
+			- Vector3.new(0, DishModels.plateOffset(dishName), 0))
 		food.CFrame = upright
 		if DishModels.dress(food, dishName) then
 			food.Transparency = 1
@@ -810,7 +810,7 @@ local function makeTablePlate(slot, dishName, cframe)
 		food.Anchored = true
 		food.CFrame = plate.CFrame * slot.FoodOffset
 		food.CFrame = CFrame.new(food.Position
-			- Vector3.new(0, DishModels.plateDrop(dishName), 0))
+			- Vector3.new(0, DishModels.plateOffset(dishName), 0))
 		if DishModels.dress(food, dishName) then
 			food.Transparency = 1
 		else

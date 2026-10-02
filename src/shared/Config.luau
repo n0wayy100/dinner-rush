@@ -1402,6 +1402,26 @@ Config.Dialogue = {
 	                              -- NOTE: sets the GLOBAL bubble duration, so
 	                              -- player chat bubbles share the same pace
 
+	--// THE ORDER ANIMATION. Two clips played on the WAITER who pressed E:
+	--// PullOut runs ONCE as they produce the tablet, then Tap LOOPS while
+	--// the conversation plays out. Both stop the moment the order
+	--// resolves - taken, timed out, or walked out on.
+	--//
+	--// TO FILL THESE IN: open the .fbx in Studio's Animation Editor
+	--// (Avatar tab > Animation Editor), then the "..." menu > Publish to
+	--// Roblox. Copy the asset id off the published page and paste it
+	--// below. It MUST be published by the account or group that owns this
+	--// experience, or it loads for nobody but you.
+	--//
+	--// An empty id skips that half, and empty ids on both skip the whole
+	--// thing - orders still get taken either way.
+	OrderAnim = {
+		Enabled = true,
+		PullOut = "106507550256453",       --// once: the waiter produces the tablet
+		Tap = "77443526108220",           --// loops: tapping it while they order
+		FadeSeconds = 0.15, --// blend in, out, and between the two clips
+	},
+
 	--// Customer-voiced pools come in Singular/Plural: a party of one says
 	--// "I", a party of two or more says "we". The server picks the voice
 	--// from party.Size.
@@ -2587,6 +2607,15 @@ Config.Pass = {
 	--// dip needs covering here). Lower it if plates float.
 	TablePlateLiftStuds = 0.35,
 
+	--// PER-MAP override of the lift above. Each map lays its tables with
+	--// its own plate model, and how much air a plate needs is a property
+	--// of that crockery, so one number cannot serve every map. A map
+	--// listed here uses its own value; anything unlisted keeps the
+	--// default. Manila's plates rest flush, Yamasaki's need the 0.35.
+	TablePlateLiftByMap = {
+		Filipino = 0.02,
+	},
+
 	--// Keeps a served plate off the very edge of the table. Raise it if plates
 	--// look like they are about to slide off.
 	TablePlateEdgeMargin = 0.9,
@@ -2595,6 +2624,21 @@ Config.Pass = {
 	--// DECOR (a cup, a vase), not tabletop - the plate slides sideways to
 	--// a clear patch instead of perching on it (Yamasaki's matcha cups).
 	TablePlateDecorToleranceStuds = 0.4,
+
+	--// HOW FAR a landing ray may disagree with the tagged table part's own
+	--// top before it is thrown out as "that is not the table".
+	--//
+	--// The landing ray ignores everything tagged Table, because in Yamasaki
+	--// the tag sits on an invisible anchor a stud off the visible wood. When
+	--// the tag is instead on the REAL tabletop (Manila), that same exclusion
+	--// makes the ray pass clean through and hit the FLOOR - and a plate
+	--// served onto the floor is exactly what it looks like. Rays this far
+	--// out are discarded and the tagged part's own top is used instead, so
+	--// both ways of tagging a table work.
+	--//
+	--// Raise it only if a map's anchor genuinely sits further from its wood
+	--// than this; it is the ceiling on how wrong a mis-tag can go.
+	TablePlateSanityStuds = 2,
 
 	--// THE PLATE ECONOMY. However many PassSlot models exist is how many
 	--// dishes can be in flight at once. A plate is only free again once its
