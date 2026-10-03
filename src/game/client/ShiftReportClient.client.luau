@@ -31,6 +31,7 @@ local playerGui = player:WaitForChild("PlayerGui")
 local reportRemote = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("ShiftReportRemote")
 local MvpCutscene = require(script.Parent:WaitForChild("MvpCutscene"))
 local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
+local SfxLocal = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SfxLocal"))
 local SCORE = Config.Score
 
 local CREAM = Color3.fromRGB(255, 246, 233)
@@ -148,6 +149,10 @@ stampStroke.Thickness = 4
 stampStroke.Color = CHOC
 stampStroke.Parent = stamp
 
+--// Drives the drop: the stamp falls from huge to its resting size
+local stampScale = Instance.new("UIScale")
+stampScale.Parent = stamp
+
 local stampPad = Instance.new("UIPadding")
 stampPad.PaddingLeft = UDim.new(0.06, 0)
 stampPad.PaddingRight = UDim.new(0.06, 0)
@@ -173,57 +178,167 @@ receipts.Parent = panel
 
 ----------------------------------------------------------------
 -- Rows
+--
+-- THREE STATS, SLAPPED ON (owner, Oct 2026): parties served, money
+-- earned, final reputation - nothing else. Each one drops onto the board
+-- from big to its real size with a thud and a jolt of the panel, then the
+-- verdict stamp drops hardest of all.
 ----------------------------------------------------------------
 local STAMP_SIZE = UDim2.fromScale(0.55, 0.16)
+local PANEL_HOME = UDim2.fromScale(0.5, 0.47)
+
+--// The server's judgement, painted as each row's bar colour. The yellow
+--// is a shade deeper than the stamp's mustard so white text holds up on it.
+local STAT_COLOR = {
+	good = BASIL,
+	mid = Color3.fromRGB(236, 162, 24),
+	bad = TOMATO,
+}
 
 local function clearRows()
 	for _, child in ipairs(rowsHolder:GetChildren()) do
-		if child:IsA("CanvasGroup") then
+		if child:IsA("GuiObject") then
 			child:Destroy()
 		end
 	end
 end
 
---// A hidden row; revealRow fades and slides it in
-local function buildRow(order, labelText, valueText, valueColor)
-	local row = Instance.new("CanvasGroup")
-	row.Size = UDim2.fromScale(1, 0.098)
-	row.GroupTransparency = 1
-	row.BackgroundTransparency = 1
-	row.LayoutOrder = order
-	row.Parent = rowsHolder
+--// A hidden row: the WHOLE stat line in one performance-coloured bar,
+--// the verdict stamp's look in miniature (owner, Oct 2026). The layout
+--// only ever sees the fixed-size SLOT; the card inside it is what grows
+--// and shrinks, so a slapping row never shoves its neighbours around.
+local function buildRow(order, labelText, valueText, tone)
+	local slot = Instance.new("Frame")
+	slot.Name = "Row" .. order
+	slot.Size = UDim2.fromScale(1, 0.29)
+	slot.BackgroundTransparency = 1
+	slot.LayoutOrder = order
+	slot.Parent = rowsHolder
 
-	local label = Instance.new("TextLabel")
-	label.AnchorPoint = Vector2.new(0, 0.5)
-	label.Position = UDim2.fromScale(0.02, 0.5)
-	label.Size = UDim2.fromScale(0.55, 0.95)
-	label.BackgroundTransparency = 1
-	label.Font = Enum.Font.FredokaOne
-	label.TextScaled = true
-	label.TextXAlignment = Enum.TextXAlignment.Left
-	label.TextColor3 = CHOC
-	label.Text = labelText
-	label.Parent = row
+	local card = Instance.new("CanvasGroup")
+	card.Name = "Card"
+	card.AnchorPoint = Vector2.new(0.5, 0.5)
+	card.Position = UDim2.fromScale(0.5, 0.5)
+	card.Size = UDim2.fromScale(1, 1)
+	card.GroupTransparency = 1
+	card.BackgroundTransparency = 1
+	--// HIDDEN until its slap, by Visible and not just transparency: a
+	--// fully transparent CanvasGroup still showed its text on screen before
+	--// its turn (owner playtest, Oct 2026)
+	card.Visible = false
+	card.Parent = slot
 
-	local value = Instance.new("TextLabel")
-	value.AnchorPoint = Vector2.new(1, 0.5)
-	value.Position = UDim2.fromScale(0.98, 0.5)
-	value.Size = UDim2.fromScale(0.41, 0.95)
-	value.BackgroundTransparency = 1
-	value.Font = Enum.Font.FredokaOne
-	value.TextScaled = true
-	value.TextXAlignment = Enum.TextXAlignment.Right
-	value.TextColor3 = valueColor or CHOC
-	value.Text = valueText
-	value.Parent = row
+	local scale = Instance.new("UIScale")
+	scale.Parent = card
 
-	return row
+	--// The bar. Inset from the card's edges: the CanvasGroup clips
+	--// anything outside it, and the thick border would lose its edges.
+	local bar = Instance.new("Frame")
+	bar.Name = "Bar"
+	bar.AnchorPoint = Vector2.new(0.5, 0.5)
+	bar.Position = UDim2.fromScale(0.5, 0.5)
+	bar.Size = UDim2.fromScale(0.97, 0.8)
+	bar.BackgroundColor3 = STAT_COLOR[tone] or CHOC
+	bar.Parent = card
+
+	local barCorner = Instance.new("UICorner")
+	barCorner.CornerRadius = UDim.new(0, 10)
+	barCorner.Parent = bar
+
+	local border = Instance.new("UIStroke")
+	border.Thickness = 3
+	border.Color = CHOC
+	border.Parent = bar
+
+	--// White letters with a thin dark outline, readable on every colour
+	local function barText(text, alignment, anchorX, positionX, width)
+		local label = Instance.new("TextLabel")
+		label.AnchorPoint = Vector2.new(anchorX, 0.5)
+		label.Position = UDim2.fromScale(positionX, 0.5)
+		label.Size = UDim2.fromScale(width, 0.68)
+		label.BackgroundTransparency = 1
+		label.Font = Enum.Font.FredokaOne
+		label.TextScaled = true
+		label.TextXAlignment = alignment
+		label.TextColor3 = Color3.new(1, 1, 1)
+		label.Text = text
+		label.Parent = bar
+
+		local letters = Instance.new("UIStroke")
+		letters.Thickness = 1.5
+		letters.Color = CHOC
+		letters.Parent = label
+	end
+	barText(labelText, Enum.TextXAlignment.Left, 0, 0.04, 0.6)
+	barText(valueText, Enum.TextXAlignment.Right, 1, 0.96, 0.32)
+
+	return { Card = card, Scale = scale }
 end
 
-local function revealRow(row)
-	TweenService:Create(row,
-		TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+--// The panel jolts, then settles back - the "impact" half of a slap
+local function shake(strength, seconds)
+	task.spawn(function()
+		local steps = math.max(1, math.floor(seconds / 0.03))
+		for step = 1, steps do
+			local falloff = 1 - (step - 1) / steps
+			panel.Position = PANEL_HOME + UDim2.fromOffset(
+				(math.random() * 2 - 1) * strength * falloff,
+				(math.random() * 2 - 1) * strength * falloff)
+			task.wait(0.03)
+		end
+		panel.Position = PANEL_HOME
+	end)
+end
+
+--// Big and tilted to flat and full size, accelerating INTO the board,
+--// then the thud. Yields until it lands.
+local function slapRow(row)
+	local card, scale = row.Card, row.Scale
+	scale.Scale = 2.4
+	card.Rotation = math.random(-7, 7)
+	card.Visible = true --// first appearance: big and tilted, already falling
+
+	TweenService:Create(card, TweenInfo.new(0.08, Enum.EasingStyle.Linear),
 		{ GroupTransparency = 0 }):Play()
+	TweenService:Create(card, TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
+		{ Rotation = 0 }):Play()
+	local land = TweenService:Create(scale,
+		TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { Scale = 1 })
+	land:Play()
+	land.Completed:Wait()
+
+	SfxLocal.Play("ReportSlap")
+	shake(6, 0.15)
+	--// a little squash as it hits
+	scale.Scale = 0.93
+	TweenService:Create(scale, TweenInfo.new(0.2, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+		{ Scale = 1 }):Play()
+end
+
+--// The verdict: falls from far bigger, spinning to its resting tilt, and
+--// lands HARDEST - a heavier thud, a bigger shake, a deeper squash
+local function dropStamp()
+	stamp.Size = STAMP_SIZE
+	stamp.Rotation = -24
+	stampScale.Scale = 3.4
+	stamp.BackgroundTransparency = 0.5
+	stamp.TextTransparency = 0.5
+	stampStroke.Transparency = 0.5
+	stamp.Visible = true
+
+	local fall = TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+	TweenService:Create(stamp, fall,
+		{ Rotation = -8, BackgroundTransparency = 0, TextTransparency = 0 }):Play()
+	TweenService:Create(stampStroke, fall, { Transparency = 0 }):Play()
+	local land = TweenService:Create(stampScale, fall, { Scale = 1 })
+	land:Play()
+	land.Completed:Wait()
+
+	SfxLocal.Play("ReportStamp")
+	shake(16, 0.35)
+	stampScale.Scale = 0.86
+	TweenService:Create(stampScale, TweenInfo.new(0.32, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+		{ Scale = 1 }):Play()
 end
 
 ----------------------------------------------------------------
@@ -249,7 +364,8 @@ local function showReport(payload)
 
 	clearRows()
 	stamp.Visible = false
-	stamp.Size = UDim2.fromScale(0, 0)
+	stampScale.Scale = 1
+	panel.Position = PANEL_HOME
 	receipts.Visible = false
 
 	--// The HUD's own end overlay would fight the panel in the same spot
@@ -259,23 +375,14 @@ local function showReport(payload)
 		hiddenIntro = intro
 	end
 
-	local netPositive = (payload.Net or 0) >= 0
+	--// Owner ruling (Oct 2026): three stats only, each coloured by the
+	--// server's verdict. Still the plain count with no "/ target" -
+	--// the colour does the judging now.
+	local tones = type(payload.Tones) == "table" and payload.Tones or {}
 	local rows = {
-		--// Owner ruling: the plain count, no "/ target" framing - the
-		--// grade stamp already does the judging
-		buildRow(1, "Parties served", tostring(payload.Served or 0)),
-		buildRow(2, "Walkouts", tostring(payload.Walkouts or 0),
-			(payload.Walkouts or 0) > 0 and TOMATO or CHOC),
-		buildRow(3, "Perfect cooks", tostring(payload.PerfectCooks or 0),
-			(payload.PerfectCooks or 0) > 0 and BASIL or CHOC),
-		buildRow(4, "Burnt dishes", tostring(payload.BurntDishes or 0),
-			(payload.BurntDishes or 0) > 0 and TOMATO or CHOC),
-		buildRow(5, "Emergencies", payload.EmergenciesLine or "No emergencies!"),
-		buildRow(6, "Money earned", "$" .. tostring(payload.Earned or 0)),
-		buildRow(7, "Supplies spent", "$" .. tostring(payload.Spent or 0)),
-		buildRow(8, "Net", ("%s$%d"):format(netPositive and "+" or "-",
-			math.abs(payload.Net or 0)), netPositive and BASIL or TOMATO),
-		buildRow(9, "Final reputation", tostring(payload.Reputation or 0)),
+		buildRow(1, "Parties served", tostring(payload.Served or 0), tones.Served),
+		buildRow(2, "Money earned", "$" .. tostring(payload.Earned or 0), tones.Money),
+		buildRow(3, "Final reputation", tostring(payload.Reputation or 0), tones.Reputation),
 	}
 
 	gui.Enabled = true
@@ -284,19 +391,18 @@ local function showReport(payload)
 	task.spawn(function()
 		for _, row in ipairs(rows) do
 			if seq ~= mySeq then return end
-			revealRow(row)
-			task.wait(payload.RowReveal or 0.35)
+			slapRow(row)
+			task.wait(payload.RowReveal or 0.55)
 		end
 
+		--// the held breath before the verdict
+		task.wait(payload.StampPause or 0.5)
 		if seq ~= mySeq then return end
 
-		--// The stamp slams in
+		--// The stamp drops onto the board
 		stamp.Text = payload.Grade or "?"
 		stamp.BackgroundColor3 = TONE_COLOR[payload.GradeTone] or TOMATO
-		stamp.Visible = true
-		TweenService:Create(stamp,
-			TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-			{ Size = STAMP_SIZE }):Play()
+		dropStamp()
 
 		--// The receipts
 		local lines = {}

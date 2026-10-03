@@ -1588,6 +1588,35 @@ Config.Payment = {
 -- The server computes every number and the verdict; the client renders.
 ----------------------------------------------------------------
 ----------------------------------------------------------------
+-- THE MINIGAME INTRO BANNER (MinigameIntro server, MinigameIntroClient).
+-- Pressing E no longer drops you straight into a minigame: a bar pops up
+-- under the shift timer with the game's name, then the game opens.
+--
+-- Costs no cook window: the cooking games HOLD the dish's aging for the
+-- banner and put it back exactly where it was, so no burn timer had to
+-- grow to pay for the wait. Every game's own clock starts only once the
+-- game is on screen.
+----------------------------------------------------------------
+Config.MinigameIntro = {
+	Enabled = true,
+	Seconds = 1.2,   -- how long the name shows before the game opens
+	BannerY = 0.17,  -- fraction of screen height: under the shift bar and its phase chip
+
+	--// What the banner says, per game. Rename freely.
+	Names = {
+		CookTiming = "PERFECT TIMING!",  -- the stop-the-arrow cook
+		RecipeMath = "RECIPE MATH!",
+		CardMatch = "CARD MATCH!",
+		RhythmTap = "RHYTHM TAP!",
+		Whack = "WHACK IT!",
+		Sweep = "MOP IT UP!",            -- the spill
+		Plunge = "PLUNGE IT!",           -- the toilet, and the poop mess
+		WireFix = "FIX THE WIRES!",      -- the power outage
+		Vacuum = "VACUUM IT!",           -- floor grime
+	},
+}
+
+----------------------------------------------------------------
 -- THE MVP CUTSCENE (MvpCutscene, client). At shift end the screen fades to
 -- black and the MVP celebrates on the map's MvpSpot, filmed by a camera
 -- animated in Blender. It FREEZES on the final pose, and the awards
@@ -1644,7 +1673,7 @@ Config.MvpCutscene = {
 	Animations = {
 		{
 			Name = "Victory Fist",
-			AnimId = "",
+			AnimId = "137252127254351",
 			Keyframes = "MvpTest",
 			FieldOfView = 40,
 			SoundId = "139638022608077",
@@ -1657,7 +1686,25 @@ Config.MvpCutscene = {
 
 Config.ShiftReport = {
 	AutoDismissSeconds = 12,      -- panel dismisses itself after this long
-	RowRevealSeconds = 0.35,      -- drumroll: pause between row reveals
+	RowRevealSeconds = 0.55,      -- drumroll: pause between row slaps (room for each impact)
+	StampPauseSeconds = 0.5,      -- the held breath after the last row, before the stamp drops
+
+	--// THE STAT COLOURS (owner, Oct 2026): the report shows only three
+	--// stats, each coloured green (good) / yellow (mid) / red (bad). The
+	--// SERVER judges them - the client only paints what it is told.
+	--// A stat at or above Good is green, at or above Mid yellow, else red.
+	StatTones = {
+		--// fraction of the difficulty's TargetParties
+		Served = { Good = 1.0, Mid = 0.7 },
+		--// MONEY EARNED as a fraction of a benchmark: TargetParties x
+		--// PerTargetParty x the difficulty's CoinMult. ~30 is roughly a
+		--// party of two plus an ordinary tip - raise it if green comes
+		--// too easily, lower it if nobody ever sees it
+		Money = { Good = 1.0, Mid = 0.6, PerTargetParty = 30 },
+		--// the final reputation itself. Every shift STARTS at 60
+		--// (Config.Reputation.Start), so 60 means "held steady" = yellow
+		Reputation = { Good = 70, Mid = 45 },
+	},
 
 	--// Checked top to bottom, first match wins. ServedFraction is of the
 	--// difficulty's TargetParties; a missing key means "don't care".
@@ -3112,6 +3159,12 @@ Config.Sfx = {
 		--// bar (green = right, red = wrong).
 		AnswerRight = { Id = "100414462804328", Volume = 0.9 },
 		AnswerWrong = { Id = "96876122441863", Volume = 0.9 },
+
+		--// THE SHIFT REPORT. LOCAL - every player has their own report on
+		--// screen. A thud as each stat slaps onto the board, and a heavier
+		--// one for the verdict stamp dropping onto it last.
+		ReportSlap = { Id = "", Volume = 0.9 },
+		ReportStamp = { Id = "", Volume = 1.0 },
 
 		--// ULTIMATES --------------------------------------------------------
 		--// The bar hitting 100%. LOCAL, for that player only - it is a

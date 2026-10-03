@@ -23,6 +23,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UiPop = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiPop"))
 local UserInputService = game:GetService("UserInputService")
 local ContextActionService = game:GetService("ContextActionService")
 local TweenService = game:GetService("TweenService")
@@ -291,6 +292,7 @@ cardRemote.OnClientEvent:Connect(function(action, a, b, c)
 		teardown()
 		local data = a
 		local gui, panel, cards, pairsLabel, timerFill = buildPanel(data)
+		UiPop.Pop(gui)
 		session = {
 			Token = data.Token,
 			Gui = gui,

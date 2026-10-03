@@ -27,6 +27,7 @@ local ServerStorage = game:GetService("ServerStorage")
 
 local Sfx = require(ServerStorage:WaitForChild("Shared"):WaitForChild("Sfx"))
 local DishModels = require(ServerStorage:WaitForChild("Shared"):WaitForChild("DishModels"))
+local MinigameIntro = require(ServerStorage:WaitForChild("Shared"):WaitForChild("MinigameIntro"))
 local Players = game:GetService("Players")
 
 local sharedFolder = ReplicatedStorage:WaitForChild("Shared", 10)
@@ -2001,7 +2002,44 @@ function grantFromMinigame(station, player, quality)
 	return true
 end
 
+local INTRO_KEY = {
+	[GAME_ARROW] = "CookTiming",
+	[GAME_MATH] = "RecipeMath",
+	[GAME_CARDS] = "CardMatch",
+	[GAME_RHYTHM] = "RhythmTap",
+	[GAME_WHACK] = "Whack",
+}
+
+--// THE INTRO BANNER (owner, Oct 2026): the game's name pops up under the
+--// shift timer first, then the game opens. The dish's aging is HELD for the
+--// banner and put back exactly where it was, so the wait never costs any
+--// cook window - which is why no burn timer had to grow to pay for it.
+--// False = do not start (already announcing, the player left, pan emptied).
+local function announceKitchenGame(station, player, gameKey)
+	local before = station.Elapsed or 0
+	local left = {
+		Perfect = (station.PerfectUntil or math.huge) - before,
+		Overcooked = (station.OvercookedUntil or math.huge) - before,
+		Burnt = (station.BurntAt or math.huge) - before,
+	}
+	pauseAging(station)
+
+	local go = MinigameIntro.Announce(player, gameKey, station)
+
+	local now = station.Elapsed or 0
+	station.PerfectUntil = now + left.Perfect
+	station.OvercookedUntil = now + left.Overcooked
+	station.BurntAt = now + left.Burnt
+	return go and station.State ~= "IDLE"
+end
+
 local function beginCookSession(station, player)
+	--// The banner for this pan is already up: the game is on its way
+	if MinigameIntro.IsAnnouncing(station) then
+		flash(station.Prompt, "Get ready!", stationPromptText(station))
+		return
+	end
+
 	--// FLASH FRY (Chef ultimate) finished this pan instantly: E just GRABS the
 	--// grab-ready dish - no game, no wait. Ages like any dish if left sitting.
 	if station.FlashReady then
@@ -2045,6 +2083,7 @@ local function beginCookSession(station, player)
 					or "Overcooked")
 			return
 		end
+		if not announceKitchenGame(station, player, INTRO_KEY[station.CookGame]) then return end
 		beginGame(station, player) --// THIS press starts the game
 		return
 	end
@@ -2056,6 +2095,9 @@ local function beginCookSession(station, player)
 		end
 		return
 	end
+
+	if not announceKitchenGame(station, player, INTRO_KEY[GAME_ARROW]) then return end
+	if cookSessions[station] then return end
 
 	cookToken += 1
 	local session = {

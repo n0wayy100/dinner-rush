@@ -35,6 +35,7 @@ local ServerStorage = game:GetService("ServerStorage")
 local Debris = game:GetService("Debris")
 
 local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
+local MinigameIntro = require(ServerStorage:WaitForChild("Shared"):WaitForChild("MinigameIntro"))
 local TID = Config.Tidiness
 
 local ShiftState = ReplicatedStorage:WaitForChild("ShiftState")
@@ -373,6 +374,9 @@ end
 
 local function beginDustVacuum(player, grime)
 	if dustSession then return end --// one at a time
+	--// The name banner first (MinigameIntro); re-check after it
+	if not MinigameIntro.Announce(player, "Vacuum", "Vacuum") then return end
+	if dustSession or not grime.Parent then return end
 	local needed = math.max(1, math.ceil((TID.DustSpecks or 6) * cleanWorkMult(player)))
 	dustToken += 1
 	local token = dustToken
@@ -610,6 +614,9 @@ end
 
 local function beginPoopPlunge(player)
 	if poopSession or not poopMess or not plungeRemote then return end
+	--// The name banner first (MinigameIntro); re-check after it
+	if not MinigameIntro.Announce(player, "Plunge", "PoopPlunge") then return end
+	if poopSession or not poopMess then return end
 	local needed = math.max(1, math.ceil((PLUNGE.TapsToFill or 12) * cleanWorkMult(player)))
 	poopToken += 1
 	local token = "poop-" .. poopToken

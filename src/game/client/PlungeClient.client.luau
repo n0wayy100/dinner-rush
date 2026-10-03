@@ -14,6 +14,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UiPop = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiPop"))
 local RunService = game:GetService("RunService")
 local ContextActionService = game:GetService("ContextActionService")
 local TweenService = game:GetService("TweenService")
@@ -199,6 +200,7 @@ plungeRemote.OnClientEvent:Connect(function(action, a, b)
 		caption.TextColor3 = CHOC
 		fillBar.Size = UDim2.fromScale(0, 1)
 		gui.Enabled = true
+		UiPop.Pop(gui)
 
 		--// Gamepad A taps too (tap/click come through the catcher)
 		ContextActionService:BindAction(ACTION, onAction, false, Enum.KeyCode.ButtonA)

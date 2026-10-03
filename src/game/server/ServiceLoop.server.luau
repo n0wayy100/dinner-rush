@@ -4252,6 +4252,16 @@ if not shiftReportRemote then
 end
 
 --// First matching threshold wins; a FAILED shift always stamps FailGrade
+--// "good" / "mid" / "bad" for one report stat (Config.ShiftReport.StatTones)
+local function statTone(value, good, mid)
+	if value >= good then
+		return "good"
+	elseif value >= mid then
+		return "mid"
+	end
+	return "bad"
+end
+
 local function computeGrade(success)
 	local R = Config.ShiftReport
 	if not success then
@@ -4426,7 +4436,21 @@ local function endShift(success, reason)
 			WaterIncidents = eventStats.WaterIncidents or 0,
 			AutoDismiss = Config.ShiftReport.AutoDismissSeconds,
 			RowReveal = Config.ShiftReport.RowRevealSeconds,
+			StampPause = Config.ShiftReport.StampPauseSeconds,
 		}
+
+		--// The three stats on the card, each judged here so the client
+		--// only paints a colour
+		do
+			local T = Config.ShiftReport.StatTones
+			local target = diff.Rewards.TargetParties
+			local moneyBench = target * T.Money.PerTargetParty * (diff.Rewards.CoinMult or 1)
+			payload.Tones = {
+				Served = statTone(shift.Satisfied, target * T.Served.Good, target * T.Served.Mid),
+				Money = statTone(shift.EarnedTotal, moneyBench * T.Money.Good, moneyBench * T.Money.Mid),
+				Reputation = statTone(shift.Reputation, T.Reputation.Good, T.Reputation.Mid),
+			}
+		end
 		--// Career writes: everyone present gets the shift on their permanent
 		--// record - completion (or failure), time on the floor, and a Best
 		--// Shifts candidate stamped with the report's own grade
