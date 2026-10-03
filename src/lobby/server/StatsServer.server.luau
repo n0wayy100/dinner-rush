@@ -57,6 +57,7 @@ local function buildPayload(player)
 		Stats = snapshot.Stats,
 		TaskProgress = snapshot.TaskProgress,
 		BestShifts = snapshot.BestShifts,
+		RecentShifts = snapshot.RecentShifts or {}, --// the SHIFT LOG, newest first
 		Level = level,
 		Wallet = snapshot.Wallet,
 		EquippedClass = equipped,

@@ -4374,6 +4374,7 @@ local function endShift(success, reason)
 	--// THE SPLIT. Everything the shift earned, minus everything the Supplier
 	--// spent, divided evenly. This is the only moment private balances move.
 	local everyone = Players:GetPlayers()
+	local paidBy = {} --// [player] = their coin share (the SHIFT LOG records it)
 	if #everyone > 0 and shift.Till > 0 then
 		local share = math.floor(shift.Till / #everyone)
 		local remainder = shift.Till - (share * #everyone)
@@ -4383,6 +4384,7 @@ local function endShift(success, reason)
 			if index == 1 and Config.Money.RemainderToFirstPlayer then
 				paid += remainder
 			end
+			paidBy[member] = paid
 			awardCoins(member, paid)
 
 			--// THE DEPOSIT: the split lands in the persistent wallet too.
@@ -4438,40 +4440,10 @@ local function endShift(success, reason)
 			RowReveal = Config.ShiftReport.RowRevealSeconds,
 			StampPause = Config.ShiftReport.StampPauseSeconds,
 		}
-
-		--// The three stats on the card, each judged here so the client
-		--// only paints a colour
-		do
-			local T = Config.ShiftReport.StatTones
-			local target = diff.Rewards.TargetParties
-			local moneyBench = target * T.Money.PerTargetParty * (diff.Rewards.CoinMult or 1)
-			payload.Tones = {
-				Served = statTone(shift.Satisfied, target * T.Served.Good, target * T.Served.Mid),
-				Money = statTone(shift.EarnedTotal, moneyBench * T.Money.Good, moneyBench * T.Money.Mid),
-				Reputation = statTone(shift.Reputation, T.Reputation.Good, T.Reputation.Mid),
-			}
-		end
-		--// Career writes: everyone present gets the shift on their permanent
-		--// record - completion (or failure), time on the floor, and a Best
-		--// Shifts candidate stamped with the report's own grade
-		for _, member in ipairs(Players:GetPlayers()) do
-			ProfileAPI.AddStat(member, success and "ShiftsCompleted" or "ShiftsFailed", 1)
-			ProfileAPI.AddStat(member, "TimeOnFloorSeconds", math.floor(shift.Elapsed))
-			ProfileAPI.RecordShift(member, {
-				Grade = grade,
-				Tone = tone,
-				Label = diff.Label,
-				DiffName = DIFFICULTY,
-				Served = shift.Satisfied,
-				Target = diff.Rewards.TargetParties,
-				Net = payload.Net,
-				Seconds = math.floor(shift.Elapsed),
-				When = os.time(),
-			})
-		end
-
 		--// THE AWARDS: the hidden score is revealed only now. ScoreService
 		--// owns titles + MVP; a missing bridge just skips the ceremony.
+		--// Fetched BEFORE the career writes so each player's SHIFT LOG entry
+		--// can carry the title they earned.
 		local awardsBridge = game:GetService("ServerStorage"):FindFirstChild("GetShiftAwards")
 		if awardsBridge then
 			local ok, awards = pcall(function() return awardsBridge:Invoke() end)
@@ -4479,12 +4451,38 @@ local function endShift(success, reason)
 				payload.Awards = awards
 			end
 		end
+		local cardByUser = {}
+		for _, card in ipairs((payload.Awards and payload.Awards.Players) or {}) do
+			cardByUser[card.UserId] = card
+		end
+		local mapRow = Config.MapById(workspace:GetAttribute("MatchMapId"))
 
-		--// THE MVP CUTSCENE: picked HERE, once, so every screen plays the
-		--// same animation (a client-side random would differ per player)
-		local mvpAnims = Config.MvpCutscene and Config.MvpCutscene.Animations
-		if payload.Awards and payload.Awards.MVP and mvpAnims and #mvpAnims > 0 then
-			payload.MvpAnim = math.random(#mvpAnims)
+		--// Career writes: everyone present gets the shift on their permanent
+		--// record - completion (or failure), time on the floor, a Best Shifts
+		--// candidate stamped with the report's own grade, and a SHIFT LOG
+		--// entry with what they personally got (coins, title, MVP)
+		for _, member in ipairs(Players:GetPlayers()) do
+			ProfileAPI.AddStat(member, success and "ShiftsCompleted" or "ShiftsFailed", 1)
+			ProfileAPI.AddStat(member, "TimeOnFloorSeconds", math.floor(shift.Elapsed))
+			local card = cardByUser[member.UserId]
+			ProfileAPI.RecordShift(member, {
+				Grade = grade,
+				Tone = tone,
+				Label = diff.Label,
+				DiffName = DIFFICULTY,
+				Map = mapRow and mapRow.Display or "",
+				Served = shift.Satisfied,
+				Target = diff.Rewards.TargetParties,
+				Net = payload.Net,
+				Walkouts = payload.Walkouts,
+				PerfectCooks = payload.PerfectCooks,
+				Coins = paidBy[member] or 0,
+				Title = card and card.Title or "",
+				MVP = card and card.IsMVP or false,
+				Success = success,
+				Seconds = math.floor(shift.Elapsed),
+				When = os.time(),
+			})
 		end
 
 		shiftReportRemote:FireAllClients("Show", payload)

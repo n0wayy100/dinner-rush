@@ -2060,22 +2060,74 @@ Config.PlayerStats = {
 	LevelShiftsPerLevel = 5,      -- passport LVL = 1 + ShiftsCompleted/this
 	                              -- (derived, never stored - cannot desync)
 	BestShiftsCap = 5,            -- hard ceiling, sorted+trimmed at insert
+	RecentShiftsCap = 10,         -- the SHIFT LOG keeps this many, newest first
 
+	--// THE STAFF ROOM art kit (Claude Design, uploaded Oct 3 2026 - all 23).
+	--// StatsClient also borrows the shop kit's shared pieces (PanelFrame,
+	--// CloseButton, Sunburst, Sparkle, ShineStreak, SoftGlow, PopBurst,
+	--// FlyingCoin, BistroLights) from Config.Monetization.ShopArt.
+	--// "" in any slot = a code-drawn placeholder. Size = the art's pixels;
+	--// Slice = the stretchable middle (corners/ends never stretch).
+	StaffArt = {
+		StaffBadge       = { Image = "rbxassetid://117121583134619", Size = { 1024, 640 } },
+		PhotoFrame       = { Image = "rbxassetid://90651633123946",  Size = { 512, 512 } },
+		LevelMedal       = { Image = "rbxassetid://125032475036748", Size = { 384, 448 } },
+		XPBarFrame       = { Image = "rbxassetid://136175340962616", Size = { 768, 96 }, Slice = { 48, 20, 720, 76 } },
+		XPBarFill        = { Image = "rbxassetid://78479238895262",  Size = { 768, 96 }, Slice = { 48, 20, 720, 76 } },
+		Receipt          = { Image = "rbxassetid://87202672687941",  Size = { 512, 1024 }, Slice = { 40, 60, 472, 934 } },
+		RegisterSlot     = { Image = "rbxassetid://125034055855124", Size = { 768, 256 } },
+		TrophyGold       = { Image = "rbxassetid://119285661184565", Size = { 384, 512 } },
+		TrophySilver     = { Image = "rbxassetid://80469846596701",  Size = { 384, 512 } },
+		TrophyBronze     = { Image = "rbxassetid://109123348031993", Size = { 384, 512 } },
+		--// brackets sit ~64-214 / 809-959 px in: only the plank between stretches
+		TrophyShelf      = { Image = "rbxassetid://134825786933706", Size = { 1024, 192 }, Slice = { 230, 0, 794, 192 } },
+		ShiftPhotoFrame  = { Image = "rbxassetid://95086881513447",  Size = { 384, 320 } },
+		GradeStamp       = { Image = "rbxassetid://77295166646791",  Size = { 256, 256 } },
+		HeaderChalkboard = { Image = "rbxassetid://73273922196950",  Size = { 1024, 256 } },
+		CorkPattern      = { Image = "rbxassetid://103207561554679" },
+		PushPin          = { Image = "rbxassetid://98114023689048" },
+	},
+	--// the short word inked on a trophy's grade stamp (the full grade shows
+	--// in the trophy's hover card). Keys = Config.ShiftReport grades.
+	StampText = {
+		["5 STARS!"] = "5★",
+		["GREAT SHIFT!"] = "GREAT",
+		["NOT BAD!"] = "OK!",
+		["ROUGH NIGHT..."] = "ROUGH",
+		["CLOSED DOWN!"] = "CLOSED",
+	},
+	--// one icon per stat on screen (registry Key -> image)
+	StatIcons = {
+		ShiftsCompleted    = "rbxassetid://122006251068260",
+		CustomersServed    = "rbxassetid://121098336244793",
+		TimeOnFloorSeconds = "rbxassetid://92328396815516",
+		PerfectCooks       = "rbxassetid://128765494333574",
+		EventChannels      = "rbxassetid://129743100655030",
+		MessesCleaned      = "rbxassetid://129680830001902",
+		MoneyDeposited     = "rbxassetid://93684001821077",
+	},
+
+	--// Hidden = true: the stat still COUNTS and SAVES (ProfileAPI.AddStat only
+	--// accepts keys listed here, and class upgrade tracks read some of them) -
+	--// it just is not drawn on the stats screen. Owner trim, Oct 2026: shifts /
+	--// customers / time on floor live on the badge card; dishes ~= customers;
+	--// failures and crimes are no fun to read; greetings / recommendations /
+	--// payments / classes owned were clutter.
 	Registry = {
-		{ Key = "ShiftsCompleted",   Source = "Stats",        Label = "Shifts Completed",   Format = "int",      Default = 0 },
-		{ Key = "ShiftsFailed",      Source = "Stats",        Label = "Shifts Failed",      Format = "int",      Default = 0 },
-		{ Key = "CustomersServed",   Source = "Stats",        Label = "Customers Served",   Format = "int",      Default = 0 },
-		{ Key = "DishesServed",      Source = "TaskProgress", Label = "Dishes Served",      Format = "int",      Default = 0 },
+		{ Key = "ShiftsCompleted",   Source = "Stats",        Label = "Shifts Completed",   Format = "int",      Default = 0, Hidden = true },
+		{ Key = "ShiftsFailed",      Source = "Stats",        Label = "Shifts Failed",      Format = "int",      Default = 0, Hidden = true },
+		{ Key = "CustomersServed",   Source = "Stats",        Label = "Customers Served",   Format = "int",      Default = 0, Hidden = true },
+		{ Key = "DishesServed",      Source = "TaskProgress", Label = "Dishes Served",      Format = "int",      Default = 0, Hidden = true },
 		{ Key = "PerfectCooks",      Source = "TaskProgress", Label = "Perfect Cooks",      Format = "int",      Default = 0 },
 		{ Key = "EventChannels",     Source = "TaskProgress", Label = "Emergencies Fixed",  Format = "int",      Default = 0 },
-		{ Key = "PaymentsCollected", Source = "TaskProgress", Label = "Payments Collected", Format = "int",      Default = 0 },
-		{ Key = "Greetings",         Source = "TaskProgress", Label = "Warm Greetings",     Format = "int",      Default = 0 },
-		{ Key = "Recommendations",   Source = "TaskProgress", Label = "Recommendations",    Format = "int",      Default = 0 },
+		{ Key = "PaymentsCollected", Source = "TaskProgress", Label = "Payments Collected", Format = "int",      Default = 0, Hidden = true },
+		{ Key = "Greetings",         Source = "TaskProgress", Label = "Warm Greetings",     Format = "int",      Default = 0, Hidden = true },
+		{ Key = "Recommendations",   Source = "TaskProgress", Label = "Recommendations",    Format = "int",      Default = 0, Hidden = true },
 		{ Key = "MessesCleaned",     Source = "TaskProgress", Label = "Messes Cleaned",     Format = "int",      Default = 0 },
 		{ Key = "MoneyDeposited",    Source = "Stats",        Label = "Lifetime Earnings",  Format = "money",    Default = 0 },
-		{ Key = "TimeOnFloorSeconds", Source = "Stats",       Label = "Time On Floor",      Format = "duration", Default = 0 },
-		{ Key = "KitchenCrimes",     Source = "Stats",        Label = "Kitchen Crimes",     Format = "int",      Default = 0 },
-		{ Key = "ClassesOwned",      Source = "Computed",     Label = "Classes Owned",      Format = "int",      Default = 0 },
+		{ Key = "TimeOnFloorSeconds", Source = "Stats",       Label = "Time On Floor",      Format = "duration", Default = 0, Hidden = true },
+		{ Key = "KitchenCrimes",     Source = "Stats",        Label = "Kitchen Crimes",     Format = "int",      Default = 0, Hidden = true },
+		{ Key = "ClassesOwned",      Source = "Computed",     Label = "Classes Owned",      Format = "int",      Default = 0, Hidden = true },
 	},
 }
 
@@ -3159,6 +3211,10 @@ Config.Sfx = {
 		--// bar (green = right, red = wrong).
 		AnswerRight = { Id = "100414462804328", Volume = 0.9 },
 		AnswerWrong = { Id = "96876122441863", Volume = 0.9 },
+		--// THE SHOP (Oct 2026). ShopPurchase borrows AnswerRight's chime until
+		--// a proper cha-ching is picked; ShopClick is silent until one is set.
+		ShopPurchase = { Id = "100414462804328", Volume = 0.9 },
+		ShopClick = { Id = "", Volume = 0.5 },
 
 		--// THE SHIFT REPORT. LOCAL - every player has their own report on
 		--// screen. A thud as each stat slaps onto the board, and a heavier
@@ -3478,6 +3534,11 @@ Config.Profile = {
 		--// insert - the saved array has a hard ceiling forever.
 		BestShifts = {},
 
+		--// THE SHIFT LOG (Oct 2026): the most recent shifts, NEWEST FIRST,
+		--// trimmed to PlayerStats.RecentShiftsCap at insert - your own coin
+		--// share, title and MVP ride along with the shift's grade.
+		RecentShifts = {},
+
 		--// Absorbed from the lobby (spec 3) - one profile per player, not one
 		--// per feature. Neither system is built yet; the keys are here so the
 		--// schema does not need a migration when they are.
@@ -3553,26 +3614,81 @@ Config.Profile = {
 Config.Monetization = {
 	--// One-time buys. Perks are wired per pass in a later step (the owner
 	--// checks in first); ownership itself is already exploit-safe.
+	--// Shop display fields (ShopClient): Order sorts the cards, Emoji is the
+	--// placeholder art until Image (an uploaded asset id) is set.
 	GamePasses = {
 		VIP = {
 			Id = 0,
 			Display = "VIP",
 			Description = "Gold name tag, VIP outfit, and +25% coins from every shift",
+			Emoji = "👑", Image = "rbxassetid://104590028335428", Order = 1,
 		},
 		DoubleCoins = {
 			Id = 0,
 			Display = "2x Coins",
 			Description = "Double the coins you take home from every shift",
+			Emoji = "💰", Image = "rbxassetid://116464553241999", Order = 2,
+			Badge = "2x", -- a live sticker over the art (the badge art has no text)
 		},
 	},
 
 	--// Repeatable buys. Coins = how many coins land in the wallet per buy.
+	--// Featured = the big "best value" card on top of the Coins tab.
 	Products = {
-		CoinsSmall  = { Id = 0, Display = "Pile of Coins",  Coins = 500 },
-		CoinsMedium = { Id = 0, Display = "Bag of Coins",   Coins = 1200 },
-		CoinsLarge  = { Id = 0, Display = "Chest of Coins", Coins = 3000 },
-		CoinsHuge   = { Id = 0, Display = "Vault of Coins", Coins = 7000 },
+		CoinsSmall  = { Id = 0, Display = "Pile of Coins",  Coins = 500,
+			Emoji = "🪙", Image = "rbxassetid://125974545023323", Order = 1 },
+		CoinsMedium = { Id = 0, Display = "Bag of Coins",   Coins = 1200,
+			Emoji = "💰", Image = "rbxassetid://118410203960355", Order = 2 },
+		CoinsLarge  = { Id = 0, Display = "Chest of Coins", Coins = 3000,
+			Emoji = "🧰", Image = "rbxassetid://119886693973918", Order = 3 },
+		CoinsHuge   = { Id = 0, Display = "Vault of Coins", Coins = 7000,
+			Emoji = "🏦", Image = "rbxassetid://87812219301694", Order = 4, Featured = true },
 	},
+
+	--// THE SHOP'S ART SLOTS (Oct 2026). "" = the code-drawn placeholder;
+	--// paste an uploaded asset id and that piece swaps to the art. Frames
+	--// are 9-SLICED: SliceCenter is the stretchable middle rectangle, in
+	--// the image's own pixels (Rect min x, min y, max x, max y) - the
+	--// corners outside it never stretch. Defaults assume the art kit sizes.
+	--// Size = the art's real pixel size (keeps it from squashing, and lets a
+	--// 9-sliced frame's border scale with the screen instead of staying a
+	--// fixed pixel width). Slice margins measured off the Oct 2026 art kit:
+	--// the panel's brass brackets reach ~190px in from each corner.
+	--// The Claude Design kit, uploaded Oct 3 2026 (all 32 pieces).
+	ShopArt = {
+		--// UI CHROME
+		PanelFrame       = { Image = "rbxassetid://71849129735816", Size = { 1024, 768 }, Slice = { 200, 200, 824, 568 } },
+		HeaderBanner     = { Image = "rbxassetid://136905996885475", Size = { 1024, 256 } },
+		TabNormal        = { Image = "rbxassetid://136449305431332", Size = { 512, 256 } },
+		TabSelected      = { Image = "rbxassetid://104735560951465", Size = { 512, 256 } },
+		ItemCard         = { Image = "rbxassetid://87321545300427", Size = { 512, 640 }, Slice = { 100, 100, 412, 540 } },
+		PriceButtonGreen = { Image = "rbxassetid://123410306061261", Size = { 512, 160 }, Slice = { 90, 50, 422, 110 } },
+		PriceButtonRed   = { Image = "rbxassetid://83633335950601", Size = { 512, 160 }, Slice = { 90, 50, 422, 110 } }, -- spare (sales later)
+		ValueRibbon      = { Image = "rbxassetid://87427359069158", Size = { 256, 384 } },
+		CloseButton      = { Image = "rbxassetid://112978255081941", Size = { 256, 256 } },
+		TabIconCoins     = { Image = "rbxassetid://120823836721388", Size = { 256, 256 } },
+		TabIconPasses    = { Image = "rbxassetid://83044944920425", Size = { 256, 256 } },
+
+		--// EFFECT SPRITES (animated by ShopClient)
+		Sparkle          = { Image = "rbxassetid://92980179345226" },  -- twinkles around the featured pack
+		FlyingCoin       = { Image = "rbxassetid://115974605149441" }, -- the purchase coin shower
+		Sunburst         = { Image = "rbxassetid://112163141616210" }, -- spins behind the featured pack
+		SoftGlow         = { Image = "rbxassetid://79101323592617" },  -- light behind every item
+		ShineStreak      = { Image = "rbxassetid://115962591494823" },  -- sweeps across the featured card
+		Confetti         = { Image = "rbxassetid://103368211838664" },  -- bursts on a purchase
+		PopBurst         = { Image = "rbxassetid://81311264549915" },  -- behind the "+coins!" toast
+
+		--// DECORATION
+		BistroLights       = { Image = "rbxassetid://94462767630414" }, -- draped over the top, twinkling
+		CornerDoodleBurger = { Image = "rbxassetid://118171122286345" }, -- doodles peek round the frame
+		CornerDoodleDonut  = { Image = "rbxassetid://97739279838669" },
+		CornerDoodleTomato = { Image = "rbxassetid://124288556727329" },
+		CornerDoodleCoffee = { Image = "rbxassetid://127239302734501" },
+		SteamWisp          = { Image = "rbxassetid://84651089737744" }, -- rises off the coffee
+		PanelPattern       = { Image = "rbxassetid://138066682536474" },  -- quiet tile behind the content
+		OwnedStamp         = { Image = "rbxassetid://104033637720670" },  -- slams onto owned passes
+	},
+	FeaturedRibbonText = "BEST VALUE!",
 
 	--// how many recent receipt ids the save remembers (the double-grant guard)
 	PurchaseIdCacheSize = 100,
