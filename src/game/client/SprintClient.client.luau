@@ -4,7 +4,7 @@
 
 	Hold-to-sprint with a stamina bar. Every number lives in Config.Sprint.
 
-	  keyboard   hold LeftShift
+	  keyboard   double-tap W, then keep W held
 	  mobile     ContextActionService touch button (sits above the jump button)
 	  gamepad    press the left thumbstick (L3)
 
@@ -63,7 +63,13 @@ gui.Parent = playerGui
 local bar = Instance.new("CanvasGroup")
 bar.Name = "StaminaBar"
 bar.AnchorPoint = Vector2.new(0, 1)
-bar.Position = UDim2.fromScale(0.03, 0.95) --// bottom-left corner
+--// bottom-left corner; on touch it hugs the true bottom edge so the
+--// floating joystick never sits on top of it (owner tweak, Sep 18)
+local touchOnly = game:GetService("UserInputService").TouchEnabled
+	and not game:GetService("UserInputService").KeyboardEnabled
+bar.Position = touchOnly
+	and UDim2.fromScale(0.02, 0.99)
+	or UDim2.fromScale(0.03, 0.95)
 bar.Size = UDim2.fromScale(0.16, 0.018)
 bar.BackgroundColor3 = CREAM
 bar.GroupTransparency = 1 --// starts hidden: stamina starts full
@@ -143,6 +149,8 @@ local fullSince = 0
 local humanoid = nil
 local sprintTrack = nil
 local animWarned = false
+local boostTrack = nil   --// DOUBLE TIME run animation (Waiter ultimate)
+local boostWarned = false
 
 --// Optional custom sprint animation. With the id empty this whole path is
 --// dormant and the default run animation's WalkSpeed scaling carries the feel.
@@ -169,17 +177,69 @@ local function playSprintAnim()
 	sprintTrack:Play(0.15)
 end
 
+--// DOUBLE TIME (Waiter ultimate): a looping run animation that plays for the
+--// whole speed boost and stops when it wears off (both driven off the
+--// SpeedBoostMult attribute below). Empty id = dormant, like the sprint anim.
+local boostTrackId = nil
+local function playBoostAnim()
+	--// the boost is shared (Waiter DOUBLE TIME, Janitor FLOOR BUFFER), the
+	--// animation is per class: the Waiter's run must never play on a Janitor
+	local ult = Config.Ultimates or {}
+	local classKey = player:GetAttribute("ClassKey")
+	local id = (classKey == "Waiter" and ult.WaiterRunAnim)
+		or (classKey == "Janitor" and ult.JanitorBufferAnim)
+		or ""
+	if id == "" or not humanoid then return end
+	if boostTrack and boostTrackId ~= id then
+		boostTrack:Stop(0)
+		boostTrack = nil
+	end
+	boostTrackId = id
+	if not boostTrack then
+		local animator = humanoid:FindFirstChildOfClass("Animator")
+		if not animator then return end
+		local animation = Instance.new("Animation")
+		animation.AnimationId = id
+		local ok, track = pcall(animator.LoadAnimation, animator, animation)
+		if not ok then
+			if not boostWarned then
+				boostWarned = true
+				warn("[SprintClient] DOUBLE TIME anim failed to load: " .. tostring(track))
+			end
+			return
+		end
+		track.Looped = true
+		track.Priority = Enum.AnimationPriority.Action
+		boostTrack = track
+	end
+	if not boostTrack.IsPlaying then
+		boostTrack:Play(0.2)
+	end
+end
+
+local function stopBoostAnim()
+	if boostTrack and boostTrack.IsPlaying then
+		boostTrack:Stop(0.25)
+	end
+end
+
 local function stopSprintAnim()
 	if sprintTrack and sprintTrack.IsPlaying then
 		sprintTrack:Stop(0.15)
 	end
 end
 
+--// DOUBLE TIME (Waiter ultimate): the server sets SpeedBoostMult on the
+--// Player for the burst; every speed this script applies scales by it
+local function speedMult()
+	return player:GetAttribute("SpeedBoostMult") or 1
+end
+
 local function startSprint()
 	if active then return end
 	active = true
 	if humanoid then
-		humanoid.WalkSpeed = Sprint.SprintSpeed
+		humanoid.WalkSpeed = Sprint.SprintSpeed * speedMult()
 	end
 	setFovKick(true)
 	playSprintAnim()
@@ -190,30 +250,108 @@ local function endSprint()
 	active = false
 	lastActiveAt = os.clock()
 	if humanoid and humanoid.Health > 0 then
-		humanoid.WalkSpeed = Sprint.BaseWalkSpeed
+		humanoid.WalkSpeed = Sprint.BaseWalkSpeed * speedMult()
 	end
 	setFovKick(false)
 	stopSprintAnim()
 end
+
+--// Boost starting or ending mid-stride re-applies whichever speed is
+--// current, so DOUBLE TIME kicks in (and wears off) instantly
+--// DOUBLE TIME run animation: only while boosted AND actually moving - a run
+--// pose while standing still looks wrong (owner call). Poll movement for the
+--// boost's life; a token ends the loop when the boost wears off or re-casts.
+local boostLoopToken = 0
+local function startBoostAnimLoop()
+	boostLoopToken += 1
+	local myToken = boostLoopToken
+	task.spawn(function()
+		while boostLoopToken == myToken and speedMult() > 1 do
+			if humanoid and humanoid.MoveDirection.Magnitude > 0.1 then
+				playBoostAnim()
+			else
+				stopBoostAnim()
+			end
+			task.wait(0.1)
+		end
+		stopBoostAnim()
+	end)
+end
+
+player:GetAttributeChangedSignal("SpeedBoostMult"):Connect(function()
+	if humanoid and humanoid.Health > 0 then
+		humanoid.WalkSpeed =
+			(active and Sprint.SprintSpeed or Sprint.BaseWalkSpeed) * speedMult()
+	end
+	if speedMult() > 1 then
+		startBoostAnimLoop()
+	else
+		boostLoopToken += 1 --// end any running loop
+		stopBoostAnim()
+	end
+end)
 
 ----------------------------------------------------------------
 -- Input: one ContextActionService action covers all three platforms.
 -- The third argument makes the mobile touch button; L3 is the console-
 -- standard sprint press.
 ----------------------------------------------------------------
-local function onSprintAction(_, inputState)
-	if inputState == Enum.UserInputState.Begin then
-		held = true
-	elseif inputState == Enum.UserInputState.End or inputState == Enum.UserInputState.Cancel then
-		held = false
+--// DOUBLE-TAP W. LeftShift is Roblox's own shift-lock toggle, so sprinting
+--// on it meant every sprint fought the camera. Two quick taps of W start the
+--// run; holding W keeps it; releasing W ends it.
+local lastWTapAt = 0
+
+local function onSprintAction(_, inputState, inputObject)
+	local key = inputObject and inputObject.KeyCode
+
+	if key == Enum.KeyCode.W then
+		if inputState == Enum.UserInputState.Begin then
+			local now = os.clock()
+			if now - lastWTapAt <= Sprint.DoubleTapSeconds then
+				held = true      --// second tap inside the window: run
+				lastWTapAt = 0   --// consumed, so a third tap starts a fresh pair
+			else
+				lastWTapAt = now
+			end
+		elseif inputState == Enum.UserInputState.End
+			or inputState == Enum.UserInputState.Cancel then
+			if Sprint.StopOnRelease then
+				held = false
+			end
+		end
+	else
+		--// Touch button and gamepad L3 stay plain hold-to-sprint: there is
+		--// nothing to double-tap on a thumbstick.
+		if inputState == Enum.UserInputState.Begin then
+			held = true
+		elseif inputState == Enum.UserInputState.End
+			or inputState == Enum.UserInputState.Cancel then
+			held = false
+		end
 	end
-	--// Pass, never Sink: LeftShift still belongs to shift lock; sprint only listens
+
+	--// Pass, never Sink: W still has to reach the movement controller, or
+	--// binding sprint to it would stop the player walking forward.
 	return Enum.ContextActionResult.Pass
 end
 
 ContextActionService:BindAction(ACTION, onSprintAction, true,
-	Enum.KeyCode.LeftShift, Enum.KeyCode.ButtonL3)
-ContextActionService:SetTitle(ACTION, "SPRINT")
+	Enum.KeyCode.W, Enum.KeyCode.ButtonL3)
+--// Owner's runner icon when uploaded (Config.Sprint.TouchButtonImage),
+--// SPRINT text until then - an image with a text label over it reads
+--// as neither, so it is one or the other
+if (Sprint.TouchButtonImage or "") ~= "" then
+	--// the touch button is created a beat after BindAction on some
+	--// devices, and SetImage on a button that is not there yet silently
+	--// does nothing - so the icon is re-applied a few times after spawn
+	for _, delaySeconds in ipairs({ 0, 2, 6 }) do
+		task.delay(delaySeconds, function()
+			ContextActionService:SetImage(ACTION, Sprint.TouchButtonImage)
+		end)
+	end
+else
+	ContextActionService:SetTitle(ACTION, "SPRINT")
+end
 --// Inside the touch-button frame (bottom-right cluster): roughly above the
 --// jump button. Nudge to taste in the Device emulator.
 ContextActionService:SetPosition(ACTION, UDim2.new(0.75, 0, 0.05, 0))
@@ -223,12 +361,13 @@ ContextActionService:SetPosition(ACTION, UDim2.new(0.75, 0, 0.05, 0))
 ----------------------------------------------------------------
 local function onCharacterAdded(character)
 	sprintTrack = nil --// old track died with the old Animator
+	boostTrack = nil  --// ...and so did the DOUBLE TIME run track
 	humanoid = character:WaitForChild("Humanoid")
 
 	--// Fresh spawn: full tank, normal speed - never stuck fast or slow
 	stamina = Sprint.StaminaMax
 	active = false
-	humanoid.WalkSpeed = Sprint.BaseWalkSpeed
+	humanoid.WalkSpeed = Sprint.BaseWalkSpeed * speedMult()
 
 	humanoid.Died:Connect(function()
 		endSprint() --// restores FOV; WalkSpeed reset happens on the next spawn
@@ -253,7 +392,10 @@ RunService.Heartbeat:Connect(function(dt)
 			if not held or stamina <= 0 then
 				endSprint()
 			elseif moving then
-				stamina = math.max(0, stamina - Sprint.DrainPerSecond * dt)
+				--// WAITER PASSIVE: drain/regen multipliers arrive as Player
+				--// attributes from the server's ClassService (default 1)
+				stamina = math.max(0, stamina - Sprint.DrainPerSecond
+					* (player:GetAttribute("StaminaDrainMult") or 1) * dt)
 				lastActiveAt = now
 				if stamina <= 0 then
 					endSprint()
@@ -269,7 +411,8 @@ RunService.Heartbeat:Connect(function(dt)
 
 		if not active and stamina < Sprint.StaminaMax
 			and now - lastActiveAt >= Sprint.RegenDelaySeconds then
-			stamina = math.min(Sprint.StaminaMax, stamina + Sprint.RegenPerSecond * dt)
+			stamina = math.min(Sprint.StaminaMax, stamina + Sprint.RegenPerSecond
+				* (player:GetAttribute("StaminaRegenMult") or 1) * dt)
 		end
 	end
 
@@ -289,5 +432,5 @@ RunService.Heartbeat:Connect(function(dt)
 	end
 end)
 
-print(("[SprintClient] ready - Shift / touch / L3, speed %d -> %d")
+print(("[SprintClient] ready - double-tap W / touch / L3, speed %d -> %d")
 	:format(Sprint.BaseWalkSpeed, Sprint.SprintSpeed))

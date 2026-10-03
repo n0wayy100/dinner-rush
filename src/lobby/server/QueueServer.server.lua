@@ -70,6 +70,7 @@ function SanitizeSettings(Settings)
         MaxPlayers = 3,
         Difficulty = "NORMAL",
         FriendsOnly = false,
+        MapId = Config.DefaultMapId,
     }
 
     if typeof(Settings) ~= "table" then
@@ -79,6 +80,18 @@ function SanitizeSettings(Settings)
     local Max = tonumber(Settings.MaxPlayers)
     if Max then
         Clean.MaxPlayers = math.clamp(math.floor(Max), MIN_PLAYERS, MAX_PLAYERS)
+    end
+
+    --// NEVER trust a MapId from a client. A modified one could ask for a map
+    --// that is not built yet, or does not exist at all, and MatchServer would
+    --// clone nothing - a shift in an empty world. Anything unrecognised falls
+    --// back to the default rather than being refused, so a stale client
+    --// still gets a playable game.
+    if typeof(Settings.MapId) == "string" and Config.IsPlayableMap(Settings.MapId) then
+        Clean.MapId = Settings.MapId
+    elseif Settings.MapId ~= nil and Settings.MapId ~= Config.DefaultMapId then
+        warn(("[QueueServer] rejected map '%s' - falling back to %s"):format(
+            tostring(Settings.MapId), Config.DefaultMapId))
     end
 
     if typeof(Settings.Difficulty) == "string" then
@@ -277,7 +290,7 @@ function StartMatch(TpZones)
         MaxPlayers = Data.Settings.MaxPlayers,
         Difficulty = Data.Settings.Difficulty,
         FriendsOnly = Data.Settings.FriendsOnly,
-        MapId = Data.Settings.MapId or "Diner",
+        MapId = Data.Settings.MapId or Config.DefaultMapId,
     })
 
     local Sent, Err = pcall(function()
