@@ -788,9 +788,11 @@ local function clearStationFood(station)
 	end
 end
 
-local function setStationFood(station, itemName, burnt)
+--// trim: show only part of a mesh (Config.Kitchen.StationFoodItem). Returns
+--// true when something is now on the station.
+local function setStationFood(station, itemName, burnt, trim)
 	clearStationFood(station)
-	if not itemName then return end
+	if not itemName then return false end
 
 	local base = Instance.new("Part")
 	base.Name = "CookingFood"
@@ -803,13 +805,20 @@ local function setStationFood(station, itemName, burnt)
 	--// Bottom-aligned: every model's underside lands exactly on the
 	--// measured lift for THIS station's method, whatever its shape
 	local lift = Config.Kitchen.StationFoodLiftStuds[station.Method] or 0
+	local drop = DishModels.plateDrop(itemName, trim)
 	base.CFrame = CFrame.new(station.Part.Position
-		+ Vector3.new(0, lift
-			+ DishModels.BottomDepth - DishModels.plateDrop(itemName), 0))
+		+ Vector3.new(0, lift + DishModels.BottomDepth - drop, 0))
 
-	if not DishModels.dress(base, itemName) then
+	if not DishModels.dress(base, itemName, false, trim) then
 		base:Destroy() --// no builder for this item: show nothing
-		return
+		return false
+	end
+
+	--// A mesh is MEASURED the first time it is dressed, after this base was
+	--// already placed with the old guess - re-place once with the real drop
+	if DishModels.plateDrop(itemName, trim) ~= drop then
+		base:Destroy()
+		return setStationFood(station, itemName, burnt, trim)
 	end
 
 	if burnt then
@@ -822,6 +831,26 @@ local function setStationFood(station, itemName, burnt)
 
 	base.Parent = workspace
 	station.FoodDisplay = base
+	return true
+end
+
+--// The raw item's look ON the station - usually the raw model itself, but
+--// some things cook differently than they're carried (Config.Kitchen
+--// .StationFoodItem: the cooker shows the RICE out of the sack mesh, with
+--// a parts-built mound as the fallback)
+local function showStationFood(station, burnt)
+	local raw = station.RawName
+	local map = Config.Kitchen.StationFoodItem
+	local entry = raw and map and map[raw]
+	if type(entry) == "table" then
+		local trim = { Keep = entry.Keep, Skip = entry.Skip }
+		if not setStationFood(station, entry.Item or raw, burnt, trim) then
+			--// trim missed: the fallback item, else the whole raw model
+			setStationFood(station, entry.Fallback or entry.Item or raw, burnt)
+		end
+	else
+		setStationFood(station, entry or raw, burnt)
+	end
 end
 
 --// The RAW model cooks on the pan the whole way (owner ruling: no
@@ -831,10 +860,10 @@ local function refreshStationFood(station)
 	if station.State == "COOKING" or station.State == "PERFECT"
 		or station.State == "OVERCOOKED" then
 		if not station.FoodDisplay then
-			setStationFood(station, station.RawName)
+			showStationFood(station)
 		end
 	elseif station.State == "BURNT" then
-		setStationFood(station, station.RawName, true)
+		showStationFood(station, true)
 	else
 		clearStationFood(station)
 	end

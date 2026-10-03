@@ -711,6 +711,31 @@ Config.Kitchen = {
 	--// once the Manila props are placed.
 	StationFoodLiftStuds = { Grill = -0.49, Fry = 0.0, Ramen = 0.20,
 		Rice = 0.20, Pot = 0.20 },
+	--// What a station SHOWS while cooking, when it isn't the raw item you
+	--// carried in (owner call, Oct 2026: rice goes in the cooker loose, not
+	--// in its sack). A value is either a DishModels item name, or a TRIM of
+	--// a mesh: Item's DishMeshes model showing only parts whose names have a
+	--// Keep word and no Skip word (lowercase); Fallback shows when nothing
+	--// matches (the Output then lists the mesh's real part names).
+	--// Anything not listed shows its own raw model.
+	StationFoodItem = {
+		RawRice = {
+			Item = "RawRice",                -- the rice out of YOUR sack mesh
+			Keep = { "rice", "grain" },
+			Skip = { "bag", "sack", "tie", "rope", "string" },
+			Fallback = "CookerRice",         -- the parts-built mound
+		},
+		--// the pork goes in the adobo pot, its cutting board does not. The
+		--// current RawPork mesh is ONE part (PorkBelly_Board) with the board
+		--// baked in, so the trim leaves nothing and the parts-built PotPork
+		--// cubes show instead. A future mesh with the board as its own part
+		--// trims automatically. (No Keep list = all but the Skip words.)
+		RawPork = {
+			Item = "RawPork",
+			Skip = { "board", "cutting", "plank", "wood", "tray", "plate" },
+			Fallback = "PotPork",
+		},
+	},
 
 	--// Which looping sound a station makes while it cooks, by Method.
 	--// A method missing here falls back to the grill sizzle.
@@ -758,11 +783,22 @@ function Config.RecipeFor(ingredient, method)
 		return nil
 	end
 
+	--// A station cooks a recipe when the METHODS match. The alias table is
+	--// only a spelling bridge ("Fry" ~ "Frying"): two different appliances
+	--// that share a timing family (the rice cooker and the adobo pot both
+	--// Boil) must NOT cook each other's food - pork in the rice cooker was
+	--// the bug (Oct 2026). So the family match only counts when one side
+	--// is the family name itself.
 	local wanted = Config.CookMethodAliases[method]
 	for dishName, recipe in pairs(Config.Recipes) do
-		if recipe.Ingredient == ingredient
-			and Config.CookMethodAliases[recipe.Method] == wanted then
-			return dishName, recipe
+		if recipe.Ingredient == ingredient then
+			local exact = recipe.Method == method
+			local spelling = wanted ~= nil
+				and Config.CookMethodAliases[recipe.Method] == wanted
+				and (Config.Cooking[method] ~= nil or Config.Cooking[recipe.Method] ~= nil)
+			if exact or spelling then
+				return dishName, recipe
+			end
 		end
 	end
 

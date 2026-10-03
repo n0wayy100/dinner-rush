@@ -103,7 +103,53 @@ local function shrimp(handle, at, girth, body, tail)
 		at * CFrame.new(-0.5, 0.2, 0) * CFrame.Angles(0, 0, math.rad(55)))
 end
 
+local RICE = Color3.fromRGB(250, 248, 240)
+local PORK_MEAT = Color3.fromRGB(214, 120, 118)
+local PORK_FAT = Color3.fromRGB(245, 232, 220)
+local PORK_SKIN = Color3.fromRGB(236, 200, 170)
+
+--// One cube of pork belly: meat / fat / meat / skin, bottom on the base's
+--// floor (-BottomDepth). `x, z` place it, `turn` spins it (degrees).
+local function porkChunk(handle, x, z, turn)
+	local at = CFrame.new(x, 0, z) * CFrame.Angles(0, math.rad(turn), 0)
+	local layers = {
+		{ 0.18, PORK_MEAT }, { 0.08, PORK_FAT }, { 0.12, PORK_MEAT }, { 0.07, PORK_SKIN },
+	}
+	local y = -0.61
+	for _, layer in ipairs(layers) do
+		local height, color = layer[1], layer[2]
+		deco(handle, Enum.PartType.Block, Vector3.new(0.55, height, 0.42), color,
+			at * CFrame.new(0, y + height / 2, 0))
+		y += height
+	end
+end
+
 local BUILDERS = {
+	--// Manila: pork belly cubes in the ADOBO POT. The RawPork mesh is ONE
+	--// part with its cutting board baked in (PorkBelly_Board), so it cannot
+	--// be trimmed - Config.Kitchen.StationFoodItem falls back to this.
+	PotPork = function(handle)
+		porkChunk(handle, -0.34, -0.12, 15)
+		porkChunk(handle, 0.32, -0.16, -20)
+		porkChunk(handle, 0.02, 0.3, 40)
+	end,
+
+	--// Manila: rice cooking LOOSE in the cooker. Config.Kitchen
+	--// .StationFoodItem shows this on the station instead of the RawRice
+	--// sack (the sack is what you carry, not what you cook). A low puck of
+	--// rice with a soft domed top; a DishMeshes.CookerRice mesh overrides it.
+	CookerRice = function(handle)
+		puck(handle, 0.3, 1.3, RICE, -0.46)                     -- the rice bed
+		deco(handle, Enum.PartType.Ball,                        -- domed middle
+			Vector3.new(0.8, 0.8, 0.8), RICE, CFrame.new(0, -0.38, 0))
+		for index = 1, 4 do                                     -- soft lumps
+			local angle = index * math.pi / 2 + 0.4
+			deco(handle, Enum.PartType.Ball,
+				Vector3.new(0.5, 0.5, 0.5), RICE,
+				CFrame.new(math.cos(angle) * 0.36, -0.36, math.sin(angle) * 0.36))
+		end
+	end,
+
 	Burger = function(handle)
 		puck(handle, 0.32, 1.5, BUN, -0.45)                     -- bottom bun
 		puck(handle, 0.28, 1.55, PATTY, -0.18)                  -- the patty
@@ -306,9 +352,12 @@ local PLATE_DROP = {
 --// Filled per imported mesh by dressWithMesh (the mesh swap path below)
 local meshDrop = {}
 
-function DishModels.plateDrop(itemName)
+function DishModels.plateDrop(itemName, trim)
 	--// A measured mesh drop (see dressWithMesh) outranks the hand-tuned
-	--// parts table
+	--// parts table. A trimmed display is measured under its own key.
+	if trim then
+		return meshDrop[itemName .. "#trim"] or 0 --// same key as trimKey below
+	end
 	return meshDrop[itemName] or PLATE_DROP[itemName] or 0
 end
 
@@ -388,12 +437,59 @@ local GRIP_NUDGE = {
 --// than on the food. Each of those used to end the same way - dress()
 --// reported success, the caller hid the plain block (see makeTool), and
 --// the player held an invisible grip. Now each one names itself.
-local function dressWithMesh(basePart, itemName, forGrip)
+--// TRIM (Oct 2026): show only PART of a mesh - e.g. the rice out of the
+--// RawRice sack, for the rice cooker. trim = { Keep = {...}, Skip = {...} }
+--// lowercase name keywords: a part stays if its name has a Keep word and no
+--// Skip word. A trimmed copy is measured under its own key, so it never
+--// disturbs where the whole model sits in a hand or on a plate.
+local function trimKey(itemName, trim)
+	return trim and (itemName .. "#trim") or itemName
+end
+
+local function nameHasAny(name, words)
+	for _, word in ipairs(words or {}) do
+		if string.find(name, word, 1, true) then return true end
+	end
+	return false
+end
+
+local function applyTrim(model, itemName, trim)
+	--// no Keep list = keep everything that isn't on the Skip list
+	local keepAll = not trim.Keep or #trim.Keep == 0
+	local kept, removed, names = 0, 0, {}
+	for _, inst in ipairs(model:GetDescendants()) do
+		if inst:IsA("BasePart") and inst.Parent then
+			local lower = string.lower(inst.Name)
+			table.insert(names, inst.Name)
+			if (keepAll or nameHasAny(lower, trim.Keep)) and not nameHasAny(lower, trim.Skip) then
+				kept += 1
+			else
+				removed += 1
+				inst:Destroy()
+			end
+		end
+	end
+	if kept == 0 then
+		warnOnce("trim:" .. itemName,
+			("DishMeshes.%s: the trim left nothing - its parts are: %s")
+				:format(itemName, table.concat(names, ", ")))
+	elseif removed == 0 then
+		--// a skip-only trim that caught nothing: the unwanted part has a name
+		--// we did not guess - list them so the Config words can be fixed
+		warnOnce("trimnone:" .. itemName,
+			("DishMeshes.%s: the trim removed nothing (skip words %s) - its parts are: %s")
+				:format(itemName, table.concat(trim.Skip or {}, "/"), table.concat(names, ", ")))
+	end
+	return kept > 0
+end
+
+local function dressWithMesh(basePart, itemName, forGrip, trim)
 	local folder = game:GetService("ServerStorage"):FindFirstChild("DishMeshes")
 	local template = folder and folder:FindFirstChild(itemName)
 	if not template or not basePart then
 		return false
 	end
+	local dropKey = trimKey(itemName, trim)
 
 	--// Normalise to a Model: GetBoundingBox is Model-only, and a lone
 	--// MeshPart has no descendants for the weld loop to find
@@ -410,6 +506,11 @@ local function dressWithMesh(basePart, itemName, forGrip)
 		warnOnce("class:" .. itemName,
 			("DishMeshes.%s is a %s - it has to be a Model or a MeshPart"):format(itemName, template.ClassName))
 		return false
+	end
+
+	if trim and not applyTrim(model, itemName, trim) then
+		model:Destroy()
+		return false --// nothing matched: the caller shows its fallback
 	end
 
 	local parts = {}
@@ -452,9 +553,9 @@ local function dressWithMesh(basePart, itemName, forGrip)
 
 	--// How deep this mesh reaches below its pivot decides its plate
 	--// drop, same convention as the parts builds (see BottomDepth)
-	if meshDrop[itemName] == nil then
+	if meshDrop[dropKey] == nil then
 		local depth = pivot.Position.Y - (boxCF.Position.Y - boxSize.Y / 2)
-		meshDrop[itemName] = DishModels.BottomDepth - depth
+		meshDrop[dropKey] = DishModels.BottomDepth - depth
 	end
 
 	--// Deliberately after the meshDrop measurement: plate placement is
@@ -499,9 +600,14 @@ end
 --// ServerStorage.DishMeshes wins over the parts build.
 --// forGrip: this base part is a Tool Handle in someone's hand, so an
 --// imported mesh gets lifted clear of the fist (see GRIP_GAP)
-function DishModels.dress(basePart, itemName, forGrip)
-	if dressWithMesh(basePart, itemName, forGrip) then
+--// trim: show only some of the mesh's parts (see applyTrim). A trim has no
+--// parts-build to fall back on, so it simply returns false when it misses.
+function DishModels.dress(basePart, itemName, forGrip, trim)
+	if dressWithMesh(basePart, itemName, forGrip, trim) then
 		return true
+	end
+	if trim then
+		return false
 	end
 	local builder = itemName and BUILDERS[itemName]
 	if not builder or not basePart then
