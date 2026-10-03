@@ -650,6 +650,12 @@ local function playCastEffect(player, classKey)
 	if classKey == "Fixer" then
 		attachHandProp(character, ULT.RemoteSeconds or 2,
 			makeProp("SpeedDialRemote", buildCodeRemote), ULT.RemoteGrip)
+		--// the click lands on the thumb press in the animation, not the cast
+		task.delay(ULT.RemoteClickDelay or 0.5, function()
+			if character and character.Parent then
+				Sfx.Play("SpeedDialButton", character)
+			end
+		end)
 	elseif classKey == "Charmer" then
 		attachHandProp(character, ULT.RoseSeconds or 2,
 			makeProp("SweetTalkRose", buildCodeRose), ULT.RoseGrip)

@@ -2023,6 +2023,7 @@ local function judgeInspection()
 		bankTill(cons.InspectorCleanBonus or 40, "passed health inspection")
 		eventStats.InspectionsPassed += 1
 		EventState:SetAttribute("InspectorResult", 1) --// Bruno's PASS line
+		Sfx.Play("InspectorPass")
 		publish("", "", 0, 0, ("PASSED inspection - %d%% clean!"):format(pct))
 	elseif firstWarn then
 		EventState:SetAttribute("InspectorResult", 0) --// a warning, no verdict line
@@ -2033,6 +2034,7 @@ local function judgeInspection()
 		local fine = (cons.InspectorFinePerMess or 5) * units
 		applyRep(-fine, ("failed inspection: %d%% clean"):format(pct))
 		EventState:SetAttribute("InspectorResult", -1) --// Bruno's FAIL line
+		Sfx.Play("InspectorFail")
 		publish("", "", 0, 0,
 			("FAILED! Only %d%% clean - a fine hits your rating."):format(pct))
 	end
