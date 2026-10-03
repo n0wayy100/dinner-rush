@@ -19,6 +19,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UiPop = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiPop"))
 local RunService = game:GetService("RunService")
 local ContextActionService = game:GetService("ContextActionService")
 
@@ -233,6 +234,7 @@ timingRemote.OnClientEvent:Connect(function(action, a, b, c, d)
 			StationPosition = a.StationPosition,
 		}
 		gui.Enabled = true
+		UiPop.Pop(gui)
 		startSweep(a.Stage or 1, a.GreenCenter or 0.5, a.SweepSeconds)
 
 		--// Space / gamepad A also stop it

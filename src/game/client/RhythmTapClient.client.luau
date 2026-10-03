@@ -22,6 +22,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UiPop = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiPop"))
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local ContextActionService = game:GetService("ContextActionService")
@@ -298,6 +299,7 @@ remote.OnClientEvent:Connect(function(action, a, b, c)
 			Widgets = widgets,
 		}
 		gui.Enabled = true
+		UiPop.Pop(gui)
 
 		--// Space + gamepad A through CAS so the A press does not also JUMP;
 		--// Begin = press, End = release (for holds)

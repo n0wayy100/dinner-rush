@@ -17,6 +17,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UiPop = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiPop"))
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local ContextActionService = game:GetService("ContextActionService")
@@ -172,6 +173,7 @@ vacuumRemote.OnClientEvent:Connect(function(action, a, b)
 		local data = a
 		local count = (type(data) == "table" and data.DustCount) or 6
 		local gui, floor, nozzle, dusts, progress = buildPanel(count)
+		UiPop.Pop(gui)
 		session = {
 			Token = (type(data) == "table" and data.Token) or data,
 			Gui = gui, Floor = floor, Nozzle = nozzle, Dusts = dusts,

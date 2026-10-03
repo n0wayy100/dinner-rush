@@ -21,6 +21,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UiPop = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiPop"))
 local RunService = game:GetService("RunService")
 local ContextActionService = game:GetService("ContextActionService")
 local TweenService = game:GetService("TweenService")
@@ -285,6 +286,7 @@ remote.OnClientEvent:Connect(function(action, a, b, c)
 		}
 		targetImage.Image = payload.TargetIcon or ""
 		gui.Enabled = true
+		UiPop.Pop(gui)
 
 		ContextActionService:BindAction("Whack", function(_, state)
 			if state == Enum.UserInputState.Begin then whackSoonest() end

@@ -18,6 +18,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UiPop = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiPop"))
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local ContextActionService = game:GetService("ContextActionService")
@@ -209,6 +210,7 @@ sweepRemote.OnClientEvent:Connect(function(action, a, b)
 		teardown()
 		local data = a
 		local gui, panel, floor, broom, droplets, progress = buildPanel(data)
+		UiPop.Pop(gui)
 		session = {
 			Token = data.Token,
 			Gui = gui,
