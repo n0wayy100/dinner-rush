@@ -363,6 +363,79 @@ function Profiles.BumpTask(player, taskKey, amount)
 end
 
 ----------------------------------------------------------------
+-- ROBUX RECEIPTS (Oct 2026)
+--
+-- The one safe way to grant a developer product, per ProfileStore's own
+-- guidance. Called ONLY from Purchases' MarketplaceService.ProcessReceipt.
+--   1. No live session (still loading / left / kicked) -> NotProcessedYet:
+--      Roblox keeps the receipt and retries on their next join, anywhere.
+--   2. PurchaseId already in the save -> the grant already happened; skip.
+--   3. Otherwise run grantFn ONCE, then record the PurchaseId.
+--   4. Return PurchaseGranted only once the save holding that id is
+--      CONFIRMED written. A crash before that = Roblox retries, and step 2
+--      stops the retry from granting twice.
+-- Nothing here is reachable from a client.
+----------------------------------------------------------------
+
+function Profiles.ProcessPurchaseAsync(player, purchaseId, grantFn)
+	local NOT_YET = Enum.ProductPurchaseDecision.NotProcessedYet
+	local GRANTED = Enum.ProductPurchaseDecision.PurchaseGranted
+
+	--// a receipt can arrive the instant they join, before the save loads
+	local deadline = os.clock() + SETTINGS.LoadTimeoutSeconds
+	while sessions[player] == nil and player.Parent == Players and os.clock() < deadline do
+		task.wait(0.1)
+	end
+	local profile = sessions[player]
+	if not profile or not profile:IsActive() then
+		return NOT_YET
+	end
+
+	local cacheSize = (Config.Monetization and Config.Monetization.PurchaseIdCacheSize) or 100
+	local cache = profile.Data.PurchaseIdCache
+	if type(cache) ~= "table" then
+		cache = {}
+		profile.Data.PurchaseIdCache = cache
+	end
+
+	if not table.find(cache, purchaseId) then
+		local ok, err = pcall(grantFn, profile.Data)
+		if not ok then
+			warn(("[Profiles] purchase %s for %s FAILED to grant - Roblox will retry: %s")
+				:format(tostring(purchaseId), player.Name, tostring(err)))
+			return NOT_YET
+		end
+		while #cache >= cacheSize do
+			table.remove(cache, 1)
+		end
+		table.insert(cache, purchaseId)
+	end
+
+	local function isSaved()
+		local saved = profile.LastSavedData and profile.LastSavedData.PurchaseIdCache
+		return type(saved) == "table" and table.find(saved, purchaseId) ~= nil
+	end
+
+	if isSaved() then
+		return GRANTED
+	end
+	while profile:IsActive() do
+		local before = profile.LastSavedData
+		profile:Save()
+		if profile.LastSavedData == before then
+			profile.OnAfterSave:Wait()
+		end
+		if isSaved() then
+			return GRANTED
+		end
+		if profile:IsActive() then
+			task.wait(10)
+		end
+	end
+	return NOT_YET --// session ended before the save landed: Roblox retries
+end
+
+----------------------------------------------------------------
 -- START
 ----------------------------------------------------------------
 

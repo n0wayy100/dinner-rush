@@ -3430,6 +3430,13 @@ Config.Profile = {
 		--// schema does not need a migration when they are.
 		RedeemedCodes = {},           -- ["CODE"] = true
 		DailyGift = { LastClaim = 0, Streak = 0 },
+
+		--// ROBUX RECEIPTS (Oct 2026): the PurchaseId of every developer-product
+		--// receipt already granted, newest last, capped at
+		--// Config.Monetization.PurchaseIdCacheSize. This is what makes a grant
+		--// happen EXACTLY ONCE - Roblox retries receipts, and a retry whose id
+		--// is already here is confirmed without granting twice.
+		PurchaseIdCache = {},
 	},
 
 	--// The tutorial that awards the Trainee is a later phase. Until it exists
@@ -3477,6 +3484,49 @@ Config.Profile = {
 		--// Set false after the playtest.
 		UnlockAllClasses = true,
 	},
+}
+
+----------------------------------------------------------------
+-- MONETIZATION (Oct 2026): game passes + developer products.
+-- ServerStorage.Shared.Purchases is the ONLY code that grants anything
+-- bought with Robux, and it trusts nothing the client says:
+--   * pass ownership is asked of Roblox (UserOwnsGamePassAsync), server-side
+--   * products are granted only from Roblox's ProcessReceipt callback
+--   * every receipt is saved before Roblox is told "granted" (exactly once)
+-- Id = the asset id from the Creator Hub. 0 = not created yet: never
+-- prompted, never owned. PRICES live on the Creator Hub, not here - the
+-- shop reads the real price from Roblox so it can never show a wrong one.
+----------------------------------------------------------------
+Config.Monetization = {
+	--// One-time buys. Perks are wired per pass in a later step (the owner
+	--// checks in first); ownership itself is already exploit-safe.
+	GamePasses = {
+		VIP = {
+			Id = 0,
+			Display = "VIP",
+			Description = "Gold name tag, VIP outfit, and +25% coins from every shift",
+		},
+		DoubleCoins = {
+			Id = 0,
+			Display = "2x Coins",
+			Description = "Double the coins you take home from every shift",
+		},
+	},
+
+	--// Repeatable buys. Coins = how many coins land in the wallet per buy.
+	Products = {
+		CoinsSmall  = { Id = 0, Display = "Pile of Coins",  Coins = 500 },
+		CoinsMedium = { Id = 0, Display = "Bag of Coins",   Coins = 1200 },
+		CoinsLarge  = { Id = 0, Display = "Chest of Coins", Coins = 3000 },
+		CoinsHuge   = { Id = 0, Display = "Vault of Coins", Coins = 7000 },
+	},
+
+	--// how many recent receipt ids the save remembers (the double-grant guard)
+	PurchaseIdCacheSize = 100,
+	--// per-player gap between purchase PROMPT requests (anti-spam)
+	PromptCooldownSeconds = 1.5,
+	--// how long a pass-ownership answer from Roblox is trusted before re-asking
+	PassCacheSeconds = 300,
 }
 
 ----------------------------------------------------------------
