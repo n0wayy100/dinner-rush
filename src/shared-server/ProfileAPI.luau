@@ -228,6 +228,7 @@ local function emptySnapshot()
 		TaskProgress = tasks,
 		Stats = stats,
 		BestShifts = {},
+		RecentShifts = {},
 	}
 end
 
@@ -249,6 +250,7 @@ function ProfileAPI.GetSnapshot(player)
 		TaskProgress = table.clone(data.TaskProgress),
 		Stats = table.clone(data.Stats),
 		BestShifts = table.clone(data.BestShifts),
+		RecentShifts = table.clone(data.RecentShifts or {}),
 	}
 end
 
@@ -338,6 +340,31 @@ function ProfileAPI.RecordShift(player, entry)
 
 	while #data.BestShifts > Config.PlayerStats.BestShiftsCap do
 		table.remove(data.BestShifts)
+	end
+
+	--// THE SHIFT LOG (Oct 2026): every shift, newest first, with what THIS
+	--// player got out of it. Plain values only (it is saved).
+	if type(data.RecentShifts) ~= "table" then
+		data.RecentShifts = {}
+	end
+	table.insert(data.RecentShifts, 1, {
+		Grade = tostring(entry.Grade or "?"),
+		Tone = tostring(entry.Tone or "mid"),
+		Label = tostring(entry.Label or ""),
+		DiffName = tostring(entry.DiffName or "NORMAL"),
+		Map = tostring(entry.Map or ""),
+		Served = tonumber(entry.Served) or 0,
+		Walkouts = tonumber(entry.Walkouts) or 0,
+		PerfectCooks = tonumber(entry.PerfectCooks) or 0,
+		Coins = tonumber(entry.Coins) or 0,
+		Title = tostring(entry.Title or ""),
+		MVP = entry.MVP == true,
+		Success = entry.Success ~= false,
+		Seconds = tonumber(entry.Seconds) or 0,
+		When = tonumber(entry.When) or os.time(),
+	})
+	while #data.RecentShifts > (Config.PlayerStats.RecentShiftsCap or 10) do
+		table.remove(data.RecentShifts)
 	end
 
 	changed:Fire(player)

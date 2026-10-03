@@ -4312,6 +4312,7 @@ local function endShift(success, reason)
 	--// THE SPLIT. Everything the shift earned, minus everything the Supplier
 	--// spent, divided evenly. This is the only moment private balances move.
 	local everyone = Players:GetPlayers()
+	local paidBy = {} --// [player] = their coin share (the SHIFT LOG records it)
 	if #everyone > 0 and shift.Till > 0 then
 		local share = math.floor(shift.Till / #everyone)
 		local remainder = shift.Till - (share * #everyone)
@@ -4321,6 +4322,7 @@ local function endShift(success, reason)
 			if index == 1 and Config.Money.RemainderToFirstPlayer then
 				paid += remainder
 			end
+			paidBy[member] = paid
 			awardCoins(member, paid)
 
 			--// THE DEPOSIT: the split lands in the persistent wallet too.
@@ -4375,33 +4377,49 @@ local function endShift(success, reason)
 			AutoDismiss = Config.ShiftReport.AutoDismissSeconds,
 			RowReveal = Config.ShiftReport.RowRevealSeconds,
 		}
-		--// Career writes: everyone present gets the shift on their permanent
-		--// record - completion (or failure), time on the floor, and a Best
-		--// Shifts candidate stamped with the report's own grade
-		for _, member in ipairs(Players:GetPlayers()) do
-			ProfileAPI.AddStat(member, success and "ShiftsCompleted" or "ShiftsFailed", 1)
-			ProfileAPI.AddStat(member, "TimeOnFloorSeconds", math.floor(shift.Elapsed))
-			ProfileAPI.RecordShift(member, {
-				Grade = grade,
-				Tone = tone,
-				Label = diff.Label,
-				DiffName = DIFFICULTY,
-				Served = shift.Satisfied,
-				Target = diff.Rewards.TargetParties,
-				Net = payload.Net,
-				Seconds = math.floor(shift.Elapsed),
-				When = os.time(),
-			})
-		end
-
 		--// THE AWARDS: the hidden score is revealed only now. ScoreService
 		--// owns titles + MVP; a missing bridge just skips the ceremony.
+		--// Fetched BEFORE the career writes so each player's SHIFT LOG entry
+		--// can carry the title they earned.
 		local awardsBridge = game:GetService("ServerStorage"):FindFirstChild("GetShiftAwards")
 		if awardsBridge then
 			local ok, awards = pcall(function() return awardsBridge:Invoke() end)
 			if ok and type(awards) == "table" then
 				payload.Awards = awards
 			end
+		end
+		local cardByUser = {}
+		for _, card in ipairs((payload.Awards and payload.Awards.Players) or {}) do
+			cardByUser[card.UserId] = card
+		end
+		local mapRow = Config.MapById(workspace:GetAttribute("MatchMapId"))
+
+		--// Career writes: everyone present gets the shift on their permanent
+		--// record - completion (or failure), time on the floor, a Best Shifts
+		--// candidate stamped with the report's own grade, and a SHIFT LOG
+		--// entry with what they personally got (coins, title, MVP)
+		for _, member in ipairs(Players:GetPlayers()) do
+			ProfileAPI.AddStat(member, success and "ShiftsCompleted" or "ShiftsFailed", 1)
+			ProfileAPI.AddStat(member, "TimeOnFloorSeconds", math.floor(shift.Elapsed))
+			local card = cardByUser[member.UserId]
+			ProfileAPI.RecordShift(member, {
+				Grade = grade,
+				Tone = tone,
+				Label = diff.Label,
+				DiffName = DIFFICULTY,
+				Map = mapRow and mapRow.Display or "",
+				Served = shift.Satisfied,
+				Target = diff.Rewards.TargetParties,
+				Net = payload.Net,
+				Walkouts = payload.Walkouts,
+				PerfectCooks = payload.PerfectCooks,
+				Coins = paidBy[member] or 0,
+				Title = card and card.Title or "",
+				MVP = card and card.IsMVP or false,
+				Success = success,
+				Seconds = math.floor(shift.Elapsed),
+				When = os.time(),
+			})
 		end
 
 		shiftReportRemote:FireAllClients("Show", payload)
