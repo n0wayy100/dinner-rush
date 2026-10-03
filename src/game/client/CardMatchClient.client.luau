@@ -24,6 +24,8 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UiPop = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiPop"))
+local MinigameSkin = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MinigameSkin"))
+local MinigameJuice = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MinigameJuice"))
 local UserInputService = game:GetService("UserInputService")
 local ContextActionService = game:GetService("ContextActionService")
 local TweenService = game:GetService("TweenService")
@@ -75,6 +77,16 @@ local function sendFlip(index)
 	cardRemote:FireServer("Flip", session.Token, index)
 end
 
+--// THE ART KIT (Config.MinigameArt): with BOTH card pieces filled in, the
+--// cards become square tiles - the card back face-down, the slot tile
+--// face-up - and the "?" retires. Either id missing = the drawn cards.
+local SKINNED_CARDS = MinigameSkin.Has("SlotTile") and MinigameSkin.Has("CardBack")
+
+local function dressCard(card, up)
+	if not SKINNED_CARDS then return end
+	MinigameSkin.Apply(card.Button, up and "SlotTile" or "CardBack")
+end
+
 --// One card = a fat button with a face (icon) and a back ("?"); the
 --// face is shown by toggling, never rebuilt
 local function buildCard(parent, index, icon, position, size)
@@ -119,13 +131,28 @@ local function buildCard(parent, index, icon, position, size)
 	face.Visible = false
 	face.Parent = button
 
-	return { Button = button, Back = back, Face = face,
+	local card = { Button = button, Back = back, Face = face,
 		Stroke = stroke, HomeSize = size }
+
+	if SKINNED_CARDS then
+		--// square, centred in its cell (the art is square); the ring now
+		--// only appears to highlight or to mark a match
+		button.AnchorPoint = Vector2.new(0.5, 0.5)
+		button.BackgroundTransparency = 1
+		stroke.Transparency = 1
+		back.Visible = false
+		local square = Instance.new("UIAspectRatioConstraint")
+		square.AspectRatio = 1
+		square.Parent = button
+		dressCard(card, false)
+	end
+	return card
 end
 
 local function setFace(card, up)
 	card.Face.Visible = up
-	card.Back.Visible = not up
+	card.Back.Visible = not up and not SKINNED_CARDS
+	dressCard(card, up)
 	--// a quick squash-and-pop sells the flip without real 3D
 	card.Button.Size = UDim2.fromScale(
 		card.HomeSize.X.Scale * 0.8, card.HomeSize.Y.Scale * 0.8)
@@ -142,6 +169,9 @@ local function setHighlight(index)
 		if not card.Matched then --// matched cards keep their basil ring
 			card.Stroke.Color = (session.HighlightOn and i == index) and MUSTARD or CHOC
 			card.Stroke.Thickness = (session.HighlightOn and i == index) and 4.5 or 2.5
+			if SKINNED_CARDS then
+				card.Stroke.Transparency = (session.HighlightOn and i == index) and 0 or 1
+			end
 		end
 	end
 	session.Highlight = index
@@ -229,8 +259,12 @@ local function buildPanel(data)
 	for i = 1, count do
 		local col = (i - 1) % COLUMNS
 		local row = math.floor((i - 1) / COLUMNS)
-		local card = buildCard(board, i, data.Cards[i],
-			UDim2.fromScale(col * (cardW + padX), row * (cardH + padY)),
+		local cellX, cellY = col * (cardW + padX), row * (cardH + padY)
+		--// skinned cards are centred in their cell (they are square)
+		local position = SKINNED_CARDS
+			and UDim2.fromScale(cellX + cardW / 2, cellY + cardH / 2)
+			or UDim2.fromScale(cellX, cellY)
+		local card = buildCard(board, i, data.Cards[i], position,
 			UDim2.fromScale(cardW, cardH))
 		card.Button.Activated:Connect(function()
 			if session then
@@ -262,6 +296,18 @@ local function buildPanel(data)
 	local fillCorner = Instance.new("UICorner")
 	fillCorner.CornerRadius = UDim.new(0.5, 0)
 	fillCorner.Parent = timerFill
+
+	--// THE ART KIT: wooden frame, title plaque, timer bar - each only once
+	--// its id is filled in
+	MinigameSkin.Frame(panel)
+	MinigameSkin.Plaque(title)
+	if MinigameSkin.Has("TimerTrack") then
+		--// the track art needs more height than the drawn bar did, or its
+		--// rim and outline squash into a thin dark line
+		timerBack.Size = UDim2.fromScale(0.9, 0.075)
+		timerBack.Position = UDim2.fromScale(0.05, 0.885)
+	end
+	MinigameSkin.Bar(timerBack, timerFill, MUSTARD)
 
 	return gui, panel, cards, pairsLabel, timerFill
 end
@@ -311,6 +357,7 @@ cardRemote.OnClientEvent:Connect(function(action, a, b, c)
 		for _, card in ipairs(cards) do
 			card.Face.Visible = true
 			card.Back.Visible = false
+			dressCard(card, true)
 		end
 		task.delay(data.PeekSeconds, function()
 			if not session or session.Token ~= data.Token or session.Done then return end
@@ -373,7 +420,11 @@ cardRemote.OnClientEvent:Connect(function(action, a, b, c)
 				card.Matched = true
 				card.Stroke.Color = BASIL
 				card.Stroke.Thickness = 4
+				card.Stroke.Transparency = 0
 				card.Button.BackgroundColor3 = Color3.fromRGB(226, 244, 224)
+				card.Button.ImageColor3 = Color3.fromRGB(205, 240, 205) --// the tile art, tinted
+				MinigameJuice.Burst(card.Button, BASIL)
+				MinigameJuice.Bounce(card.Button)
 			end
 		end
 		session.PairsLabel.Text = ("%d/%d pairs"):format(b.Pairs, session.PairsTotal)
@@ -386,6 +437,12 @@ cardRemote.OnClientEvent:Connect(function(action, a, b, c)
 		local myToken = session.Token
 		SfxLocal.Play("AnswerWrong")
 		local wrongPair = { b.A, b.B }
+		for _, index in ipairs(wrongPair) do
+			local card = session.Cards[index]
+			if card then
+				MinigameJuice.Wrong(card.Button)
+			end
+		end
 		--// both wrong cards sit readable for the lock, then turn back
 		task.delay(CARDS.MismatchLockSeconds, function()
 			if not session or session.Token ~= myToken or session.Done then return end
@@ -413,6 +470,7 @@ cardRemote.OnClientEvent:Connect(function(action, a, b, c)
 		splash.TextStrokeColor3 = CHOC
 		splash.TextStrokeTransparency = 0
 		splash.Parent = session.Panel
+		MinigameJuice.Verdict(splash, c)
 		task.delay(1.4, teardown)
 
 	elseif action == "Close" then

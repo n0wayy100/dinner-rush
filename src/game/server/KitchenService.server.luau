@@ -2116,6 +2116,7 @@ local function beginCookSession(station, player)
 		GreenCenter = session.GreenCenter,
 		SweepSeconds = session.SweepSeconds,
 		StationPosition = station.Part.Position,
+		Dish = station.Dish, --// the client shows this dish riding the arrow
 	})
 
 	--// An abandoned panel must never lock the pan
@@ -2175,6 +2176,19 @@ cookTimingRemote.OnServerEvent:Connect(function(player, action, token, claimed)
 	position = math.clamp(position, 0, 1)
 
 	local zone = zoneFor(position, session.GreenCenter)
+
+	--// ONE STOP DECIDES IT (Config.CookTiming.OneStop): every zone ends the
+	--// game - green Perfect, yellow Good, red Overcooked
+	if TIMING.OneStop ~= false then
+		local verdict = (zone == "green" and "Perfect")
+			or (zone == "yellow" and "Good")
+			or "Overcooked"
+		cookTimingRemote:FireClient(player, "Result", token, zone, verdict)
+		grantFromMinigame(station, player, verdict)
+		closeCookSession(station, true)
+		return
+	end
+
 	local done, quality = false, nil
 
 	if zone == "green" then

@@ -1588,6 +1588,84 @@ Config.Payment = {
 -- The server computes every number and the verdict; the client renders.
 ----------------------------------------------------------------
 ----------------------------------------------------------------
+-- THE MINIGAME ART KIT (MinigameSkin). Paste each image's id into its Id.
+-- Every piece is optional: an empty Id keeps that part of the screen's old
+-- code-drawn look, so ids can go in one at a time. Upload under the GROUP.
+--
+-- Wired so far: MEMORY MATCH (Frame, Plaque, SlotTile, CardBack, Timer*)
+-- and WHACK IT (Frame, Plaque, PotBack, PotFront). The other minigames
+-- pick these up as they are converted.
+--
+-- SliceCenter = { left, top, right, bottom } in the IMAGE's own pixels:
+-- the box whose inside may stretch. Everything outside it (the corners,
+-- the rounded ends) stays crisp. The numbers below suit the kit as it was
+-- generated; your teammate's Frame and Plaque need THEIR numbers. Easiest
+-- way to get them: put an ImageLabel in StarterGui with that image, set
+-- ScaleType = Slice, click the "..." beside SliceCenter to open the 9-Slice
+-- Editor, drag the four lines just inside the decorated edges, and copy
+-- the four numbers here.
+----------------------------------------------------------------
+Config.MinigameArt = {
+	--// THE FRAME PIECES (custom-made to stretch, Oct 2026)
+	Frame = {            -- the CUSTOM panel border (512x512, made to stretch)
+		Id = "72543721211848",          -- <- paste the new border's id here
+		--// From the prompt's layout: corners within 88 px, wood 44 px thick.
+		--// (The teammate's PanelFrame, 71849129735816, was retired - its
+		--// corner leaves and edges did not stretch cleanly.)
+		SliceCenter = { 88, 88, 424, 424 },
+		WoodPx = 44,     -- the wood + gold trim's thickness IN THE IMAGE, in pixels
+		BorderPx = 22,   -- how thick that wood looks ON SCREEN, in pixels
+	},
+	Plaque = {           -- the CUSTOM title plaque (1024x192, stretches sideways)
+		Id = "103598655242334",
+		--// (Replaces the teammate's HeaderChalkboard, 73273922196950.)
+		--// DRAWN AS MADE: shown at its own shape, never stretched, with the
+		--// title written on it - so nothing can get cut off.
+		AspectRatio = 1024 / 192, -- its width / height; only changes how wide it draws
+		Grow = 1.9,      -- the sign's height, as a multiple of the title text's;
+		                 -- the extra rises above the panel's top edge
+		TextWidth = 0.78,  -- how much of the plaque the title may cover, across
+		TextHeight = 0.5,  -- ...and down (keep it inside the painted face)
+		--// Stretch = true would 9-slice it instead, using these - only if
+		--// they match the image's REAL pixels (check in the 9-Slice Editor)
+		Stretch = false,
+		SliceCenter = { 160, 0, 864, 192 },
+		Height = 192,
+	},
+	Button = {           -- not wired yet: for the games with buttons
+		Id = "78479238895262",
+		SliceCenter = { 128, 0, 384, 256 },
+	},
+
+	--// THE NEW KIT
+	SlotTile = {         -- a card face-up / an answer's tile
+		Id = "89504353404743",
+		SliceCenter = { 70, 70, 442, 442 },
+		SliceScale = 0.3, -- shrinks the border to suit card-sized tiles
+	},
+	CardBack = { Id = "74737597881328" },
+	TimerTrack = { Id = "89063117767836", SliceCenter = { 70, 0, 954, 128 }, Height = 128 },
+	TimerFill = { Id = "104573399119788", SliceCenter = { 80, 0, 944, 128 }, Height = 128 },
+	PotBack = {
+		Id = "137276501691090",
+		OpeningY = 0.33,      -- how far down the image the opening's centre sits (0-1)
+		AspectRatio = 512 / 384,
+		--// How big an item rises out of a pot, as a fraction of the play
+		--// area. Smaller than the old flat holes' pop-ups: much taller and
+		--// an item's top slips behind the pot in the row above it.
+		PopWidth = 0.17,
+		PopHeight = 0.15,
+		PopBase = 0.02,       -- how far below the opening's centre an item starts
+	},
+	PotFront = { Id = "112371762120602" },
+
+	--// FEEDBACK EFFECTS (MinigameJuice). Optional: with no SparkleBurst the
+	--// burst is a code-drawn ring; with no Rays the Perfect verdict skips them.
+	SparkleBurst = { Id = "132160840576767" }, -- pops on a right answer, and on a Perfect verdict
+	Rays = { Id = "126022175679712" },         -- spins behind "MASTER COOK!"
+}
+
+----------------------------------------------------------------
 -- THE MINIGAME INTRO BANNER (MinigameIntro server, MinigameIntroClient).
 -- Pressing E no longer drops you straight into a minigame: a bar pops up
 -- under the shift timer with the game's name, then the game opens.
@@ -2172,6 +2250,11 @@ Config.WireFix = {
 -- the law holds within the mechanic, and EASY's windows are untouched.
 ----------------------------------------------------------------
 Config.CookTiming = {
+	--// OFF (owner, Oct 2026: the ask was visuals only, not gameplay).
+	--// true = an optional ONE-stop variant: green Perfect, yellow Good, red
+	--// Overcooked, no second swing. false = the game as designed (below).
+	OneStop = false,
+
 	--// Every swing rolls a fresh pace from this pool (server-dealt) so
 	--// there is no metronome to memorise - each swing needs a real read.
 	--// Same pool on every gated difficulty (THE LAW).

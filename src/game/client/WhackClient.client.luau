@@ -22,6 +22,8 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UiPop = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiPop"))
+local MinigameSkin = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MinigameSkin"))
+local MinigameJuice = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MinigameJuice"))
 local RunService = game:GetService("RunService")
 local ContextActionService = game:GetService("ContextActionService")
 local TweenService = game:GetService("TweenService")
@@ -101,6 +103,10 @@ local headerCap = Instance.new("UITextSizeConstraint")
 headerCap.MaxTextSize = 24
 headerCap.Parent = header
 
+--// THE ART KIT: wooden frame + title plaque, each once its id is filled in
+MinigameSkin.Frame(panel)
+MinigameSkin.Plaque(header)
+
 --// the ONE ingredient to hit, shown big so decoys are obvious
 local targetBanner = Instance.new("Frame")
 targetBanner.Position = UDim2.fromScale(0.32, 0.15)
@@ -137,21 +143,61 @@ holeLayer.BackgroundTransparency = 1
 holeLayer.ZIndex = 1
 holeLayer.Parent = playArea
 
+--// THE ART KIT'S POTS (Config.MinigameArt): the BACK half sits under the
+--// pop-ups and the FRONT half over them, so each item rises out of a pot
+--// instead of floating in front of a hole. Either half missing = the
+--// drawn holes. ZIndex 1 / 4 either side of the pop-ups' 3 keeps that
+--// order however this ScreenGui sorts its layers.
+local POTS = MinigameSkin.Has("PotBack") and MinigameSkin.Has("PotFront")
+local potArt = (Config.MinigameArt and Config.MinigameArt.PotBack) or {}
+local potFronts = nil
+if POTS then
+	potFronts = Instance.new("Frame")
+	potFronts.Name = "PotFronts"
+	potFronts.Size = UDim2.fromScale(1, 1)
+	potFronts.BackgroundTransparency = 1
+	potFronts.ZIndex = 3 --// above the pop-ups' layer (2)
+	potFronts.Parent = playArea
+end
+
+local function potHalf(key, slot, parent, zIndex)
+	local art = Instance.new("ImageLabel")
+	art.Name = key .. slot
+	art.Active = false --// taps fall through to the pop-up behind it
+	art.BackgroundTransparency = 1
+	--// pinned by the pot's OPENING, so items rise from the right spot
+	art.AnchorPoint = Vector2.new(0.5, potArt.OpeningY or 0.33)
+	art.Position = slotPos(slot)
+	art.Size = UDim2.fromScale(0.26, 1)
+	art.ZIndex = zIndex
+	MinigameSkin.Apply(art, key)
+	local ratio = Instance.new("UIAspectRatioConstraint")
+	ratio.AspectRatio = potArt.AspectRatio or (512 / 384)
+	ratio.DominantAxis = Enum.DominantAxis.Width
+	ratio.Parent = art
+	art.Parent = parent
+end
+
 for slot = 1, 9 do
-	local hole = Instance.new("Frame")
-	hole.AnchorPoint = Vector2.new(0.5, 0.5)
-	hole.Position = slotPos(slot)
-	hole.Size = UDim2.fromScale(0.24, 0.16)
-	hole.BackgroundColor3 = HOLE_DARK
-	hole.ZIndex = 1
-	hole.Parent = holeLayer
-	local hc = Instance.new("UICorner")
-	hc.CornerRadius = UDim.new(1, 0)
-	hc.Parent = hole
-	local hs = Instance.new("UIStroke")
-	hs.Thickness = 3
-	hs.Color = HOLE_RIM
-	hs.Parent = hole
+	if POTS then
+		potHalf("PotBack", slot, holeLayer, 1)
+		potHalf("PotFront", slot, potFronts, 4)
+	else
+		local hole = Instance.new("Frame")
+		hole.AnchorPoint = Vector2.new(0.5, 0.5)
+		hole.Position = slotPos(slot)
+		hole.Size = UDim2.fromScale(0.24, 0.16)
+		hole.BackgroundColor3 = HOLE_DARK
+		hole.ZIndex = 1
+		hole.Parent = holeLayer
+		local hc = Instance.new("UICorner")
+		hc.CornerRadius = UDim.new(1, 0)
+		hc.Parent = hole
+		local hs = Instance.new("UIStroke")
+		hs.Thickness = 3
+		hs.Color = HOLE_RIM
+		hs.Parent = hole
+	end
 end
 
 local moleLayer = Instance.new("Frame")
@@ -211,7 +257,12 @@ local function makeTargetButton(index, target)
 	local btn = Instance.new("ImageButton")
 	btn.Name = "Target"
 	btn.AnchorPoint = Vector2.new(0.5, 1)
-	btn.Position = UDim2.fromScale(x, y + 0.05)
+	--// With the art kit's pots an item rises smaller, so it clears the pot
+	--// beside it and the one above it (Config.MinigameArt.PotBack.Pop*)
+	local riseTo = POTS
+		and UDim2.fromScale(potArt.PopWidth or 0.17, potArt.PopHeight or 0.15)
+		or UDim2.fromScale(0.26, 0.3)
+	btn.Position = UDim2.fromScale(x, y + (POTS and (potArt.PopBase or 0.02) or 0.05))
 	btn.Size = UDim2.fromScale(0.05, 0.02)
 	btn.BackgroundColor3 = MUSTARD
 	btn.AutoButtonColor = false
@@ -231,7 +282,7 @@ local function makeTargetButton(index, target)
 
 	--// rise out of the hole (base stays put, it grows upward)
 	TweenService:Create(btn, TweenInfo.new(0.14, Enum.EasingStyle.Back,
-		Enum.EasingDirection.Out), { Size = UDim2.fromScale(0.26, 0.3) }):Play()
+		Enum.EasingDirection.Out), { Size = riseTo }):Play()
 
 	btn.Activated:Connect(function()
 		if session then remote:FireServer("Hit", session.Token, index) end
@@ -318,6 +369,7 @@ remote.OnClientEvent:Connect(function(action, a, b, c)
 		local w = session and session.Widgets[b]
 		if w and w.Button and not w.Done then
 			w.Done = true
+			MinigameJuice.Burst(w.Button, BASIL)
 			duckAway(w.Button, BASIL) --// bonked! green, back in the hole
 			w.Button = nil
 		end
@@ -328,6 +380,7 @@ remote.OnClientEvent:Connect(function(action, a, b, c)
 		if w and w.Button and not w.Done then
 			w.Done = true
 			duckAway(w.Button, TOMATO)
+			MinigameJuice.Shake(panel, 5, 0.15) --// the whole board flinches
 			w.Button = nil
 		end
 
@@ -349,6 +402,7 @@ remote.OnClientEvent:Connect(function(action, a, b, c)
 			verdict.Text = "RUINED! BIN IT"
 			verdict.TextColor3 = TOMATO
 		end
+		MinigameJuice.Verdict(verdict, quality)
 		task.delay(1.1, function()
 			if session and session.Token == a then closePanel() end
 		end)
