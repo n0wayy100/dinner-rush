@@ -31,6 +31,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
 
 local Sfx = require(ServerStorage:WaitForChild("Shared"):WaitForChild("Sfx"))
+local MinigameIntro = require(ServerStorage:WaitForChild("Shared"):WaitForChild("MinigameIntro"))
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
 
@@ -716,6 +717,12 @@ beginSweepSession = function(player)
 		return
 	end
 
+	--// The name banner first (MinigameIntro). The session - and its clock -
+	--// only starts once the game is on screen; the spill may have been
+	--// cleared, or someone else started, while the banner showed.
+	if not MinigameIntro.Announce(player, "Sweep", "Sweep") then return end
+	if sweepSession or not spill.Active then return end
+
 	--// FIXER PASSIVE in stroke grammar: ChannelMult trims the passes
 	local strokesNeeded = math.max(1, math.ceil(
 		SWEEP.StrokesNeeded * (player:GetAttribute("ChannelMult") or 1)))
@@ -1077,6 +1084,10 @@ beginPlungeSession = function(player)
 		end
 		return
 	end
+
+	--// The name banner first (MinigameIntro); re-check after it
+	if not MinigameIntro.Announce(player, "Plunge", "ToiletPlunge") then return end
+	if plungeSession or not toilet.Active then return end
 
 	local tapsNeeded = PLUNGE.TapsToFill
 	if toilet.Phase == "FLOODED" then
@@ -2023,6 +2034,7 @@ local function judgeInspection()
 		bankTill(cons.InspectorCleanBonus or 40, "passed health inspection")
 		eventStats.InspectionsPassed += 1
 		EventState:SetAttribute("InspectorResult", 1) --// Bruno's PASS line
+		Sfx.Play("InspectorPass")
 		publish("", "", 0, 0, ("PASSED inspection - %d%% clean!"):format(pct))
 	elseif firstWarn then
 		EventState:SetAttribute("InspectorResult", 0) --// a warning, no verdict line
@@ -2033,6 +2045,7 @@ local function judgeInspection()
 		local fine = (cons.InspectorFinePerMess or 5) * units
 		applyRep(-fine, ("failed inspection: %d%% clean"):format(pct))
 		EventState:SetAttribute("InspectorResult", -1) --// Bruno's FAIL line
+		Sfx.Play("InspectorFail")
 		publish("", "", 0, 0,
 			("FAILED! Only %d%% clean - a fine hits your rating."):format(pct))
 	end
@@ -2122,6 +2135,10 @@ beginWirePuzzle = function(player)
 		end
 		return
 	end
+
+	--// The name banner first (MinigameIntro); re-check after it
+	if not MinigameIntro.Announce(player, "WireFix", "WireFix") then return end
+	if wirePuzzle or not outage.Active then return end
 
 	local diffTable = difficultyBlock()
 	local wires = (diffTable.Interactions and diffTable.Interactions.BreakerWires) or 4

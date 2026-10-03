@@ -22,6 +22,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UiPop = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiPop"))
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local ContextActionService = game:GetService("ContextActionService")
@@ -257,6 +258,7 @@ mathRemote.OnClientEvent:Connect(function(action, a, b, c)
 		teardown()
 		local data = a
 		local gui, panel, prompt, equation, buttons, counter, timerFill = buildPanel()
+		UiPop.Pop(gui)
 		session = {
 			Token = data.Token,
 			Gui = gui,

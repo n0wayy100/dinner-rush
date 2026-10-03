@@ -2152,7 +2152,9 @@ local function destroyPayment(tableId)
 	if payment.Prompt then payment.Prompt:Destroy() end
 end
 
-local function collectPayment(tableId, collector)
+--// quiet: skip the cha-ching, because the caller plays its own (WORK THE
+--// ROOM sweeps several tables at once and wants ONE sound, not a stack)
+local function collectPayment(tableId, collector, quiet)
 	local payment = payments[tableId]
 	if not payment then return end
 	local value = paymentValue(payment)
@@ -2164,6 +2166,12 @@ local function collectPayment(tableId, collector)
 	local moneyMult = collector and (collector:GetAttribute("MoneyMult") or 1) or 1
 	if moneyMult ~= 1 then
 		value = math.floor(value * moneyMult)
+	end
+
+	if not quiet then
+		--// At whoever picked it up; the Helper has no character, so its
+		--// grabs ring out at the table instead
+		Sfx.Play("ChaChing", collector and collector.Character or tableById[tableId])
 	end
 
 	destroyPayment(tableId)
@@ -2208,8 +2216,9 @@ do
 		local sq = Config.Classes.Charmer and Config.Classes.Charmer.SkillQ
 		local maxTables = (sq and sq.MaxTables) or 2
 		for i = 1, math.min(maxTables, #ids) do
-			collectPayment(ids[i], player)
+			collectPayment(ids[i], player, true)
 		end
+		Sfx.Play("ChaChing", character) --// once for the whole sweep
 		return true
 	end
 	bridge.Parent = ServerStorage
@@ -2350,6 +2359,7 @@ do
 			--// play the charm animation ON SELECT, then the fans land after the
 			--// wind-up (animation before the effect).
 			playSkillAnim(player, sr and sr.AnimId)
+			Sfx.Play("BlowKiss", player and player.Character)
 			task.delay((sr and sr.AnimDelay) or 0.4, function()
 				party.Superfan = true
 				markSuperfan(party)
@@ -2877,7 +2887,72 @@ end
 --// the tablet comes out once, then the tapping loops until the order
 --// resolves. Played SERVER-side so the whole room sees it, not just the
 --// waiter.
+
+local function loadOrderTrack(animator, id)
+	if type(id) ~= "string" or id == "" or id == "rbxassetid://0" then
+		return nil
+	end
+	local animation = Instance.new("Animation")
+	--// Accepts a bare number or a full rbxassetid, same as the sounds
+	animation.AnimationId = id:match("^%d+$") and ("rbxassetid://" .. id) or id
+	local ok, track = pcall(animator.LoadAnimation, animator, animation)
+	if not ok or not track then
+		warn(("[Service] order animation '%s' would not load"):format(id))
+		return nil
+	end
+	--// Action outranks walking and idling, so the arms actually move
+	track.Priority = Enum.AnimationPriority.Action
+	return track
+end
+
+--// ONE PAIR OF TRACKS PER ANIMATOR, loaded once and reused.
 --//
+--// The first version loaded fresh on every press, which was the delay: a
+--// brand-new track has to fetch its keyframes before it can move. It was
+--// also a leak - an Animator holds at most 256 tracks, and every order
+--// left two more behind, so a long shift would have walked into that
+--// ceiling and every animation on the character would have stopped.
+--//
+--// Weak keys: a respawn brings a new Animator, and the old one is
+--// collected along with its tracks.
+local orderTracks = setmetatable({}, { __mode = "k" })
+
+local function orderTracksFor(animator)
+	local cached = orderTracks[animator]
+	if cached then return cached end
+
+	local settings = Config.Dialogue.OrderAnim
+	cached = {
+		PullOut = loadOrderTrack(animator, settings.PullOut),
+		Tap = loadOrderTrack(animator, settings.Tap),
+	}
+	orderTracks[animator] = cached
+	return cached
+end
+
+--// PRE-WARM ON SPAWN, so the keyframes are already down by the time the
+--// waiter reaches a table and the press only has to call Play
+local function prewarmOrderAnimation(character)
+	local settings = Config.Dialogue.OrderAnim
+	if not settings or settings.Enabled == false then return end
+	local humanoid = character:WaitForChild("Humanoid", 10)
+	local animator = humanoid and humanoid:WaitForChild("Animator", 10)
+	if animator then
+		orderTracksFor(animator)
+	end
+end
+
+local function watchForOrderAnimation(player)
+	player.CharacterAdded:Connect(prewarmOrderAnimation)
+	if player.Character then
+		task.spawn(prewarmOrderAnimation, player.Character)
+	end
+end
+Players.PlayerAdded:Connect(watchForOrderAnimation)
+for _, player in ipairs(Players:GetPlayers()) do
+	watchForOrderAnimation(player)
+end
+
 --// Returns a handle with Stop(), or nil when there is nothing to play -
 --// no asset ids yet, no Animator, a reset on the walk over. Every caller
 --// treats nil as "no animation" and carries on: taking an order must
@@ -2895,39 +2970,11 @@ local function startOrderAnimation(player)
 		return nil
 	end
 
+	local tracks = orderTracksFor(animator)
+	local pullOut, tap = tracks.PullOut, tracks.Tap
+	if not pullOut and not tap then return nil end
+
 	local fade = settings.FadeSeconds or 0.15
-
-	local function load(id)
-		if type(id) ~= "string" or id == "" or id == "rbxassetid://0" then
-			return nil
-		end
-		local animation = Instance.new("Animation")
-		--// Accepts a bare number or a full rbxassetid, same as the sounds
-		animation.AnimationId = id:match("^%d+$") and ("rbxassetid://" .. id) or id
-		local ok, track = pcall(animator.LoadAnimation, animator, animation)
-		if not ok or not track then
-			warn(("[Service] order animation '%s' would not load - is it published "
-				.. "under the account that owns this place?"):format(id))
-			return nil
-		end
-		--// Action outranks walking and idling, so the arms actually move
-		track.Priority = Enum.AnimationPriority.Action
-		return track
-	end
-
-	local pullOut = load(settings.PullOut)
-	local tap = load(settings.Tap)
-	if not pullOut and not tap then
-		--// Both ids set and both refused: almost always an animation
-		--// published by an account that does not own this experience.
-		--// LoadAnimation still SUCCEEDS for those, so the failure shows
-		--// up here as a track that never moves, never as an error.
-		warn("[Service] neither order animation loaded - check "
-			.. "Config.Dialogue.OrderAnim")
-		return nil
-	end
-	print(("[Service] %s order anim: pullOut=%s tap=%s"):format(
-		player.Name, tostring(pullOut ~= nil), tostring(tap ~= nil)))
 
 	local handle = { Alive = true }
 
@@ -2939,32 +2986,37 @@ local function startOrderAnimation(player)
 		pcall(function() if tap then tap:Stop(fade) end end)
 	end
 
+	--// Two orders back to back reuse the same tracks, so clear whatever
+	--// the last one left running before starting over
+	if tap and tap.IsPlaying then tap:Stop(0) end
+
+	if pullOut then
+		pullOut.Looped = false
+		--// Near-instant blend IN: this is the moment the player is waiting
+		--// for. The longer fade is kept for the handover and the stop,
+		--// where nobody is waiting on it.
+		pullOut:Play(settings.StartFadeSeconds or 0.05)
+	end
+
 	task.spawn(function()
 		if pullOut then
-			pullOut.Looped = false
-			pullOut:Play(fade)
-
-			--// Length reads 0 until the asset finishes downloading, so the
-			--// handover is timed off it only once it is real. Same lesson
-			--// the music handover taught: the finished signal fires too
-			--// late to blend against, so measure instead of listening.
+			--// Length reads 0 until the keyframes are down. Pre-warming
+			--// means that is normally already true; this only waits on a
+			--// press that beat the download.
 			local deadline = os.clock() + 3
 			while pullOut.Length <= 0 and handle.Alive and os.clock() < deadline do
 				task.wait()
 			end
-
-			--// Start the loop a fade EARLY so the two clips blend rather
-			--// than dropping to idle for a frame between them
 			if pullOut.Length <= 0 then
-				--// Three seconds and the asset still has no length: it
-				--// never downloaded. Roblox does not raise an error for
-				--// an animation the place owner does not own - it just
-				--// stays silent, which looks exactly like this.
-				warn(("[Service] order animation '%s' loaded but has no "
-					.. "length - is it published under this place's owner?")
+				--// Roblox raises no error for an animation the place owner
+				--// does not own - it just stays silent, which looks like this
+				warn(("[Service] order animation '%s' has no length - is it "
+					.. "published under this place's owner?")
 					:format(tostring(settings.PullOut)))
 			end
 
+			--// Start the loop a fade EARLY so the two clips blend rather
+			--// than dropping to idle for a frame between them
 			local hold = math.max(pullOut.Length - fade, 0)
 			if hold > 0 then
 				task.wait(hold)
@@ -4200,6 +4252,16 @@ if not shiftReportRemote then
 end
 
 --// First matching threshold wins; a FAILED shift always stamps FailGrade
+--// "good" / "mid" / "bad" for one report stat (Config.ShiftReport.StatTones)
+local function statTone(value, good, mid)
+	if value >= good then
+		return "good"
+	elseif value >= mid then
+		return "mid"
+	end
+	return "bad"
+end
+
 local function computeGrade(success)
 	local R = Config.ShiftReport
 	if not success then
@@ -4376,6 +4438,7 @@ local function endShift(success, reason)
 			WaterIncidents = eventStats.WaterIncidents or 0,
 			AutoDismiss = Config.ShiftReport.AutoDismissSeconds,
 			RowReveal = Config.ShiftReport.RowRevealSeconds,
+			StampPause = Config.ShiftReport.StampPauseSeconds,
 		}
 		--// THE AWARDS: the hidden score is revealed only now. ScoreService
 		--// owns titles + MVP; a missing bridge just skips the ceremony.
@@ -4480,6 +4543,31 @@ do
 		return true
 	end
 	bridge.Parent = game:GetService("ServerStorage")
+end
+
+--// STUDIO-ONLY DEBUG: end the shift NOW to check the end screens (MVP
+--// cutscene, awards ceremony, report card). Command bar, SERVER view:
+--//   print(game.ServerStorage.DebugEndShift:Invoke())        -- a completed shift
+--//   print(game.ServerStorage.DebugEndShift:Invoke(false))   -- a failed shift
+--// Exists from the first frame, so calling it early says WHY it did
+--// nothing instead of "not a valid member". (It used to be created only
+--// once prep finished, which read as a broken command.) Ending during
+--// prep is refused: the prep countdown would carry on afterwards and flip
+--// the ended shift back to RUNNING. Never exists in live servers.
+if game:GetService("RunService"):IsStudio() then
+	local debugEnd = Instance.new("BindableFunction")
+	debugEnd.Name = "DebugEndShift"
+	debugEnd.OnInvoke = function(success)
+		if shift.State ~= "RUNNING" and shift.State ~= "CLOSING" then
+			local message = ("[Service] DebugEndShift: the shift is %s - wait for it to start, then run it again")
+				:format(tostring(shift.State))
+			print(message)
+			return message
+		end
+		endShift(success ~= false, "debug end (Studio)")
+		return "[Service] DebugEndShift: shift ended"
+	end
+	debugEnd.Parent = game:GetService("ServerStorage")
 end
 
 ----------------------------------------------------------------
@@ -4756,22 +4844,6 @@ task.spawn(function()
 			return true
 		end
 		debugSpawn.Parent = game:GetService("ServerStorage")
-	end
-
-	--// STUDIO-ONLY DEBUG: end the shift NOW to check the end screens (awards
-	--// ceremony + report card). Command bar (server view):
-	--//   game.ServerStorage.DebugEndShift:Invoke()       -- a completed shift
-	--//   game.ServerStorage.DebugEndShift:Invoke(false)  -- a failed shift
-	--// Never exists in live servers.
-	if game:GetService("RunService"):IsStudio()
-		and not game:GetService("ServerStorage"):FindFirstChild("DebugEndShift") then
-		local debugEnd = Instance.new("BindableFunction")
-		debugEnd.Name = "DebugEndShift"
-		debugEnd.OnInvoke = function(success)
-			endShift(success ~= false, "debug end (Studio)")
-			return true
-		end
-		debugEnd.Parent = game:GetService("ServerStorage")
 	end
 
 	task.wait(2)

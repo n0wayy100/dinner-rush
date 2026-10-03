@@ -39,10 +39,13 @@ Config.Shift = {
 	ClosingMaxSeconds = 150,
 
 	--// The ride home: seconds from shift END until everyone teleports
-	--// back to the lobby. Sized to cover the awards ceremony (~15s,
-	--// skippable) + the report card (12s auto-dismiss) + a breather -
-	--// the owner's "10-15s after they've seen everything".
-	ReturnToLobbySeconds = 35,
+	--// back to the lobby. Sized to cover the MVP cutscene (~7s), the
+	--// awards ceremony (~15s, skippable) + the report card (12s
+	--// auto-dismiss) + a breather - the owner's "10-15s after they've
+	--// seen everything". Raised 35 -> 42 for the cutscene (Oct 2026); a
+	--// LONGER MVP animation needs this raised to match, or a full lobby
+	--// gets sent home mid-report.
+	ReturnToLobbySeconds = 42,
 
 	Phases = {                        -- shift-time boundaries (seconds)
 		CalmEndsAt = 120,             -- 0:00-2:00 tutorial-in-motion
@@ -1455,7 +1458,8 @@ Config.Dialogue = {
 		Enabled = true,
 		PullOut = "106507550256453",       --// once: the waiter produces the tablet
 		Tap = "77443526108220",           --// loops: tapping it while they order
-		FadeSeconds = 0.15, --// blend in, out, and between the two clips
+		FadeSeconds = 0.15, --// blend out, and between the two clips
+		StartFadeSeconds = 0.05, --// blend IN on the press - keep it tiny, it is the moment the player feels
 	},
 
 	--// Customer-voiced pools come in Singular/Plural: a party of one says
@@ -1583,9 +1587,124 @@ Config.Payment = {
 -- SHIFT REPORT (the end-of-shift results panel - see ShiftReportClient)
 -- The server computes every number and the verdict; the client renders.
 ----------------------------------------------------------------
+----------------------------------------------------------------
+-- THE MINIGAME INTRO BANNER (MinigameIntro server, MinigameIntroClient).
+-- Pressing E no longer drops you straight into a minigame: a bar pops up
+-- under the shift timer with the game's name, then the game opens.
+--
+-- Costs no cook window: the cooking games HOLD the dish's aging for the
+-- banner and put it back exactly where it was, so no burn timer had to
+-- grow to pay for the wait. Every game's own clock starts only once the
+-- game is on screen.
+----------------------------------------------------------------
+Config.MinigameIntro = {
+	Enabled = true,
+	Seconds = 1.2,   -- how long the name shows before the game opens
+	BannerY = 0.17,  -- fraction of screen height: under the shift bar and its phase chip
+
+	--// What the banner says, per game. Rename freely.
+	Names = {
+		CookTiming = "PERFECT TIMING!",  -- the stop-the-arrow cook
+		RecipeMath = "RECIPE MATH!",
+		CardMatch = "CARD MATCH!",
+		RhythmTap = "RHYTHM TAP!",
+		Whack = "WHACK IT!",
+		Sweep = "MOP IT UP!",            -- the spill
+		Plunge = "PLUNGE IT!",           -- the toilet, and the poop mess
+		WireFix = "FIX THE WIRES!",      -- the power outage
+		Vacuum = "VACUUM IT!",           -- floor grime
+	},
+}
+
+----------------------------------------------------------------
+-- THE MVP CUTSCENE (MvpCutscene, client). At shift end the screen fades to
+-- black and the MVP celebrates on the map's MvpSpot, filmed by a camera
+-- animated in Blender. It FREEZES on the final pose, and the awards
+-- ceremony and report card pop up over the frozen shot, which holds until
+-- everyone is sent back to the lobby (Shift.ReturnToLobbySeconds).
+--
+-- EACH MAP needs one part tagged MvpSpot inside its model: on the floor
+-- where the MVP stands, its FRONT face pointing where they should face,
+-- with about 12 studs clear in front for the camera. No spot = the
+-- cutscene is skipped and the report shows as normal.
+--
+-- EACH ANIMATION needs a bone named CameraBone, parented to
+-- HumanoidRootPart, animated as the camera. That bone IS the camera move.
+----------------------------------------------------------------
+Config.MvpCutscene = {
+	Enabled = true,
+
+	FadeSeconds = 0.6,       -- each fade to and from black
+	HoldBlackSeconds = 0.3,  -- a beat of black before the scene appears
+	LetterboxScale = 0.1,    -- film bars, as a fraction of screen height
+	MaxSeconds = 10,         -- cap, whatever the animation's length
+
+	--// "Aim": position from CameraBone, always looking at the MVP's chest -
+	--//        can never face the wrong way (the Studio test's mode 0).
+	--// "Bone": CameraBone's own rotation too, corrected by BoneFix (the
+	--//        number from the Studio test that looked right, 1-6). Only
+	--//        needed for shots that look AWAY from the MVP.
+	CameraMode = "Aim",
+	BoneFix = 1,
+
+	FieldOfView = 40,        -- default; match the Blender camera's vertical FOV
+	Blur = true,             -- soft background so the MVP pops
+	BlurIntensity = 0.5,
+	Light = true,            -- a temporary light on the MVP for the shot
+	LightBrightness = 1.5,
+	LightRange = 16,
+
+	--// One entry per MVP animation; the server picks one at random each
+	--// shift and every screen plays the same one.
+	--//   AnimId     the published id (published under the GROUP)
+	--//   Keyframes  STUDIO ONLY: name of a KeyframeSequence anywhere in
+	--//              ReplicatedStorage, played without publishing. Live
+	--//              servers ignore it - fill AnimId before release.
+	--//   FieldOfView / CameraMode / BoneFix  optional per-animation overrides
+	--//   SoundId     THIS animation's own sound, started with it ("" = silent).
+	--//               Upload under the GROUP, like every other asset.
+	--//   SoundVolume 0..10 (Roblox allows above 1 for quiet recordings)
+	--//   SoundDelay  seconds into the animation before the sound starts - nudge
+	--//               it to land a beat on a moment (the fist hitting the top)
+	--//   SoundFadeOutSeconds  the sound eases down to silence over its LAST
+	--//               this-many seconds instead of stopping dead (0 = no fade)
+	--// The sound plays out in full, carrying on over the report if it is
+	--// longer than the animation.
+	Animations = {
+		{
+			Name = "Victory Fist",
+			AnimId = "137252127254351",
+			Keyframes = "MvpTest",
+			FieldOfView = 40,
+			SoundId = "139638022608077",
+			SoundVolume = 1,
+			SoundDelay = 0,
+			SoundFadeOutSeconds = 3,
+		},
+	},
+}
+
 Config.ShiftReport = {
 	AutoDismissSeconds = 12,      -- panel dismisses itself after this long
-	RowRevealSeconds = 0.35,      -- drumroll: pause between row reveals
+	RowRevealSeconds = 0.55,      -- drumroll: pause between row slaps (room for each impact)
+	StampPauseSeconds = 0.5,      -- the held breath after the last row, before the stamp drops
+
+	--// THE STAT COLOURS (owner, Oct 2026): the report shows only three
+	--// stats, each coloured green (good) / yellow (mid) / red (bad). The
+	--// SERVER judges them - the client only paints what it is told.
+	--// A stat at or above Good is green, at or above Mid yellow, else red.
+	StatTones = {
+		--// fraction of the difficulty's TargetParties
+		Served = { Good = 1.0, Mid = 0.7 },
+		--// MONEY EARNED as a fraction of a benchmark: TargetParties x
+		--// PerTargetParty x the difficulty's CoinMult. ~30 is roughly a
+		--// party of two plus an ordinary tip - raise it if green comes
+		--// too easily, lower it if nobody ever sees it
+		Money = { Good = 1.0, Mid = 0.6, PerTargetParty = 30 },
+		--// the final reputation itself. Every shift STARTS at 60
+		--// (Config.Reputation.Start), so 60 means "held steady" = yellow
+		Reputation = { Good = 70, Mid = 45 },
+	},
 
 	--// Checked top to bottom, first match wins. ServedFraction is of the
 	--// difficulty's TargetParties; a missing key means "don't care".
@@ -2440,6 +2559,8 @@ Config.Ultimates = {
 	--// Grips are tunable so each prop sits right against its animation.
 	--// FIXER: "SpeedDialRemote" (big red button, SPEED DIAL).
 	RemoteSeconds = 2,          -- how long the remote stays welded (match the anim)
+	RemoteClickDelay = 0.5,     -- seconds into the cast that the thumb hits the button
+	                            -- (times Sfx.SpeedDialButton - nudge until it lands on the press)
 	RemoteGrip = {
 		Offset = { 0, 0.4, 0 },      -- studs from the hand center (X, Y, Z)
 		TiltDegrees = { 0, 0, 0 },   -- rotate the remote in-grip if it sits wrong
@@ -3095,6 +3216,12 @@ Config.Sfx = {
 		ShopPurchase = { Id = "100414462804328", Volume = 0.9 },
 		ShopClick = { Id = "", Volume = 0.5 },
 
+		--// THE SHIFT REPORT. LOCAL - every player has their own report on
+		--// screen. A thud as each stat slaps onto the board, and a heavier
+		--// one for the verdict stamp dropping onto it last.
+		ReportSlap = { Id = "", Volume = 0.9 },
+		ReportStamp = { Id = "", Volume = 1.0 },
+
 		--// ULTIMATES --------------------------------------------------------
 		--// The bar hitting 100%. LOCAL, for that player only - it is a
 		--// private "you can fire now", and four bars filling during a busy
@@ -3169,6 +3296,53 @@ Config.Sfx = {
 			Id = "110342333875026", Volume = 0.9,
 			MinStuds = 15, MaxStuds = 90,
 		},
+
+		--// CLASS SKILLS ----------------------------------------------------
+		--// Positional at the caster unless noted, so teammates hear WHO
+		--// did it and roughly where. Paste ids between the quotes; an empty
+		--// Id is silence, never an error.
+
+		--// Cash in hand: any player collecting a table's payment, and the
+		--// Charmer's Q (WORK THE ROOM) - which plays it ONCE for the whole
+		--// sweep, not once per table.
+		ChaChing = { Id = "", Volume = 0.9, MinStuds = 10, MaxStuds = 45 },
+
+		--// Charmer R (SUPERFAN): the blown kiss, on the charm animation as
+		--// the table is picked
+		BlowKiss = { Id = "", Volume = 0.9, MinStuds = 10, MaxStuds = 45 },
+
+		--// Waiter Q (DASH): the burst forward
+		Dash = { Id = "", Volume = 0.9, MinStuds = 10, MaxStuds = 45 },
+
+		--// Waiter R (PLATE JUGGLER): the plate leaving the hand, on the throw
+		--// beat (Classes.Waiter.SkillR.ThrowReleaseDelay), not the key press
+		PlateThrow = { Id = "", Volume = 0.9, MinStuds = 10, MaxStuds = 45 },
+
+		--// Fixer R (RUSH IN): the instant-transmission blink. Rides on the
+		--// Fixer, so it travels with them to the emergency.
+		RushInTeleport = { Id = "", Volume = 0.9, MinStuds = 12, MaxStuds = 60 },
+
+		--// Chef R (SOUS CHEF): the summon, from the moment the Chef starts the
+		--// gesture - covers the wind-up and the smoke burst she appears from
+		SousChefSummon = { Id = "", Volume = 0.9, MinStuds = 12, MaxStuds = 60 },
+
+		--// Fixer ULTIMATE (SPEED DIAL): the thumb hitting the big red button.
+		--// Timed by Config.Ultimates.RemoteClickDelay to land on the press in
+		--// the animation. Plays ON TOP of UltimateUsed, which fires at the cast.
+		SpeedDialButton = { Id = "", Volume = 0.9, MinStuds = 12, MaxStuds = 60 },
+
+		--// RHYTHM TAP (the cooking minigame). LOCAL, for the player playing it
+		--// only - same reasoning as AnswerRight/Wrong. Played on the press
+		--// itself, not the server's reply, because a rhythm game whose hit
+		--// sound arrives a round trip late feels broken. Only fires when a
+		--// note is actually in reach, so mashing stays quiet.
+		RhythmTap = { Id = "", Volume = 0.8 },  --// a round note, tapped
+		RhythmHold = { Id = "", Volume = 0.8 }, --// a long note, as the hold begins
+
+		--// HEALTH INSPECTOR verdict. Global: the whole team passed or failed
+		--// together. The first-visit WARNING ("let it slide") plays neither.
+		InspectorPass = { Id = "", Volume = 0.9, Global = true },
+		InspectorFail = { Id = "", Volume = 0.9, Global = true },
 
 		--// SHIFT ---------------------------------------------------------
 		--// Everyone hears these together, wherever they happen to be.

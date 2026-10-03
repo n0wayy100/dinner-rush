@@ -26,6 +26,29 @@ local playerGui = player:WaitForChild("PlayerGui")
 local remotes = ReplicatedStorage:WaitForChild("Remotes")
 local tabletRemote = remotes:WaitForChild("OrderTabletRemote")
 
+--// Download the waiter's order animation as soon as the player joins. The
+--// SERVER plays it, but this client is the one that has to draw it, and
+--// without the keyframes already on hand the first order of every session
+--// stood still while they downloaded.
+task.spawn(function()
+	local ContentProvider = game:GetService("ContentProvider")
+	local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
+	local settings = Config.Dialogue and Config.Dialogue.OrderAnim
+	if not settings or settings.Enabled == false then return end
+
+	local animations = {}
+	for _, id in ipairs({ settings.PullOut, settings.Tap }) do
+		if type(id) == "string" and id ~= "" then
+			local animation = Instance.new("Animation")
+			animation.AnimationId = id:match("^%d+$") and ("rbxassetid://" .. id) or id
+			table.insert(animations, animation)
+		end
+	end
+	if #animations > 0 then
+		pcall(ContentProvider.PreloadAsync, ContentProvider, animations)
+	end
+end)
+
 local CREAM = Color3.fromRGB(255, 246, 233)
 local CHOC = Color3.fromRGB(59, 43, 32)
 local BASIL = Color3.fromRGB(76, 175, 109)

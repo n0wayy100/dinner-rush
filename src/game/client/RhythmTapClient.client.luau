@@ -22,6 +22,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UiPop = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiPop"))
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local ContextActionService = game:GetService("ContextActionService")
@@ -29,6 +30,7 @@ local TweenService = game:GetService("TweenService")
 
 local remotes = ReplicatedStorage:WaitForChild("Remotes")
 local remote = remotes:WaitForChild("RhythmTapRemote")
+local SfxLocal = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SfxLocal"))
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -242,10 +244,15 @@ local function onPress()
 	local i = pickNote(elapsed)
 	if not i then return end
 	local note = session.Notes[i]
+	--// Sound on the PRESS, not the server's reply: a rhythm hit that
+	--// arrives a round trip late feels broken. pickNote already returned
+	--// nil for a press with no note in reach, so mashing stays silent.
 	if note.Type == "hold" then
+		SfxLocal.Play("RhythmHold")
 		remote:FireServer("HoldStart", session.Token, i)
 		activeHold = i
 	else
+		SfxLocal.Play("RhythmTap")
 		remote:FireServer("Hit", session.Token, i)
 	end
 end
@@ -292,6 +299,7 @@ remote.OnClientEvent:Connect(function(action, a, b, c)
 			Widgets = widgets,
 		}
 		gui.Enabled = true
+		UiPop.Pop(gui)
 
 		--// Space + gamepad A through CAS so the A press does not also JUMP;
 		--// Begin = press, End = release (for holds)

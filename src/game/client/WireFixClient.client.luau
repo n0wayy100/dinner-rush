@@ -20,6 +20,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UiPop = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiPop"))
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
@@ -430,6 +431,7 @@ local function open(payload)
 	}
 	gui.Enabled = true
 	buildBoard()
+	UiPop.Pop(gui)
 
 	--// Wandering off closes the panel and unlocks the breaker
 	if walkWatcher then walkWatcher:Disconnect() end
