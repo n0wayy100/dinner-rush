@@ -29,6 +29,7 @@ local Debris = game:GetService("Debris")
 
 local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
 local DishModels = require(ServerStorage:WaitForChild("Shared"):WaitForChild("DishModels"))
+local Sfx = require(ServerStorage:WaitForChild("Shared"):WaitForChild("Sfx"))
 local SKILLS = Config.Skills
 if not (SKILLS and SKILLS.Enabled) then
 	return
@@ -652,6 +653,7 @@ local function beginSousChef(player, skillDef, homeStation, spawnPos)
 	local character = player.Character
 	--// The animation plays FIRST; she POOFS in (smoke burst) after the wind-up.
 	skillRemote:FireClient(player, "PlayAnim", skillDef.AnimId or "")
+	Sfx.Play("SousChefSummon", character)
 
 	task.delay(skillDef.SummonDelay or 0.6, function()
 		summonPoof(spawnPos) --// the jutsu smoke burst she appears from
@@ -920,6 +922,7 @@ local function doPlateThrow(player, skillDef)
 	task.delay(skillDef.ThrowReleaseDelay or 0.4, function()
 		local ok, result = pcall(throw.Invoke, throw, player, range, false)
 		if ok and type(result) == "table" then
+			Sfx.Play("PlateThrow", player.Character)
 			flyPlate(result.From, result.To, result.Dish,
 				skillDef.ArcHeightStuds or 8, skillDef.ThrowSeconds or 0.55)
 		end
@@ -966,6 +969,7 @@ local function runSkill(player, skillDef, aim)
 		local dest = target.Position + Vector3.new(0, 4, 0)
 		task.delay(skillDef.TeleportDelay or 0.5, function()
 			if root and root.Parent then
+				Sfx.Play("RushInTeleport", character)
 				rushTeleport(character, root, dest) --// fade out, blink in
 			end
 		end)
@@ -977,6 +981,7 @@ local function runSkill(player, skillDef, aim)
 		local character = player.Character
 		local root = character and character:FindFirstChild("HumanoidRootPart")
 		if not root then return false, "Get on the floor first!" end
+		Sfx.Play("Dash", character)
 		skillRemote:FireClient(player, "Dash",
 			skillDef.DashSpeed or 85, skillDef.DashSeconds or 0.28)
 		return true

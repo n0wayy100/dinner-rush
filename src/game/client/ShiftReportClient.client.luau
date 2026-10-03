@@ -29,6 +29,7 @@ local TweenService = game:GetService("TweenService")
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 local reportRemote = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("ShiftReportRemote")
+local MvpCutscene = require(script.Parent:WaitForChild("MvpCutscene"))
 local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
 local SCORE = Config.Score
 
@@ -660,15 +661,28 @@ end
 
 reportRemote.OnClientEvent:Connect(function(action, payload)
 	if action == "Show" and type(payload) == "table" then
-		local awards = payload.Awards
-		if type(awards) == "table" and type(awards.Players) == "table"
-			and #awards.Players > 0 then
-			--// Owner ruling: the ceremony FIRST, the stat rows only after
-			runCeremony(awards, function()
+		task.spawn(function()
+			--// THE MVP CUTSCENE plays before everything (owner, Oct 2026).
+			--// It skips itself when anything is missing and cleans up after
+			--// any failure - the pcall is the last line of defence, so the
+			--// report card can never be lost to it.
+			--// Returns on the MVP's final pose, frozen on screen; the
+			--// ceremony and report then pop up over it until the ride home
+			local ok, err = pcall(MvpCutscene.Run, payload, { KeepGuis = { gui, awardsGui } })
+			if not ok then
+				warn("[ShiftReport] MVP cutscene failed: " .. tostring(err))
+			end
+
+			local awards = payload.Awards
+			if type(awards) == "table" and type(awards.Players) == "table"
+				and #awards.Players > 0 then
+				--// Owner ruling: the ceremony FIRST, the stat rows only after
+				runCeremony(awards, function()
+					showReport(payload)
+				end)
+			else
 				showReport(payload)
-			end)
-		else
-			showReport(payload)
-		end
+			end
+		end)
 	end
 end)
