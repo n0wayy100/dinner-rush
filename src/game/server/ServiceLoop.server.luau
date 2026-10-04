@@ -4789,6 +4789,58 @@ end)
 ----------------------------------------------------------------
 -- Boot: wait for a player, prep countdown, resolve difficulty, run
 ----------------------------------------------------------------
+
+--// THE ENTRANCE CUTSCENE GATE (Oct 2026): the shift does not go RUNNING -
+--// so no customer spawns - until every player's EntranceCutscene has
+--// reported "Done" (capped by Config.EntranceCutscene.MaxHoldSeconds, so a
+--// stuck or AFK client can never hold the shift hostage). Disabled with the
+--// cutscene: no Config block / Enabled = false = no remote, no wait.
+local cutsceneDone = {}
+local cutsceneGate = false
+do
+	local cfg = Config.EntranceCutscene
+	if cfg and cfg.Enabled ~= false then
+		cutsceneGate = true
+		local folder = ReplicatedStorage:FindFirstChild("Remotes")
+		if not folder then
+			folder = Instance.new("Folder")
+			folder.Name = "Remotes"
+			folder.Parent = ReplicatedStorage
+		end
+		local remote = folder:FindFirstChild("EntranceCutsceneRemote")
+		if not remote then
+			remote = Instance.new("RemoteEvent")
+			remote.Name = "EntranceCutsceneRemote"
+			remote.Parent = folder
+		end
+		remote.OnServerEvent:Connect(function(player, action)
+			if action == "Done" then
+				cutsceneDone[player] = true
+			end
+		end)
+		Players.PlayerRemoving:Connect(function(player)
+			cutsceneDone[player] = nil
+		end)
+	end
+end
+
+local function waitForEntranceCutscenes()
+	if not cutsceneGate or tutorialMode() then return end
+	local holdUntil = os.clock() + (Config.EntranceCutscene.MaxHoldSeconds or 20)
+	while os.clock() < holdUntil do
+		local everyone = true
+		for _, member in ipairs(Players:GetPlayers()) do
+			if not cutsceneDone[member] then
+				everyone = false
+				break
+			end
+		end
+		if everyone then return end
+		task.wait(0.2)
+	end
+	print("[Service] entrance cutscene hold timed out - starting the shift anyway")
+end
+
 task.spawn(function()
 	while #Players:GetPlayers() == 0 do
 		publishShift()
@@ -4805,6 +4857,7 @@ task.spawn(function()
 	publishShift()
 	print(("[Service] Prep: shift starts in %ds"):format(shift.PrepRemaining))
 	task.wait(shift.PrepRemaining)
+	waitForEntranceCutscenes() --// no customers until everyone's film is done
 
 	--// Global: the whole team starts together
 	Sfx.Play("ShiftStart")

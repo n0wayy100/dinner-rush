@@ -550,6 +550,29 @@ function MvpCutscene.Run(payload, options)
 		local mode = entry.CameraMode or settings.CameraMode or "Aim"
 		local fix = BONE_FIXES[entry.BoneFix or settings.BoneFix or 1] or CFrame.identity
 
+		--// ZOOM OUT (Config.MvpCutscene.CameraDistanceMult): push the camera
+		--// back along its line of sight, stopping short of walls. The ray
+		--// ignores everyone's characters and the stage rig itself.
+		local distanceMult = entry.CameraDistanceMult or settings.CameraDistanceMult or 1
+		local pushParams = RaycastParams.new()
+		pushParams.FilterType = Enum.RaycastFilterType.Exclude
+		local function pushBack(view)
+			if distanceMult <= 1 then return view end
+			local toCamera = view.Position - aimPart.Position
+			local dist = toCamera.Magnitude
+			if dist < 0.05 then return view end
+			local want = dist * distanceMult
+			local ignore = { rig }
+			for _, other in ipairs(Players:GetPlayers()) do
+				if other.Character then table.insert(ignore, other.Character) end
+			end
+			pushParams.FilterDescendantsInstances = ignore
+			local hit = workspace:Raycast(aimPart.Position, toCamera.Unit * want, pushParams)
+			local reach = hit and math.max(dist, (hit.Position - aimPart.Position).Magnitude - 0.6) or want
+			--// keep the shot's own rotation, just slide it back along the line
+			return view.Rotation + (aimPart.Position + toCamera.Unit * reach)
+		end
+
 		RunService:BindToRenderStep(RENDER_NAME, Enum.RenderPriority.Camera.Value + 1, function()
 			if not bone.Parent then return end
 			local view
@@ -559,6 +582,7 @@ function MvpCutscene.Run(payload, options)
 				if (bone.Position - aimPart.Position).Magnitude < 0.05 then return end
 				view = CFrame.lookAt(bone.Position, aimPart.Position)
 			end
+			view = pushBack(view)
 			camera.CFrame = view
 			if blur then
 				blur.FocusDistance = (view.Position - aimPart.Position).Magnitude
@@ -632,6 +656,27 @@ function MvpCutscene.Run(payload, options)
 		--// Film bars slide away so the report gets the whole screen
 		tween(barTop, 0.4, { Size = UDim2.fromScale(1, 0) })
 		tween(barBottom, 0.4, { Size = UDim2.fromScale(1, 0) })
+
+		--// THE "ORDER UP!" REVEAL (Oct 2026): the MVP is served over the
+		--// frozen pose, then the card fades and the ceremony follows. Its own
+		--// pcall - a broken reveal must never undo the cutscene.
+		local revealModule = script.Parent:FindFirstChild("MvpReveal")
+		if revealModule then
+			local title = nil
+			for _, card in ipairs(awards.Players or {}) do
+				if card.UserId == mvp.UserId then
+					title = card.Title
+				end
+			end
+			local okReveal, revealErr = pcall(function()
+				require(revealModule).Play({
+					Rig = rig, Name = mvp.Name, Title = title, Receipts = mvp.Receipts,
+				})
+			end)
+			if not okReveal then
+				warn("[MvpCutscene] reveal failed: " .. tostring(revealErr))
+			end
+		end
 	end)
 
 	if not ok then

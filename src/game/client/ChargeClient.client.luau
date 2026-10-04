@@ -165,9 +165,14 @@ local pulseTween = nil
 local wasReady = false --// so the ready blip fires on the edge, not every frame
 local hintSerial = 0
 
+--// nil = no ultimate to show: classless, OR the class is below the level
+--// that unlocks it (THE LEVEL GATE - the server enforces it, this hides it)
 local function classInfo()
 	local classKey = player:GetAttribute("ClassKey")
 	if not classKey or classKey == "" then
+		return nil
+	end
+	if (player:GetAttribute("ClassLevel") or 0) < Config.SkillUnlockLevel("Ultimate") then
 		return nil
 	end
 	return classKey, Config.Classes[classKey]
@@ -260,7 +265,7 @@ local function onAction(_, inputState)
 end
 
 local function refreshBinding()
-	local classed = (player:GetAttribute("ClassKey") or "") ~= ""
+	local classed = classInfo() ~= nil --// classed AND the ultimate unlocked
 	if classed and not bound then
 		bound = true
 		--// Ultimate moved off Q -> T (Sep 21): Q and R are now the class
@@ -275,6 +280,10 @@ end
 
 player:GetAttributeChangedSignal("UltimateCharge"):Connect(render)
 player:GetAttributeChangedSignal("ClassKey"):Connect(function()
+	refreshBinding()
+	render()
+end)
+player:GetAttributeChangedSignal("ClassLevel"):Connect(function()
 	refreshBinding()
 	render()
 end)

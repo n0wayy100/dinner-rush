@@ -83,6 +83,9 @@ local function addCharge(player, key, count)
 	local classKey = player:GetAttribute("ClassKey")
 	if not classKey or classKey == "" then return end
 
+	--// THE LEVEL GATE: no ultimate yet (class level 5) = nothing to charge
+	if (player:GetAttribute("ClassLevel") or 0) < Config.SkillUnlockLevel("Ultimate") then return end
+
 	local per = ULT.ChargePer[key] or 0
 	if per <= 0 then return end
 
@@ -686,6 +689,13 @@ ultimateRemote.OnServerEvent:Connect(function(player, action)
 	local ability = classKey and ABILITIES[classKey]
 	if not ability then
 		ultimateRemote:FireClient(player, "Result", false, "No class equipped!")
+		return
+	end
+
+	--// THE LEVEL GATE (server-set ClassLevel - the ultimate is level 5)
+	local need = Config.SkillUnlockLevel("Ultimate")
+	if (player:GetAttribute("ClassLevel") or 0) < need then
+		ultimateRemote:FireClient(player, "Result", false, ("Unlocks at class level %d!"):format(need))
 		return
 	end
 

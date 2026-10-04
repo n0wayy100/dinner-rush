@@ -77,7 +77,13 @@ local function classSkill(slot)
 	local classKey = player:GetAttribute("ClassKey") or ""
 	local class = classKey ~= "" and Config.Classes[classKey] or nil
 	if not class then return nil end
-	return class[slot == "Q" and "SkillQ" or "SkillR"]
+	local key = slot == "Q" and "SkillQ" or "SkillR"
+	--// THE LEVEL GATE: no button until the class level unlocks it (the
+	--// server enforces it; this just keeps a locked key off the screen)
+	if (player:GetAttribute("ClassLevel") or 0) < Config.SkillUnlockLevel(key) then
+		return nil
+	end
+	return class[key]
 end
 
 local function useSlot(slot)
@@ -311,4 +317,5 @@ ContextActionService:BindAction("SkillR", function(_, s)
 end, false, Enum.KeyCode.R, Enum.KeyCode.DPadUp)
 
 player:GetAttributeChangedSignal("ClassKey"):Connect(rebuild)
+player:GetAttributeChangedSignal("ClassLevel"):Connect(rebuild)
 rebuild()

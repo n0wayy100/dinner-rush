@@ -14,6 +14,7 @@
 	  MoneyMult           Charmer: payment collection bonus
 	  RecommendBonusMult  Charmer: recommendation patience bonus
 	  CleanMult           Janitor: dust specks / plunge taps a clean needs
+	  ClassLevel          the equipped class's level (the Q/R/T level gate)
 	  (CollectHoldMult is still published for back-compat but every class
 	   sits at 1 now - E is press-everywhere, so there is no hold to scale.)
 
@@ -97,6 +98,21 @@ local function applyClass(player)
 	--// makes it 3; everyone else sits at the Config default. THE LAW safe.
 	local carryBonus = (class and class.CarryBonus) or 0
 	player:SetAttribute("CarryLimit", Config.Kitchen.MaxCarriedItems + carryBonus)
+
+	--// THE LEVEL GATE (Oct 2026): the equipped class's level, read off the
+	--// save. SkillService / ChargeService refuse slots above it (Q 1, R 3,
+	--// ultimate 5 - Config.Skills.UnlockLevels). Server-set, so a client
+	--// cannot raise it. Studio's StudioUnlockAll knob (or the ultimate test
+	--// knob forcing a class) lifts the gate for testing.
+	local level = class and ((snapshot.ClassLevels or {})[classKey] or 1) or 0
+	if game:GetService("RunService"):IsStudio() and class then
+		local ult = Config.Ultimates
+		if (Config.Skills and Config.Skills.StudioUnlockAll)
+			or (ult and ult.StudioFullCharge and (ult.StudioClassKey or "") ~= "") then
+			level = 99
+		end
+	end
+	player:SetAttribute("ClassLevel", level)
 
 	if before ~= classKey then
 		print(("[Class] %s plays as %s"):format(player.Name,

@@ -35,6 +35,19 @@ local shopRemote = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Class
 
 local SHOP = Config.ClassShop
 
+--// THE ART KIT (Oct 2026): the owner's original layout, skinned with the
+--// Claude Design classes kit (Config.ClassShop.Art) + the shop / Staff Room
+--// shared sprites. An empty slot keeps that piece's code-drawn look.
+local UIKit = require(ReplicatedStorage.Shared:WaitForChild("UIKit"))
+local kit = UIKit.artKit(SHOP.Art or {},
+	(Config.Monetization and Config.Monetization.ShopArt) or {},
+	(Config.PlayerStats and Config.PlayerStats.StaffArt) or {})
+
+local SfxLocal = nil
+pcall(function()
+	SfxLocal = require(ReplicatedStorage.Shared:WaitForChild("SfxLocal", 5))
+end)
+
 local CREAM = Color3.fromRGB(255, 246, 233)
 local WARM = Color3.fromRGB(255, 236, 210)
 local CHOC = Color3.fromRGB(59, 43, 32)
@@ -77,6 +90,104 @@ local function makeText(parent, name, font, color)
 end
 
 ----------------------------------------------------------------
+-- Art helpers (the kit draws the piece; these keep the code's colours and
+-- text working on top of it)
+----------------------------------------------------------------
+local DIM_TINT = Color3.fromRGB(165, 160, 155)
+
+local function sfx(name)
+	local sounds = Config.Sfx and Config.Sfx.Sounds
+	local entry = sounds and sounds[name]
+	if SfxLocal and entry and entry.Id ~= "" then
+		pcall(SfxLocal.Play, name)
+	end
+end
+
+local function artOf(obj)
+	return obj:FindFirstChild("Art")
+end
+
+--// tintable art is drawn white: whatever colour the code gives the piece
+--// (rarity, skill slot) becomes the art's tint
+local function tintFollow(obj)
+	local function apply()
+		local art = artOf(obj)
+		if art then art.ImageColor3 = obj.BackgroundColor3 end
+	end
+	obj:GetPropertyChangedSignal("BackgroundColor3"):Connect(apply)
+	apply()
+end
+
+--// a label or button's OWN text draws under its art child - mirror the text
+--// into a label on top and hide the original (the code keeps setting .Text)
+local function textOnTop(obj, transform, box)
+	local pad = obj:FindFirstChildOfClass("UIPadding")
+	if pad then pad:Destroy() end --// padding would squash the art too
+	box = box or {}
+	local top = Instance.new("TextLabel")
+	top.Name = "TextOnTop"
+	top.BackgroundTransparency = 1
+	top.AnchorPoint = Vector2.new(0.5, 0.5)
+	top.Position = UDim2.fromScale(box.X or 0.5, box.Y or 0.46)
+	top.Size = UDim2.fromScale(box.W or 0.86, box.H or 0.6)
+	top.Font = obj.Font
+	top.TextScaled = true
+	top.TextWrapped = true
+	top.TextXAlignment = obj.TextXAlignment
+	top.TextStrokeColor3 = box.Stroke and CHOC or obj.TextStrokeColor3
+	top.TextStrokeTransparency = box.Stroke and 0 or obj.TextStrokeTransparency
+	top.ZIndex = obj.ZIndex + 1
+	top.Parent = obj
+	local function sync()
+		top.Text = transform and transform(obj.Text) or obj.Text
+		top.TextColor3 = obj.TextColor3
+	end
+	obj:GetPropertyChangedSignal("Text"):Connect(sync)
+	obj:GetPropertyChangedSignal("TextColor3"):Connect(sync)
+	sync()
+	obj.TextTransparency = 1
+	obj.TextStrokeTransparency = 1
+	return top
+end
+
+--// buttons: the code paints them BASIL / MUSTARD / GOLD / GREY - that picks
+--// the green or gold button art, greyed out when disabled
+local function buttonFollow(btn)
+	local function apply()
+		local art = artOf(btn)
+		if not art then return end
+		local c = btn.BackgroundColor3
+		if c == GREY then
+			art.Image = kit.id("PriceButtonGreen") or art.Image
+			art.ImageColor3 = DIM_TINT
+		elseif c == BASIL then
+			art.Image = kit.id("PriceButtonGreen") or art.Image
+			art.ImageColor3 = Color3.new(1, 1, 1)
+		else
+			art.Image = kit.id("PriceButtonGold") or art.Image
+			art.ImageColor3 = Color3.new(1, 1, 1)
+		end
+	end
+	btn:GetPropertyChangedSignal("BackgroundColor3"):Connect(apply)
+	apply()
+end
+
+--// bar fills: green art when the code paints BASIL (task done), gold
+--// otherwise; hidden while too narrow for its rounded ends
+local function fillFollow(fill)
+	local function apply()
+		local art = artOf(fill)
+		if not art then return end
+		art.Image = (fill.BackgroundColor3 == BASIL and kit.id("XPBarFill"))
+			or kit.id("XPBarFillGold") or art.Image
+		art.Visible = fill.AbsoluteSize.X > fill.AbsoluteSize.Y
+	end
+	fill:GetPropertyChangedSignal("BackgroundColor3"):Connect(apply)
+	fill:GetPropertyChangedSignal("AbsoluteSize"):Connect(apply)
+	apply()
+end
+
+----------------------------------------------------------------
 -- Skeleton: transparent full-screen root, two side panels
 ----------------------------------------------------------------
 local gui = Instance.new("ScreenGui")
@@ -85,6 +196,7 @@ gui.ResetOnSpawn = false
 gui.IgnoreGuiInset = true
 gui.Enabled = false
 gui.DisplayOrder = 30
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling --// art layers sit under their text
 gui.Parent = playerGui
 
 local root = Instance.new("Frame")
@@ -109,6 +221,7 @@ local grad = Instance.new("UIGradient")
 grad.Rotation = 90
 grad.Color = ColorSequence.new(Color3.new(1, 1, 1), WARM)
 grad.Parent = leftPanel
+kit.skin(leftPanel, "ListPanel")
 
 --// The CLASSES sticker rides the panel's top edge. White with a chocolate
 --// outline, like the lobby's FREE!/CODES! stickers - chocolate-on-mustard
@@ -138,7 +251,7 @@ list.AutomaticCanvasSize = Enum.AutomaticSize.Y
 list.Parent = leftPanel
 
 local listLayout = Instance.new("UIListLayout")
-listLayout.Padding = UDim.new(0.025, 0)
+listLayout.Padding = UDim.new(0.015, 0) --// six classes fit without scrolling
 listLayout.SortOrder = Enum.SortOrder.LayoutOrder --// Config order, not names
 listLayout.Parent = list
 
@@ -158,6 +271,7 @@ local detailGrad = Instance.new("UIGradient")
 detailGrad.Rotation = 90
 detailGrad.Color = ColorSequence.new(Color3.new(1, 1, 1), WARM)
 detailGrad.Parent = detail
+local detailSkinned = kit.skin(detail, "DetailPanel")
 
 --// Rarity-coloured header band: class name + rarity live here
 local header = Instance.new("Frame")
@@ -169,6 +283,14 @@ header.Parent = detail
 local headerCorner = Instance.new("UICorner")
 headerCorner.CornerRadius = UDim.new(0, 14)
 headerCorner.Parent = header
+if kit.skin(header, "HeaderBand") then
+	tintFollow(header) --// renderDetail paints it the rarity colour
+	if detailSkinned then --// sit inside the panel art's border
+		header.AnchorPoint = Vector2.new(0.5, 0)
+		header.Position = UDim2.fromScale(0.5, 0.012)
+		header.Size = UDim2.fromScale(0.955, 0.125)
+	end
+end
 
 local dName = makeText(header, "ClassName", Enum.Font.FredokaOne, Color3.new(1, 1, 1))
 dName.AnchorPoint = Vector2.new(0.5, 0)
@@ -200,10 +322,55 @@ dIconAspect.Parent = dIcon
 local dInitial = makeText(dIcon, "Initial", Enum.Font.FredokaOne, CHOC)
 dInitial.Size = UDim2.fromScale(1, 1)
 
-local dFlavor = makeText(detail, "Flavor", Enum.Font.Gotham, GREY_TEXT)
-dFlavor.AnchorPoint = Vector2.new(0.5, 0)
-dFlavor.Position = UDim2.fromScale(0.5, 0.325)
-dFlavor.Size = UDim2.fromScale(0.9, 0.05)
+--// THE SHOWCASE: the big icon sits inside the glowing gold showcase frame
+--// (which gently pulses), with a padlock on it while the class is locked.
+--// A holder takes the icon's old spot so the art can overflow around it.
+local showcaseHolder, detailLock = nil, nil
+local dIconScale = Instance.new("UIScale")
+dIconScale.Parent = dIcon
+if kit.id("ShowcaseFrame") then
+	showcaseHolder = Instance.new("Frame")
+	showcaseHolder.Name = "Showcase"
+	showcaseHolder.AnchorPoint = dIcon.AnchorPoint
+	showcaseHolder.Position = dIcon.Position
+	showcaseHolder.Size = dIcon.Size
+	showcaseHolder.BackgroundTransparency = 1
+	showcaseHolder.Parent = detail
+	local holderAspect = Instance.new("UIAspectRatioConstraint")
+	holderAspect.AspectRatio = 1
+	holderAspect.Parent = showcaseHolder
+
+	local frameArt = kit.image(showcaseHolder, "ShowcaseFrame", "Frame")
+	frameArt.AnchorPoint = Vector2.new(0.5, 0.5)
+	frameArt.Position = UDim2.fromScale(0.5, 0.5)
+	frameArt.Size = UDim2.fromScale(1.15, 1.15)
+	frameArt.ZIndex = 0
+	local pulse = Instance.new("UIScale")
+	pulse.Parent = frameArt
+	TweenService:Create(pulse, TweenInfo.new(1.2, Enum.EasingStyle.Sine,
+		Enum.EasingDirection.InOut, -1, true), { Scale = 1.05 }):Play()
+
+	for _, child in ipairs(dIcon:GetChildren()) do
+		if child:IsA("UIStroke") or child:IsA("UICorner") then child:Destroy() end
+	end
+	dIcon.BackgroundTransparency = 1
+	dIcon.AnchorPoint = Vector2.new(0.5, 0.5)
+	dIcon.Position = UDim2.fromScale(0.5, 0.5)
+	dIcon.Size = UDim2.fromScale(0.74, 0.74)
+	dIcon.ZIndex = 1
+	dIcon.Parent = showcaseHolder
+
+	detailLock = kit.image(showcaseHolder, "PadlockClosed", "Lock")
+	if detailLock then
+		detailLock.AnchorPoint = Vector2.new(0.5, 0.5)
+		detailLock.Position = UDim2.fromScale(0.86, 0.84)
+		detailLock.Size = UDim2.fromScale(0.42, 0.42)
+		detailLock.Rotation = 10
+		detailLock.ZIndex = 3
+		detailLock.Visible = false
+	end
+end
+
 
 --// LEVEL: caption + a big gold bar with the Lv text on it
 local levelCaption = makeText(detail, "LevelCaption", Enum.Font.GothamBold, CHOC)
@@ -287,6 +454,21 @@ taskCount.AnchorPoint = Vector2.new(0.5, 0.5)
 taskCount.Position = UDim2.fromScale(0.5, 0.5)
 taskCount.TextStrokeColor3 = CHOC
 taskCount.TextStrokeTransparency = 0.3
+
+--// bars + the section banner in the kit's art
+for _, bar in ipairs({ { levelBack, levelFill, levelText }, { taskBack, taskFill, taskCount } }) do
+	local back, fill, text = bar[1], bar[2], bar[3]
+	kit.skin(back, "XPBarFrame")
+	if kit.skin(fill, "XPBarFillGold") then
+		fillFollow(fill)
+	end
+	fill.ZIndex = 1
+	text.ZIndex = 2
+end
+if kit.skin(taskHeader, "SectionBanner") then
+	tintFollow(taskHeader)
+	textOnTop(taskHeader, nil, { W = 0.7, H = 0.62, Y = 0.44 })
+end
 
 --// Powers
 local dPassive = makeText(detail, "Passive", Enum.Font.GothamMedium, CHOC)
@@ -390,6 +572,42 @@ for order, entry in ipairs(SLOTS) do
 		Button = button, Icon = icon, Glyph = glyph, Caption = caption,
 		Stroke = stroke, Key = entry.Key, Info = nil,
 	}
+
+	--// the tile art is tinted the slot colour; its drawn keycap holds the key
+	if kit.skin(button, "SkillTile") then
+		tintFollow(button)
+		--// the art is square; a non-square tile letterboxed it and left the
+		--// drawn keycap away from the key letter
+		local tileAspect = Instance.new("UIAspectRatioConstraint")
+		tileAspect.AspectRatio = 1
+		tileAspect.Parent = button
+		--// some icons (every class sticker on T, some skill icons) carry their
+		--// own white sticker backing - filling the tile makes that backing a
+		--// clean inner card instead of a small box in a box
+		icon.AnchorPoint = Vector2.new(0.5, 0.5)
+		icon.Position = UDim2.fromScale(0.5, 0.5)
+		icon.Size = UDim2.fromScale(0.84, 0.84)
+		icon.ZIndex = 2
+		glyph.AnchorPoint = Vector2.new(0.5, 0.5)
+		glyph.Position = UDim2.fromScale(0.5, 0.5)
+		--// no name on the tile (owner call) - the skill card shows it on tap
+		caption.Visible = false
+		badge.BackgroundTransparency = 1
+		badge.Position = UDim2.fromScale(0.19, 0.18)
+		badge.Size = UDim2.fromScale(0.24, 0.24)
+	end
+
+	--// the padlock on a slot this class has not unlocked yet (level gate)
+	local lock = kit.image(button, "PadlockClosed", "Lock")
+	if lock then
+		lock.AnchorPoint = Vector2.new(0.5, 0.5)
+		lock.Position = UDim2.fromScale(0.78, 0.78)
+		lock.Size = UDim2.fromScale(0.46, 0.46)
+		lock.Rotation = 10
+		lock.ZIndex = 5
+		lock.Visible = false
+		skillTiles[entry.Slot].Lock = lock
+	end
 end
 
 ----------------------------------------------------------------
@@ -433,6 +651,9 @@ cardGrad.Rotation = 90
 --// underneath, and cream would muddy the green, orange and blue cards.
 cardGrad.Color = ColorSequence.new(Color3.new(1, 1, 1), Color3.fromRGB(215, 215, 215))
 cardGrad.Parent = card
+if kit.skin(card, "SkillCard") then
+	tintFollow(card) --// openSkillPopup paints it the slot colour
+end
 
 --// GothamBold, not FredokaOne: the chunky font crushed into a small chip
 --// turned "ULTIMATE - PRESS T" into an unreadable blob.
@@ -597,7 +818,9 @@ end
 --// Fills the three tiles for the selected class. A class with nothing at
 --// all (the Trainee) hides the row; a class with only some skills (the
 --// Charmer, for now) shows the missing ones as COMING SOON.
-local function renderSkills(classKey, class)
+--// level / owned: the selected class's level and whether it is owned - a
+--// slot above the level (or any slot of an unowned class) shows LOCKED
+local function renderSkills(classKey, class, level, owned)
 	local infos, any = {}, false
 	for _, entry in ipairs(SLOTS) do
 		infos[entry.Slot] = skillInfoFor(classKey, class, entry.Slot, entry.Key)
@@ -629,8 +852,25 @@ local function renderSkills(classKey, class)
 			tile.Glyph.Text = info.Emoji or info.Letter or "?"
 			tile.Glyph.TextColor3 = Color3.new(1, 1, 1)
 			tile.Caption.Text = info.Name
-			tile.Info = info
+
+			--// THE LEVEL GATE: Q at 1, R at 3, the ultimate at 5
+			local need = Config.SkillUnlockLevel(entry.Slot)
+			local locked = not owned or (level or 1) < need
+			tile.Icon.ImageColor3 = locked and Color3.fromRGB(110, 104, 98) or Color3.new(1, 1, 1)
+			if tile.Lock then tile.Lock.Visible = locked end
+			if locked then
+				tile.Button.BackgroundColor3 = SLOT_COLORS.Locked.Main
+				local why = owned and ("Unlocks at class level %d."):format(need)
+					or "Buy this class to unlock it!"
+				local lockedInfo = table.clone(info)
+				lockedInfo.Locked = true
+				lockedInfo.Text = (info.Text ~= "" and (info.Text .. " ") or "") .. why
+				tile.Info = lockedInfo
+			else
+				tile.Info = info
+			end
 		else
+			if tile.Lock then tile.Lock.Visible = false end
 			tile.Icon.Visible = false
 			tile.Glyph.Visible = true
 			tile.Glyph.Text = "?"
@@ -670,6 +910,12 @@ end
 local actionBtn = makeButton("ActionButton")
 local upgradeBtn = makeButton("UpgradeButton")
 upgradeBtn.Visible = false
+for _, button in ipairs({ actionBtn, upgradeBtn }) do
+	if kit.skin(button, "PriceButtonGreen") then
+		buttonFollow(button)
+		textOnTop(button, nil, { W = 0.9, H = 0.56, Y = 0.44 })
+	end
+end
 
 ----------------------------------------------------------------
 -- BOTTOM CENTRE: balance + CLOSE, reference-game style
@@ -697,6 +943,25 @@ closeBtn.TextColor3 = Color3.new(1, 1, 1)
 closeBtn.Text = "CLOSE"
 closeBtn.Parent = root
 stylize(closeBtn, 2.5)
+
+--// the wallet pill (its coin is drawn on the left end - the "$ " goes) and
+--// the red CLOSE bar, each kept at its art's shape
+local walletAnim = Instance.new("UIScale")
+walletAnim.Parent = wallet
+if kit.skin(wallet, "WalletPill") then
+	local walletAspect = Instance.new("UIAspectRatioConstraint")
+	walletAspect.AspectRatio = 4
+	walletAspect.Parent = wallet
+	textOnTop(wallet, function(text)
+		return (text:gsub("^%$%s*", ""))
+	end, { X = 0.6, W = 0.66, H = 0.66, Y = 0.47, Stroke = true })
+end
+if kit.skin(closeBtn, "CloseBar") then
+	local closeAspect = Instance.new("UIAspectRatioConstraint")
+	closeAspect.AspectRatio = 3
+	closeAspect.Parent = closeBtn
+	textOnTop(closeBtn, nil, { W = 0.76, H = 0.56, Y = 0.44, Stroke = true })
+end
 
 ----------------------------------------------------------------
 -- State
@@ -771,6 +1036,11 @@ local function renderCard(classKey)
 	local selected = selectedKey == classKey
 	card.Stroke.Color = selected and Color3.new(1, 1, 1) or CHOC
 	card.Stroke.Thickness = selected and 3.5 or 2
+	--// on the art the ring only shows for the selected card
+	card.Stroke.Transparency = (card.Skinned and not selected) and 1 or 0
+	if card.Lock then
+		card.Lock.Visible = not owned
+	end
 
 	local hasIcon = class.IconId ~= ""
 	card.Icon.Visible = hasIcon
@@ -792,9 +1062,11 @@ local function renderDetail()
 	dIcon.Image = class.IconId
 	dInitial.Visible = class.IconId == ""
 	dInitial.Text = string.upper(string.sub(classKey, 1, 1))
-	dFlavor.Text = "\"" .. class.FlavorText .. "\""
 	dPassive.Text = class.PassiveText
-	renderSkills(classKey, class)
+	renderSkills(classKey, class, (snapshot and snapshot.ClassLevels[classKey]) or 1, owned)
+	if detailLock then
+		detailLock.Visible = not owned
+	end
 
 	--// Level + the task track: finish the task, then pay to level
 	local track = class.UpgradeTrack
@@ -905,6 +1177,146 @@ local function showError(text)
 	end)
 end
 
+--// THE UNLOCK (a class was just bought): a big padlock appears on the
+--// showcase, the gold key slides into the keyhole and turns - click - the
+--// shackle pops, the pieces fall away, a burst of sparkles and confetti,
+--// and the class icon pops in. Purely cosmetic: it plays AFTER the server
+--// already granted the class.
+local function playUnlock()
+	local bodyId, shackleId = kit.id("PadlockBody"), kit.id("PadlockShackle")
+	local holder = showcaseHolder or dIcon.Parent
+	if not (bodyId and shackleId and holder) then return end
+
+	local box = Instance.new("Frame")
+	box.Name = "Unlock"
+	box.AnchorPoint = Vector2.new(0.5, 0.5)
+	box.Position = UDim2.fromScale(0.5, 0.5)
+	box.Size = UDim2.fromScale(0.62, 0.62)
+	box.BackgroundTransparency = 1
+	box.ZIndex = 5
+	box.Parent = holder
+	local boxAspect = Instance.new("UIAspectRatioConstraint")
+	boxAspect.AspectRatio = 1
+	boxAspect.Parent = box
+	local boxScale = Instance.new("UIScale")
+	boxScale.Scale = 0.3
+	boxScale.Parent = box
+
+	local function piece(id, name, z)
+		local img = Instance.new("ImageLabel")
+		img.Name = name
+		img.BackgroundTransparency = 1
+		img.ScaleType = Enum.ScaleType.Fit
+		img.Image = id
+		img.Size = UDim2.fromScale(1, 1)
+		img.ZIndex = z
+		img.Parent = box
+		return img
+	end
+	local shackle = piece(shackleId, "Shackle", 6)
+	local body = piece(bodyId, "Body", 7)
+	local keyId = kit.id("PadlockKey")
+	local key = nil
+	if keyId then
+		--// 192x96 next to the lock's 128: the key is 1.5 locks wide. Its tip
+		--// (right end) lines up with the keyhole at ~(0.48, 0.62) of the lock.
+		key = piece(keyId, "Key", 8)
+		key.Size = UDim2.fromScale(1.5, 0.75)
+		key.Position = UDim2.fromScale(-2.6, 0.245)
+		key.ImageTransparency = 1
+	end
+
+	local function tween(obj, seconds, props, style, dir)
+		local t = TweenService:Create(obj, TweenInfo.new(seconds, style or Enum.EasingStyle.Quad,
+			dir or Enum.EasingDirection.Out), props)
+		t:Play()
+		return t
+	end
+
+	task.spawn(function()
+		tween(boxScale, 0.25, { Scale = 1 }, Enum.EasingStyle.Back).Completed:Wait()
+
+		if key then
+			--// the key slides in and seats in the keyhole...
+			tween(key, 0.12, { ImageTransparency = 0 })
+			tween(key, 0.35, { Position = UDim2.fromScale(-0.895, 0.245) }).Completed:Wait()
+			--// ...and turns: squash to edge-on and back, like a quarter turn
+			tween(key, 0.1, { Size = UDim2.fromScale(1.5, 0.18), Position = UDim2.fromScale(-0.895, 0.53) }).Completed:Wait()
+			sfx("ShopClick")
+			tween(key, 0.1, { Size = UDim2.fromScale(1.5, 0.75), Position = UDim2.fromScale(-0.895, 0.245) }).Completed:Wait()
+		end
+
+		--// the lock shudders...
+		for i = 1, 4 do
+			tween(box, 0.05, { Rotation = (i % 2 == 0) and -8 or 8 }).Completed:Wait()
+		end
+		tween(box, 0.05, { Rotation = 0 })
+
+		--// ...and the shackle pops open
+		tween(shackle, 0.25, { Position = UDim2.fromScale(0.06, -0.3), Rotation = 24 }, Enum.EasingStyle.Back)
+		sfx("ShopPurchase")
+		task.wait(0.18)
+
+		--// the burst: pop star, sparkles flying out, confetti
+		local burst = kit.image(holder, "PopBurst", "Burst")
+		if burst then
+			burst.AnchorPoint = Vector2.new(0.5, 0.5)
+			burst.Position = UDim2.fromScale(0.5, 0.5)
+			burst.Size = UDim2.fromScale(0.2, 0.2)
+			burst.ZIndex = 4
+			tween(burst, 0.5, { Size = UDim2.fromScale(1.7, 1.7), Rotation = 45, ImageTransparency = 1 })
+			game:GetService("Debris"):AddItem(burst, 0.6)
+		end
+		for i = 1, 8 do
+			local sparkle = kit.image(holder, "Sparkle", "Spark")
+			if sparkle then
+				local angle = (i / 8) * math.pi * 2
+				sparkle.AnchorPoint = Vector2.new(0.5, 0.5)
+				sparkle.Position = UDim2.fromScale(0.5, 0.5)
+				sparkle.Size = UDim2.fromScale(0.2, 0.2)
+				sparkle.ZIndex = 9
+				tween(sparkle, 0.6, {
+					Position = UDim2.fromScale(0.5 + math.cos(angle) * 0.85, 0.5 + math.sin(angle) * 0.85),
+					Size = UDim2.fromScale(0.06, 0.06),
+					ImageTransparency = 1,
+				})
+				game:GetService("Debris"):AddItem(sparkle, 0.7)
+			end
+		end
+		local confettiId = kit.id("Confetti")
+		if confettiId then
+			local at = holder.AbsolutePosition + holder.AbsoluteSize / 2
+			local confetti = Instance.new("ImageLabel")
+			confetti.BackgroundTransparency = 1
+			confetti.Image = confettiId
+			confetti.ScaleType = Enum.ScaleType.Fit
+			confetti.AnchorPoint = Vector2.new(0.5, 0.5)
+			confetti.Position = UDim2.fromOffset(at.X, at.Y)
+			confetti.Size = UDim2.fromOffset(60, 60)
+			confetti.ZIndex = 60
+			confetti.Parent = gui
+			tween(confetti, 1, { Size = UDim2.fromOffset(380, 380), Rotation = 90, ImageTransparency = 1 })
+			game:GetService("Debris"):AddItem(confetti, 1.1)
+		end
+
+		--// the pieces tumble away, the class icon pops in
+		local fall = TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+		for _, img in ipairs({ body, shackle, key }) do
+			if img then
+				TweenService:Create(img, fall, {
+					Position = img.Position + UDim2.fromScale(0, 0.8),
+					Rotation = img.Rotation + 30,
+					ImageTransparency = 1,
+				}):Play()
+			end
+		end
+		dIconScale.Scale = 0.5
+		tween(dIconScale, 0.45, { Scale = 1 }, Enum.EasingStyle.Back)
+		task.wait(0.6)
+		box:Destroy()
+	end)
+end
+
 local function celebrate(classKey)
 	local card = cardsByKey[classKey]
 	if not card then return end
@@ -931,7 +1343,7 @@ local function buildCard(order, classKey)
 
 	local frame = Instance.new("TextButton")
 	frame.Name = classKey
-	frame.Size = UDim2.fromScale(1, 0.17)
+	frame.Size = UDim2.fromScale(1, 0.15)
 	frame.BackgroundColor3 = class.RarityColor
 	frame.Text = ""
 	frame.LayoutOrder = order
@@ -1007,7 +1419,74 @@ local function buildCard(order, classKey)
 	chipPad.PaddingBottom = UDim.new(0.08, 0)
 	chipPad.Parent = chip
 
+	--// ART: the card is tinted its rarity colour; the icon sits in the card's
+	--// drawn slot (laid out off the card's height, which the slice scales by)
+	local skinned = kit.skin(frame, "ClassCard")
+	local lock = nil
+	if skinned then
+		tintFollow(frame)
+		kit.skin(iconBox, "IconFrame")
+		if kit.skin(chip, "StateChip") then
+			textOnTop(chip, nil, { W = 0.88, H = 0.64, Y = 0.47 })
+		end
+		local function layout()
+			local h = frame.AbsoluteSize.Y
+			if h <= 0 then return end
+			local s = h / 160 --// the art's native height
+			iconBox.AnchorPoint = Vector2.new(0, 0)
+			iconBox.Position = UDim2.fromOffset(31 * s, 21 * s)
+			iconBox.Size = UDim2.fromOffset(101 * s, 101 * s)
+			name.Position = UDim2.new(0, 150 * s, 0.3, 0)
+			name.Size = UDim2.new(1, -190 * s, 0.36, 0)
+			chip.Position = UDim2.new(0, 150 * s, 0.72, 0)
+			chip.Size = UDim2.new(1, -205 * s, 0.28, 0)
+		end
+		frame:GetPropertyChangedSignal("AbsoluteSize"):Connect(layout)
+		layout()
+
+		--// the selection ring (the art replaced the old stroke)
+		local ring = Instance.new("Frame")
+		ring.Name = "SelectRing"
+		ring.Size = UDim2.fromScale(1, 1)
+		ring.BackgroundTransparency = 1
+		ring.ZIndex = 5
+		ring.Parent = frame
+		local ringCorner = Instance.new("UICorner")
+		ringCorner.CornerRadius = UDim.new(0.3, 0)
+		ringCorner.Parent = ring
+		cardStroke = Instance.new("UIStroke")
+		cardStroke.Thickness = 3
+		cardStroke.Color = Color3.new(1, 1, 1)
+		cardStroke.Parent = ring
+
+		--// the padlock on a class you don't own yet
+		lock = kit.image(iconBox, "PadlockClosed", "Lock")
+		if lock then
+			lock.AnchorPoint = Vector2.new(0.5, 0.5)
+			lock.Position = UDim2.fromScale(0.8, 0.8)
+			lock.Size = UDim2.fromScale(0.56, 0.56)
+			lock.Rotation = 10
+			lock.ZIndex = 3
+		end
+	end
+
+	--// hover lift
+	local lift = Instance.new("UIScale")
+	lift.Parent = frame
+	frame.MouseEnter:Connect(function()
+		TweenService:Create(lift, TweenInfo.new(0.12), { Scale = 1.03 }):Play()
+	end)
+	frame.MouseLeave:Connect(function()
+		TweenService:Create(lift, TweenInfo.new(0.12), { Scale = 1 }):Play()
+	end)
+
 	frame.Activated:Connect(function()
+		if selectedKey ~= classKey then
+			sfx("ShopClick")
+			dIconScale.Scale = 0.7
+			TweenService:Create(dIconScale, TweenInfo.new(0.3, Enum.EasingStyle.Back,
+				Enum.EasingDirection.Out), { Scale = 1 }):Play()
+		end
 		selectedKey = classKey
 		renderAll()
 	end)
@@ -1015,6 +1494,7 @@ local function buildCard(order, classKey)
 	cardsByKey[classKey] = {
 		Frame = frame, Stroke = cardStroke, Chip = chip,
 		Icon = icon, Initial = initial, IconBox = iconBox,
+		Skinned = skinned, Lock = lock,
 	}
 end
 
@@ -1093,6 +1573,12 @@ shopRemote.OnClientEvent:Connect(function(action, a, b, c, d)
 		renderAll()
 		if celebrateKey and snapshot.OwnedClasses[celebrateKey] then
 			celebrate(celebrateKey)
+			if celebrateKey == selectedKey then
+				playUnlock() --// the padlock opens on the showcase
+			end
+			walletAnim.Scale = 1.2 --// the wallet thumps as the coins leave
+			TweenService:Create(walletAnim, TweenInfo.new(0.3, Enum.EasingStyle.Back,
+				Enum.EasingDirection.Out), { Scale = 1 }):Play()
 			celebrateKey = nil
 		end
 

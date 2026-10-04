@@ -1728,7 +1728,12 @@ Config.MvpCutscene = {
 	CameraMode = "Aim",
 	BoneFix = 1,
 
-	FieldOfView = 40,        -- default; match the Blender camera's vertical FOV
+	FieldOfView = 50,        -- default lens (was 40 to match the Blender camera; owner: wider, Oct 2026)
+	--// ZOOM OUT (owner, Oct 2026): the camera is pushed back along its own line
+	--// of sight to this many times its animated distance from the MVP, so the
+	--// whole body is in frame. 1 = the animation as authored. It stops short of
+	--// walls on its way back, so a tight corner cannot put it inside one.
+	CameraDistanceMult = 1.6,
 	Blur = true,             -- soft background so the MVP pops
 	BlurIntensity = 0.5,
 	Light = true,            -- a temporary light on the MVP for the shot
@@ -1756,11 +1761,40 @@ Config.MvpCutscene = {
 			Name = "Victory Fist",
 			AnimId = "137252127254351",
 			Keyframes = "MvpTest",
-			FieldOfView = 40,
+			FieldOfView = 50,
 			SoundId = "139638022608077",
 			SoundVolume = 1,
 			SoundDelay = 0,
 			SoundFadeOutSeconds = 3,
+		},
+	},
+
+	--// THE "ORDER UP!" REVEAL (owner, Oct 2026 - Claude Design art). When the
+	--// dance freezes, the MVP is SERVED: a checkered burst spins up, a cloche
+	--// drops on a giant plate, jiggles, and lifts in a puff of steam to reveal
+	--// the MVP's frozen pose (copied into a viewport so the art layers around
+	--// it), ketchup + mustard squirt across, a neon sign flickers on with
+	--// their title, and their order ticket slides along the rail and gets
+	--// stamped MVP. Background only - the character is never animated here.
+	--// MvpReveal.luau plays it; the ceremony follows when it fades.
+	Reveal = {
+		Enabled = true,
+		Seconds = 7,                      -- how long the card holds before fading
+		BackdropTop = Color3.fromRGB(18, 52, 59),    -- midnight teal (#12343B)
+		BackdropBottom = Color3.fromRGB(8, 26, 31),
+		NeonColor = Color3.fromRGB(255, 92, 170),    -- the hot-pink neon title
+		Art = {
+			MvpCheckerBurst = { Image = "rbxassetid://131713646001635" },
+			MvpPlate        = { Image = "rbxassetid://130305115638738" },
+			MvpCloche       = { Image = "rbxassetid://75267589505639" },
+			MvpSteamPuff    = { Image = "rbxassetid://130554494820106" },
+			MvpSauceKetchup = { Image = "rbxassetid://92781663376344" },
+			MvpSauceMustard = { Image = "rbxassetid://130640847386310" },
+			MvpTicketRail   = { Image = "rbxassetid://97854060559517" },
+			MvpOrderTicket  = { Image = "rbxassetid://125607750074480" },
+			MvpNeonOff      = { Image = "rbxassetid://127979901374228" },
+			MvpNeonOn       = { Image = "rbxassetid://122180643310439" },
+			MvpFoodConfetti = { Image = "rbxassetid://87343937539848" },
 		},
 	},
 }
@@ -1868,7 +1902,7 @@ Config.Classes = {
 		SkillQ = {
 			Id = "DoubleBatch",
 			Name = "DOUBLE BATCH",
-			Text = "Your next cook makes two dishes",
+			Text = "Your next cook makes two dishes!",
 			Emoji = "🍳",
 			IconId = "rbxassetid://77017928564773",
 			CooldownSeconds = 25,
@@ -1877,7 +1911,7 @@ Config.Classes = {
 		SkillR = {
 			Id = "SousChef",
 			Name = "SOUS CHEF",
-			Text = "Summon a helper who cooks and serves for a while",
+			Text = "Summon a helper who cooks and serves for a while.",
 			Emoji = "👨‍🍳",
 			IconId = "rbxassetid://135527262830265",
 			CooldownSeconds = 45,
@@ -1896,7 +1930,7 @@ Config.Classes = {
 			                   -- (orange glow); no pick in time = nearest is used
 		},
 		UltimateName = "FLASH FRY!",
-		UltimateText = "Instantly finish the pans that are cooking - perfectly",
+		UltimateText = "Instantly finish every pan that is cooking, perfectly!",
 		--// Levels 1->5: finish the task, then PAY to upgrade. Steps[L] is the
 		--// cumulative counter needed to leave level L; Costs[L] the coins.
 		--// Tuned for ~10-15 perfects per focused shift: Lv2 in a shift or two,
@@ -1924,9 +1958,9 @@ Config.Classes = {
 		SkillQ = {
 			Id = "Dash",
 			Name = "DASH",
-			Text = "Dash forward fast - great for catching runaways",
+			Text = "Dash forward fast, great for catching runaways!",
 			Emoji = "💨",
-			IconId = "rbxassetid://83750035573275",
+			IconId = "rbxassetid://132505436889109",
 			CooldownSeconds = 8,
 			DashSpeed = 85,       -- studs/sec during the burst (client-side, like sprint)
 			DashSeconds = 0.28,   -- burst length (~24 studs)
@@ -1934,9 +1968,9 @@ Config.Classes = {
 		SkillR = {
 			Id = "PlateJuggler",
 			Name = "PLATE JUGGLER",
-			Text = "Throw a ready dish straight to its table",
+			Text = "Throw a ready dish straight to its table!",
 			Emoji = "🍽️",
-			IconId = "rbxassetid://138988630662839",
+			IconId = "rbxassetid://115646653487779",
 			CooldownSeconds = 30, -- a strong shortcut (serve without walking), so it's rationed
 			--// 3D THROW (Sep 26 2026): press R holding a plated dish - the plate
 			--// arcs to the NEAREST table in range that ordered it. In range =
@@ -1949,7 +1983,7 @@ Config.Classes = {
 			                         -- plate leaves the hand (sync to the throw beat)
 		},
 		UltimateName = "DOUBLE TIME!",
-		UltimateText = "Move at double speed for 20 seconds",
+		UltimateText = "Move at double speed for 20 seconds!",
 		--// ~10-15 serves per focused shift
 		UpgradeTrack = {
 			Counter = "DishesServed", Label = "Dishes served",
@@ -1968,24 +2002,24 @@ Config.Classes = {
 		--// are chores, not skill windows - legal under THE LAW.
 		ChannelMult = 0.7,
 		UltimateName = "SPEED DIAL!",
-		UltimateText = "Fix the current emergency instantly",
+		UltimateText = "Fix the current emergency instantly!",
 		--// TWO ACTIVE SKILLS (Sep 21 2026, cooldown-based, keys Q + R).
 		--// SkillQ unlocks first, SkillR later (level gate TBD). Both act on
 		--// the CURRENT emergency, so they do nothing when nothing is wrong.
 		SkillQ = {
 			Id = "Toolbelt",
 			Name = "TOOLBELT",
-			Text = "Get the right tool for the emergency",
+			Text = "Get the right tool for the emergency.",
 			Emoji = "🧰",              -- shown until IconId is set
-			IconId = "rbxassetid://91158111919893",
+			IconId = "rbxassetid://128685287031429",
 			CooldownSeconds = 18,
 		},
 		SkillR = {
 			Id = "RushIn",
 			Name = "RUSH IN",
-			Text = "Teleport straight to the emergency",
+			Text = "Teleport straight to the emergency!",
 			Emoji = "💨",
-			IconId = "rbxassetid://81174550748841",
+			IconId = "rbxassetid://83591326702130",
 			CooldownSeconds = 28,
 			AnimId = "rbxassetid://100559736443155", -- the hired teleport animation
 			TeleportDelay = 0.5, -- play the animation this long BEFORE the blink
@@ -2013,18 +2047,18 @@ Config.Classes = {
 		SkillQ = {
 			Id = "WorkTheRoom",
 			Name = "WORK THE ROOM",
-			Text = "Grab the tips off the nearest couple of tables",
+			Text = "Grab the tips off the nearest couple of tables.",
 			Emoji = "💰",
-			IconId = "rbxassetid://76938945213347",
+			IconId = "rbxassetid://138682637065156",
 			CooldownSeconds = 40,
 			MaxTables = 2, -- how many of the CLOSEST paying tables it sweeps at once
 		},
 		SkillR = {
 			Id = "Superfan",
 			Name = "SUPERFAN",
-			Text = "Charm a table into fans - they tip big and leave a rave review",
+			Text = "Charm a table into fans. They tip big and leave a rave review!",
 			Emoji = "💖",
-			IconId = "rbxassetid://84924677383004",
+			IconId = "rbxassetid://73072528687335",
 			CooldownSeconds = 60, -- strong single-table buff (money + rep); kept rare
 			AnimId = "rbxassetid://135597748643578", -- hired charm animation; plays BEFORE the pick opens
 			AnimDelay = 0.4,         -- play the animation this long before the pick mode opens
@@ -2033,7 +2067,7 @@ Config.Classes = {
 			SuperfanRepBonus = 6,    -- extra reputation when they leave happy
 		},
 		UltimateName = "SWEET TALK!",
-		UltimateText = "Refill one table's patience by half",
+		UltimateText = "Refill half of one table's patience bar!",
 		--// ~4-8 collected payments per shift
 		UpgradeTrack = {
 			Counter = "PaymentsCollected", Label = "Payments collected",
@@ -2049,7 +2083,7 @@ Config.Classes = {
 		Display = "The Janitor",
 		Rarity = "Rare", RarityColor = Color3.fromRGB(245, 184, 65),
 		Price = 4000,
-		IconId = "rbxassetid://114280558316062", -- class card (Sep 30 2026)
+		IconId = "rbxassetid://133689458575801", -- class card (Sep 30 2026)
 		FlavorText = "Mops first, asks questions never.",
 		PassiveText = "Cleans messes faster",
 		--// ELBOW GREASE: multiplies the dust specks (vacuum) and plunge taps
@@ -2059,18 +2093,18 @@ Config.Classes = {
 		SkillQ = {
 			Id = "QuickSweep",
 			Name = "QUICK SWEEP",
-			Text = "Instantly clean the nearest mess",
+			Text = "Instantly clean the nearest mess!",
 			Emoji = "🧹",
-			IconId = "rbxassetid://84930654118988", -- QUICK SWEEP (Sep 30 2026)
+			IconId = "rbxassetid://120473172893577", -- QUICK SWEEP (Sep 30 2026)
 			CooldownSeconds = 25,
 			RangeStuds = 25, -- the mess must be this close (no cross-map zaps)
 		},
 		SkillR = {
 			Id = "GuardedZone",
 			Name = "GUARDED ZONE",
-			Text = "Drop a caution cone - new messes stay out of its ring",
+			Text = "Drop a caution cone. New messes stay out of its ring!",
 			Emoji = "🚧",
-			IconId = "rbxassetid://85896301718590", -- GUARDED ZONE (Sep 30 2026)
+			IconId = "rbxassetid://131823394771936", -- GUARDED ZONE (Sep 30 2026)
 			CooldownSeconds = 45,
 			PlaceAheadStuds = 6,   -- the cone lands this far in front of you
 			RadiusStuds = 14,      -- the protected ring's radius
@@ -2081,7 +2115,7 @@ Config.Classes = {
 			CancelChance = 0.5,
 		},
 		UltimateName = "FLOOR BUFFER!",
-		UltimateText = "Ride a floor buffer - faster, and you clean any mess you run over",
+		UltimateText = "Ride a floor buffer! Move faster and clean any mess you run over.",
 		--// ~15-25 cleans in a busy shift
 		UpgradeTrack = {
 			Counter = "MessesCleaned", Label = "Messes cleaned",
@@ -2097,30 +2131,64 @@ Config.Classes = {
 --// draws the two buttons. Only the Fixer has skills so far.
 Config.Skills = {
 	Enabled = true,
-	--// STUDIO KNOB (live-ignored): treat every skill as unlocked so they
-	--// can be tested before the level-gate exists. Revert to false later.
-	StudioUnlockAll = true,
+	--// STUDIO KNOB (live-ignored): true = every skill unlocked in Studio,
+	--// ignoring UnlockLevels below (handy for testing one class's full kit).
+	StudioUnlockAll = false, --// the level gate applies in Studio too
 	--// keyboard keys per slot (the client also wires touch buttons + gamepad)
 	QKey = "Q",
 	RKey = "R",
 	--// DISPLAY ONLY - the class shop shows it on the ultimate tile.
 	--// ChargeClient binds the ultimate to T itself; change both together.
 	UltKey = "T",
+
+	--// THE LEVEL GATE (owner spec, Oct 4 2026): the CLASS level each slot
+	--// unlocks at. Buying a class = level 1 = Q. Enforced on the game SERVER
+	--// (SkillService, ChargeService) off the ClassLevel attribute that
+	--// ClassService publishes; the HUD and the lobby only draw it.
+	UnlockLevels = { SkillQ = 1, SkillR = 3, Ultimate = 5 },
 }
+
+--// the class level a slot ("SkillQ" / "SkillR" / "Ultimate") unlocks at
+function Config.SkillUnlockLevel(slot)
+	local levels = Config.Skills.UnlockLevels or {}
+	return levels[slot] or 1
+end
 
 Config.ClassShop = {
 	CardOrder = { "Trainee", "Chef", "Waiter", "Fixer", "Charmer", "Janitor" },
-	VendorGreetings = {
-		"Lookin' to move up in the world?",
-		"Aprons, skills, destinies - take your pick!",
-		"The Trainee look suits you. But so would a promotion...",
-		"Every legend started with a name tag!",
-	},
 	CameraFocus = true,           -- brief camera tween toward the vendor on talk
-	TagMaxDistanceStuds = 45,     -- vendor nametag/bubble hidden beyond this range
+	TagMaxDistanceStuds = 45,     -- vendor nametag hidden beyond this range
 	CameraTweenSeconds = 0.35,
 	WalkAwayCloseStuds = 14,      -- wandering off closes the screen
-	BubbleSeconds = 3,            -- vendor speech bubble lifetime
+
+	--// THE CLASSES SCREEN ART KIT (Claude Design, uploaded Oct 4 2026 - all
+	--// 18). Skins the ORIGINAL layout (owner call). "Tintable" pieces are
+	--// drawn white and coloured in code (rarity / skill-slot colours). The
+	--// shop + Staff Room kits fill in the shared sprites (glow, sparkle,
+	--// confetti, pop burst, XP bar frame). SliceBy = "Height": the border
+	--// scales with the piece's height, so wide rows keep crisp ends.
+	Art = {
+		ListPanel       = { Image = "rbxassetid://131870514431302", Size = { 512, 1024 }, Slice = { 80, 80, 432, 944 } },
+		DetailPanel     = { Image = "rbxassetid://115708091698333", Size = { 640, 1024 }, Slice = { 80, 80, 560, 944 } },
+		ClassCard       = { Image = "rbxassetid://118746531994785", Size = { 512, 160 }, Slice = { 150, 40, 472, 112 }, SliceBy = "Height" },
+		IconFrame       = { Image = "rbxassetid://76555218449100",  Size = { 192, 192 } },
+		StateChip       = { Image = "rbxassetid://125620583793495", Size = { 384, 96 }, Slice = { 48, 30, 336, 66 }, SliceBy = "Height" },
+		HeaderBand      = { Image = "rbxassetid://125481457140498", Size = { 640, 160 }, Slice = { 60, 50, 580, 110 } },
+		ShowcaseFrame   = { Image = "rbxassetid://101932098176579", Size = { 384, 384 } },
+		XPBarFillGold   = { Image = "rbxassetid://93696390740312",  Size = { 768, 96 }, Slice = { 48, 20, 720, 76 }, SliceBy = "Height" },
+		SectionBanner   = { Image = "rbxassetid://101957517626262", Size = { 640, 96 }, Slice = { 110, 30, 530, 66 }, SliceBy = "Height" },
+		SkillTile       = { Image = "rbxassetid://118731362801245", Size = { 256, 256 } },
+		PriceButtonGold = { Image = "rbxassetid://78325364323740",  Size = { 512, 160 }, Slice = { 90, 50, 422, 110 } },
+		WalletPill      = { Image = "rbxassetid://86532770174788",  Size = { 512, 128 } },
+		CloseBar        = { Image = "rbxassetid://96219733448585",  Size = { 384, 128 } },
+		SkillCard       = { Image = "rbxassetid://95814778305310",  Size = { 512, 640 } },
+		--// the lock on unowned classes + its UNLOCK animation pieces (the three
+		--// padlock images stack pixel-perfectly; the key's teeth point right)
+		PadlockClosed   = { Image = "rbxassetid://96229176346722" },
+		PadlockBody     = { Image = "rbxassetid://98712535402678" },
+		PadlockShackle  = { Image = "rbxassetid://109630743838323" },
+		PadlockKey      = { Image = "rbxassetid://84410120304580" },
+	},
 }
 
 ----------------------------------------------------------------
@@ -2153,8 +2221,8 @@ Config.PlayerStats = {
 		StaffBadge       = { Image = "rbxassetid://117121583134619", Size = { 1024, 640 } },
 		PhotoFrame       = { Image = "rbxassetid://90651633123946",  Size = { 512, 512 } },
 		LevelMedal       = { Image = "rbxassetid://125032475036748", Size = { 384, 448 } },
-		XPBarFrame       = { Image = "rbxassetid://136175340962616", Size = { 768, 96 }, Slice = { 48, 20, 720, 76 } },
-		XPBarFill        = { Image = "rbxassetid://78479238895262",  Size = { 768, 96 }, Slice = { 48, 20, 720, 76 } },
+		XPBarFrame       = { Image = "rbxassetid://136175340962616", Size = { 768, 96 }, Slice = { 48, 20, 720, 76 }, SliceBy = "Height" },
+		XPBarFill        = { Image = "rbxassetid://78479238895262",  Size = { 768, 96 }, Slice = { 48, 20, 720, 76 }, SliceBy = "Height" },
 		Receipt          = { Image = "rbxassetid://87202672687941",  Size = { 512, 1024 }, Slice = { 40, 60, 472, 934 } },
 		RegisterSlot     = { Image = "rbxassetid://125034055855124", Size = { 768, 256 } },
 		TrophyGold       = { Image = "rbxassetid://119285661184565", Size = { 384, 512 } },
@@ -3218,6 +3286,39 @@ Config.Gestures = {
 	Sit = "rbxassetid://2506281703",   -- held (looped) while parked on a chair
 	Walk = "rbxassetid://507777826",   -- the catalog R15 walk cycle - looped by
 	                                   -- customers AND the Helper while moving
+}
+
+----------------------------------------------------------------
+-- THE ENTRANCE CUTSCENE (owner trial, Oct 2026). When a shift's PREP
+-- begins, each player gets a short film: an aerial sweep of the map, their
+-- character walking in along the queue line, a look around the restaurant,
+-- then the "fire up" pose (the catalog Cheer emote - PLAYED, never
+-- authored) with a title slam. Skippable. EntranceCutscene.client.luau
+-- plays it; everything is local to each player.
+-- TO REMOVE: set Enabled = false (or delete that script + this block).
+----------------------------------------------------------------
+Config.EntranceCutscene = {
+	Enabled = false, --// OFF (owner, Oct 4 2026): not up to standard yet - true to bring it back
+	OncePerSession = true,       -- false = every shift's PREP, not just the first
+	Skippable = true,
+	--// the walk-in starts this far BEHIND the back of the queue (along the
+	--// queue line) and ends at the front. Parts tagged EntranceStart /
+	--// EntranceEnd (owner-placed, optional) override the automatic path.
+	WalkBackStuds = 18,
+	WalkTimeoutSeconds = 6,      -- never wait forever on a blocked walk
+	--// THE SHIFT WAITS for every player's film to finish before it starts
+	--// (no customers meanwhile) - but never longer than this past the prep
+	--// countdown, so one stuck / AFK player cannot hold everyone up
+	MaxHoldSeconds = 20,
+	--// shot lengths (seconds)
+	AerialSeconds = 3.2,         -- the opening SHOWCASE view (a part tagged
+	                             -- EntranceCam sets it; no rotation)
+	ShowcaseDriftStuds = 3,      -- slow push-in over that shot (0 = dead still)
+	LookAroundSeconds = 2.6,
+	PoseSeconds = 3.2,
+	PoseGesture = "Cheer",       -- a key of Config.Gestures (the "fire up")
+	TitleText = "LET'S COOK!",
+	LetterboxScale = 0.1,
 }
 
 ----------------------------------------------------------------

@@ -1032,8 +1032,13 @@ skillRemote.OnServerEvent:Connect(function(player, action, a, b)
 	local skillDef = skillFor(player, slot)
 	if not skillDef then return end --// this class has no skill in that slot
 
-	--// (LEVEL GATE TODO: SkillR unlocks later. For now every owned skill is
-	--// usable - StudioUnlockAll keeps it that way until the gate exists.)
+	--// THE LEVEL GATE: the slot must be unlocked at this class level
+	--// (ClassLevel is server-set by ClassService - Q 1, R 3)
+	local need = Config.SkillUnlockLevel(slot == "Q" and "SkillQ" or "SkillR")
+	if (player:GetAttribute("ClassLevel") or 0) < need then
+		skillRemote:FireClient(player, "Denied", slot, ("Unlocks at class level %d!"):format(need))
+		return
+	end
 
 	local now = os.clock()
 	cooldowns[player] = cooldowns[player] or {}

@@ -176,10 +176,15 @@ function UIKit.artKit(...)
 			image.SliceCenter = Rect.new(s[1], s[2], s[3], s[4])
 			local nativeW = e.Size and e.Size[1] or 512
 			local nativeH = e.Size and e.Size[2] or 512
+			--// SliceBy "Height"/"Width": scale the border off that one side
+			--// (wide rows keep crisp ends); default = the tighter side
 			local function rescale()
 				local size = frame.AbsoluteSize
 				if size.X > 0 and size.Y > 0 then
-					image.SliceScale = math.clamp(math.min(size.X / nativeW, size.Y / nativeH), 0.05, 4)
+					local sx, sy = size.X / nativeW, size.Y / nativeH
+					local s = (e.SliceBy == "Height" and sy) or (e.SliceBy == "Width" and sx)
+						or math.min(sx, sy)
+					image.SliceScale = math.clamp(s, 0.05, 4)
 				end
 			end
 			frame:GetPropertyChangedSignal("AbsoluteSize"):Connect(rescale)

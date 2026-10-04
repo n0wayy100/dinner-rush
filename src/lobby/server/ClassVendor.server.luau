@@ -3,8 +3,8 @@
 	ServerScriptService.Server.ClassVendor  (regular Script, server-side)
 
 	The class-shop NPC. A rig tagged ClassVendor (owner places + tags it)
-	gets a floating "CLASSES" nametag, a Talk prompt, and a speech bubble
-	that shows a rotating greeting when someone talks to it.
+	gets a floating "CLASSES" nametag and a Talk prompt (the greeting
+	speech bubble was removed, Oct 2026).
 
 	All shop STATE goes through ProfileAPI (the module next to this script)
 	- purchases and equips are validated server-side in there, never here
@@ -62,8 +62,6 @@ end
 ----------------------------------------------------------------
 -- Vendor setup
 ----------------------------------------------------------------
-local bubbleLabel, bubbleGui
-local bubbleSerial = 0
 
 local function buildVendorUi(root)
 	--// Floating nametag, in the lobby's chunky sticker style.
@@ -89,57 +87,7 @@ local function buildVendorUi(root)
 	tagLabel.TextStrokeTransparency = 0
 	tagLabel.Text = "CLASSES"
 	tagLabel.Parent = tag
-
-	--// Speech bubble: hidden until someone talks. Same studs treatment -
-	--// only the player standing at the vendor needs to read it anyway.
-	bubbleGui = Instance.new("BillboardGui")
-	bubbleGui.Name = "VendorBubble"
-	bubbleGui.Size = UDim2.new(7, 0, 1.9, 0)
-	bubbleGui.StudsOffsetWorldSpace = Vector3.new(0, 5, 0)
-	bubbleGui.AlwaysOnTop = false
-	bubbleGui.MaxDistance = SHOP.TagMaxDistanceStuds
-	bubbleGui.Enabled = false
-	bubbleGui.Parent = root
-
-	local bubble = Instance.new("Frame")
-	bubble.Size = UDim2.fromScale(1, 1)
-	bubble.BackgroundColor3 = Color3.fromRGB(255, 246, 233)
-	bubble.Parent = bubbleGui
-
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 12)
-	corner.Parent = bubble
-
-	local stroke = Instance.new("UIStroke")
-	stroke.Thickness = 2.5
-	stroke.Color = Color3.fromRGB(59, 43, 32)
-	stroke.Parent = bubble
-
-	bubbleLabel = Instance.new("TextLabel")
-	bubbleLabel.Size = UDim2.fromScale(0.92, 0.8)
-	bubbleLabel.AnchorPoint = Vector2.new(0.5, 0.5)
-	bubbleLabel.Position = UDim2.fromScale(0.5, 0.5)
-	bubbleLabel.BackgroundTransparency = 1
-	bubbleLabel.Font = Enum.Font.FredokaOne
-	bubbleLabel.TextScaled = true
-	bubbleLabel.TextWrapped = true
-	bubbleLabel.TextColor3 = Color3.fromRGB(59, 43, 32)
-	bubbleLabel.Text = ""
-	bubbleLabel.Parent = bubble
-end
-
-local function showGreeting()
-	if not bubbleGui then return end
-	bubbleSerial += 1
-	local mySerial = bubbleSerial
-
-	bubbleLabel.Text = SHOP.VendorGreetings[math.random(#SHOP.VendorGreetings)]
-	bubbleGui.Enabled = true
-	task.delay(SHOP.BubbleSeconds, function()
-		if bubbleSerial == mySerial and bubbleGui then
-			bubbleGui.Enabled = false
-		end
-	end)
+	--// (the greeting speech bubble was removed - owner call, Oct 2026)
 end
 
 local function setupVendor(root)
@@ -163,7 +111,6 @@ local function setupVendor(root)
 	prompt.Parent = root
 
 	prompt.Triggered:Connect(function(player)
-		showGreeting()
 		shopRemote:FireClient(player, "Open", ProfileAPI.GetSnapshot(player), root)
 	end)
 
