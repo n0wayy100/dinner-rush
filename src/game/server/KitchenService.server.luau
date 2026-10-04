@@ -890,7 +890,7 @@ local GAME_MAX = 5 --// highest defined id (force-knob bounds)
 --// THE LIVE POOL: which game ids the roll actually draws from. Recipe
 --// math (2) was retired from live play (Sep 21) but its code stays for
 --// the tutorial, so it is simply absent from this list.
-local POOL = PICK.Pool or { GAME_ARROW, GAME_CARDS, GAME_RHYTHM, GAME_WHACK }
+local POOL = PICK.Pool or { GAME_ARROW, GAME_CARDS, GAME_WHACK } --// rhythm retired Oct 2026
 local POOL_N = #POOL
 
 local pickStreaks = {} --// [userId] = { Game = <id>, Count = n in a row }

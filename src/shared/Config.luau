@@ -312,7 +312,10 @@ Config.CookMinigamePick = {
 	--// found it un-fun / a struggle) and replaced by TWO reflex games,
 	--// rhythm tap + whack. Math's code stays for the tutorial but is no
 	--// longer rolled. These are the game ids the live roll draws from.
-	Pool = { 1, 3, 4, 5 }, -- arrow, cards, rhythm, whack
+	--// RHYTHM TAP RETIRED (owner, Oct 3 2026): pulled from the live roll,
+	--// the way recipe math was. Its code stays (and StudioForceGame = 4
+	--// still opens it) in case it comes back.
+	Pool = { 1, 3, 5 }, -- arrow, cards, whack
 }
 
 ----------------------------------------------------------------
