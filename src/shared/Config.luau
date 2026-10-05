@@ -80,6 +80,10 @@ Config.CookMethodAliases = {
 	--// different timing.
 	Rice = "Boiling",
 	Pot = "Boiling",
+	--// The Paris bistro's ovens (croissant + ratatouille). Baking borrows
+	--// Grilling's window - the slower cook suits an oven, and a new METHOD
+	--// is still not a new difficulty (THE LAW).
+	Oven = "Grilling",
 }
 
 function Config.CookingFor(method)
@@ -153,6 +157,25 @@ Config.Ingredients = {
 		Source = "Fridge", Color = Color3.fromRGB(236, 214, 170),
 		Stock = 15,
 	},
+
+	--// PARIS BISTRO (the French map). Icons pending the owner's uploads -
+	--// "" ships ugly-but-working. Veggies come off the DRY SHELF so the
+	--// three pickups are not all crowding one fridge.
+	RawCroissant = {
+		Display = "Croissant Dough", Icon = "", -- raw_croissant
+		Source = "Fridge", Color = Color3.fromRGB(240, 222, 190),
+		Stock = 18,
+	},
+	RawVeggies = {
+		Display = "Chopped Veggies", Icon = "", -- raw_ratatouille
+		Source = "DryShelf", Color = Color3.fromRGB(150, 170, 80),
+		Stock = 15,
+	},
+	RawSeafood = {
+		Display = "Seafood", Icon = "", -- raw_bouillabaisse
+		Source = "Fridge", Color = Color3.fromRGB(232, 196, 186),
+		Stock = 15,
+	},
 }
 
 ----------------------------------------------------------------
@@ -220,6 +243,24 @@ Config.Recipes = {
 		Ingredient = "RawPork", Method = "Pot", Timing = "Boiling",
 		Color = Color3.fromRGB(120, 72, 44), PriceMult = 1.4,
 	},
+
+	--// THE PARIS MENU. Croissant and ratatouille share the ovens;
+	--// bouillabaisse simmers in the pot. Staple, mid, signature.
+	Croissant = {
+		Display = "Croissant", Short = "Croissant", Icon = "", -- cooked_croissant
+		Ingredient = "RawCroissant", Method = "Oven", Timing = "Grilling",
+		Color = Color3.fromRGB(214, 150, 70), PriceMult = 0.8,
+	},
+	Ratatouille = {
+		Display = "Ratatouille", Short = "Ratatouille", Icon = "", -- cooked_ratatouille
+		Ingredient = "RawVeggies", Method = "Oven", Timing = "Grilling",
+		Color = Color3.fromRGB(196, 74, 52), PriceMult = 1.0,
+	},
+	Bouillabaisse = {
+		Display = "Bouillabaisse", Short = "Fish Stew", Icon = "", -- cooked_bouillabaisse
+		Ingredient = "RawSeafood", Method = "Pot", Timing = "Boiling",
+		Color = Color3.fromRGB(226, 140, 60), PriceMult = 1.4,
+	},
 }
 
 ----------------------------------------------------------------
@@ -240,6 +281,7 @@ Config.CookMethodDisplay = {
 	Ramen = { Label = "RAMEN POT", IconId = "" },
 	Rice  = { Label = "RICE COOKER", IconId = "" },
 	Pot   = { Label = "POT",         IconId = "" },
+	Oven  = { Label = "OVEN",        IconId = "" },
 }
 
 --// Where a raw ingredient is kept, in words. Keyed by Ingredients[x].Source.
@@ -716,7 +758,7 @@ Config.Kitchen = {
 	--// Rice and Pot start at the ramen cooker's lift; nudge per station
 	--// once the Manila props are placed.
 	StationFoodLiftStuds = { Grill = -0.49, Fry = 0.0, Ramen = 0.20,
-		Rice = 0.20, Pot = 0.20 },
+		Rice = 0.20, Pot = 0.20, Oven = 0.20 }, --// Oven: nudge once the ovens are placed
 	--// What a station SHOWS while cooking, when it isn't the raw item you
 	--// carried in (owner call, Oct 2026: rice goes in the cooker loose, not
 	--// in its sack). A value is either a DishModels item name, or a TRIM of
@@ -747,7 +789,7 @@ Config.Kitchen = {
 	--// A method missing here falls back to the grill sizzle.
 	CookSfxByMethod = {
 		Fry = "CookFry", Grill = "CookGrill", Ramen = "CookRamen",
-		Rice = "CookRice", Pot = "CookPot",
+		Rice = "CookRice", Pot = "CookPot", Oven = "CookOven",
 	},
 	PickupHoldSeconds = 0,        -- fridge / dry shelf prompt
 	StationLoadHoldSeconds = 0,   -- starting a cook
@@ -938,6 +980,9 @@ Config.Supplier = {
 		RawPork = 30,
 		RawRice = 12,
 		RawLumpia = 20,
+		RawCroissant = 15,
+		RawVeggies = 15,
+		RawSeafood = 30,
 	},
 
 	--// Placeholder delivery props, replaced by your own truck model later
@@ -3061,6 +3106,14 @@ Config.Maps = {
 		ShiftBarIcon = "🍚",
 		Menu = { SteamedRice = 5, Lumpia = 4, AdoboPork = 3 },
 	},
+	{
+		Id = "French", --// MUST match the model name in ServerStorage.Maps
+		Display = "Paris Bistro", --// rename freely; the Id is the plumbing
+		ImageId = "", --// owner's banner pending; shows a lettered placeholder
+		Available = true,
+		ShiftBarIcon = "🥐",
+		Menu = { Croissant = 5, Ratatouille = 4, Bouillabaisse = 3 },
+	},
 }
 
 --// The map a party gets when nothing valid was chosen. Must be an Available
@@ -3136,7 +3189,7 @@ Config.PhaseBanner = {
 --// ingredients - without the lobby handoff or a per-test command line.
 --// "" falls back to DefaultMapId. Live servers ignore this completely:
 --// the lobby's teleport data always wins there.
-Config.StudioMapId = "Filipino" --// building out Manila (Sep 27)
+Config.StudioMapId = "French" --// playtesting the Paris bistro (Oct 2026; was "Filipino")
 
 --// STUDIO-ONLY spawn burst: this many parties march in the moment the
 --// shift goes RUNNING, so route/seating tests need no command bar.
@@ -3362,6 +3415,11 @@ Config.Sfx = {
 			MinStuds = 8, MaxStuds = 25,
 		},
 		CookPot = {
+			Id = "", Volume = 0.5, Loop = true,
+			MinStuds = 8, MaxStuds = 28,
+		},
+		--// The Paris ovens: a low hum/crackle while something bakes
+		CookOven = {
 			Id = "", Volume = 0.5, Loop = true,
 			MinStuds = 8, MaxStuds = 28,
 		},
