@@ -3672,6 +3672,72 @@ Config.Passives = {
 
 	HotStreakCap = 10,    -- Hot Streak stops growing after this many Perfects in a row
 
+	--// THE CRATE (lobby: CrateServer + CrateClient). Coins only - but coins
+	--// can be bought with Robux, so Roblox treats crates as PAID RANDOM
+	--// ITEMS: the odds are always shown before opening, and players whose
+	--// policy restricts paid random items never see crates (server check).
+	CratePrice = 300,
+	OpenCooldownSeconds = 2,   -- server-side gap between opens (anti-spam)
+	--// a duplicate refunds this fraction of the price, by rarity
+	DuplicateRefund = { Common = 0.25, Rare = 0.4, Epic = 0.6, Legendary = 1.0 },
+	ShoutLegendary = true,     -- tell the whole lobby when someone pulls a Legendary
+
+	--// THE CRATE ART KIT (Oct 2026, Claude Design, uploaded under the group)
+	Art = {
+		--// the crate, layered for the opening
+		Crate_Closed    = { Image = "rbxassetid://122951776534027" },
+		Crate_Base      = { Image = "rbxassetid://91245163376700" },
+		Crate_LidNoBow  = { Image = "rbxassetid://132196174453159" },
+		Crate_Bow       = { Image = "rbxassetid://100959292048611" },
+		--// effects (the white ones are tinted in code)
+		Burst_Rays      = { Image = "rbxassetid://126897653400277" },
+		Burst_Sparkles  = { Image = "rbxassetid://96696987271848" },
+		Glow_Orb        = { Image = "rbxassetid://112614074005212" },
+		Shine_Sweep     = { Image = "rbxassetid://100765736686318" },
+		FX_Poof_Sheet   = { Image = "rbxassetid://135122598601770" },   -- 4x4 flipbook
+		FX_Twinkle_Sheet = { Image = "rbxassetid://136972759843230" },  -- 4x4 flipbook
+		FX_Firework_Sheet = { Image = "rbxassetid://134917788894813" }, -- 4x4 flipbook
+		FX_LightPillar  = { Image = "rbxassetid://138907891298625" },
+		FX_Swirl        = { Image = "rbxassetid://138981034313410" },
+		FX_Shockwave    = { Image = "rbxassetid://100542277168187" },
+		FX_Confetti_Sheet = { Image = "rbxassetid://114215766119402" }, -- 4x2 pieces
+		FX_Vignette     = { Image = "rbxassetid://93040651660492" },
+		--// cards (640x880)
+		Card_Common     = { Image = "rbxassetid://84310083051354" },
+		Card_Rare       = { Image = "rbxassetid://97810334966654" },
+		Card_Epic       = { Image = "rbxassetid://84129714677361" },
+		Card_Legendary  = { Image = "rbxassetid://104456558148686" },
+		Card_Back       = { Image = "rbxassetid://91235961502890" },
+		Card_Locked     = { Image = "rbxassetid://106016579890840" },
+		Rarity_Ribbon   = { Image = "rbxassetid://139551193322892" },
+		--// interface
+		Pity_BarFrame   = { Image = "rbxassetid://112994871721526" },
+		Pity_BarFill    = { Image = "rbxassetid://88581804544602" },
+		Odds_Button     = { Image = "rbxassetid://112454625816826" },
+		Passive_Badge   = { Image = "rbxassetid://90083216851596" },
+		Equipped_Check  = { Image = "rbxassetid://136845914343410" },
+		Gem_Common      = { Image = "rbxassetid://98782060738863" },
+		Gem_Rare        = { Image = "rbxassetid://97421438119335" },
+		Gem_Epic        = { Image = "rbxassetid://128018647579047" },
+		Gem_Legendary   = { Image = "rbxassetid://110452376154844" },
+
+		--// SCREEN CHROME (Prompt 6). Slice = the stretchable middle in the
+		--// image's own pixels (corners/ends stay crisp) - nudge if an edge
+		--// looks squashed in game.
+		Crates_Background = { Image = "rbxassetid://76377371913218" },  -- 1024x576
+		Hero_Pedestal   = { Image = "rbxassetid://118150673615475" },    -- 1024x512
+		Spotlight_Cone  = { Image = "rbxassetid://96817290963375" },     -- white, tinted
+		Name_Plaque     = { Image = "rbxassetid://100817205747578" },    -- 1024x256
+		Odds_BarPlate   = { Image = "rbxassetid://122646257718574", Size = { 1024, 192 }, Slice = { 110, 40, 914, 152 } },
+		List_Row        = { Image = "rbxassetid://79093136626610", Size = { 1024, 400 }, Slice = { 120, 120, 904, 280 } },
+		Side_Panel      = { Image = "rbxassetid://131412362768835", Size = { 768, 1024 }, Slice = { 140, 140, 628, 884 } },
+		Button_Green    = { Image = "rbxassetid://94621121377241", Size = { 1024, 320 }, Slice = { 150, 70, 874, 250 } },
+		Button_Red      = { Image = "rbxassetid://105788931182924", Size = { 1024, 320 }, Slice = { 150, 70, 874, 250 } },
+		Button_Blue     = { Image = "rbxassetid://126765762339578", Size = { 1024, 320 }, Slice = { 150, 70, 874, 250 } },
+		Button_Crates   = { Image = "rbxassetid://89022760716327" },     -- the lobby dock sticker
+		Coin_Pill       = { Image = "rbxassetid://115892893076748", Size = { 768, 192 }, Slice = { 200, 50, 680, 142 } },
+	},
+
 	--// What "no passive" means for each attribute
 	Defaults = {
 		StaminaDrainMult = 1, StaminaRegenMult = 1, WalkSpeedMult = 1,
@@ -3683,7 +3749,7 @@ Config.Passives = {
 
 	--// Display order (also the crate odds table order)
 	Order = {
-		"SecondWind", "Waterboy", "SeatMaster", "OrderAce", "SmoothTalker",
+		"SecondWind", "SeatMaster", "OrderAce", "SmoothTalker",
 		"LightFeet", "RushHourHero", "FastService", "ChefsKiss", "ChargedUp",
 		"QuickStep", "HotStreak", "SilverTongue", "QuickRecharge",
 		"Overtime", "BigPockets",
@@ -3691,58 +3757,55 @@ Config.Passives = {
 
 	List = {
 		--// COMMON
-		SecondWind = { Display = "Second Wind", Rarity = "Common", Icon = "",
+		SecondWind = { Display = "Second Wind", Rarity = "Common", Icon = "rbxassetid://100917769873072",
 			Description = "Stamina refills 25% faster",
 			Effects = { StaminaRegenMult = 1.25 } },
-		Waterboy = { Display = "Waterboy", Rarity = "Common", Icon = "",
-			Description = "Fill the water pitcher 35% faster",
-			Effects = { FillHoldMult = 1 / 1.35 } },
-		SeatMaster = { Display = "Seat Master", Rarity = "Common", Icon = "",
+		SeatMaster = { Display = "Seat Master", Rarity = "Common", Icon = "rbxassetid://108164505165021",
 			Description = "Parties you seat get 10% more patience",
 			Effects = { SeatBonusFraction = 0.10 } },
-		OrderAce = { Display = "Order Ace", Rarity = "Common", Icon = "",
+		OrderAce = { Display = "Order Ace", Rarity = "Common", Icon = "rbxassetid://136219635394311",
 			Description = "Orders you take give 10% more patience",
 			Effects = { OrderBonusFraction = 0.10 } },
-		SmoothTalker = { Display = "Smooth Talker", Rarity = "Common", Icon = "",
+		SmoothTalker = { Display = "Smooth Talker", Rarity = "Common", Icon = "rbxassetid://128325893573938",
 			Description = "Your recommendations calm tables 35% more",
 			Effects = { RecommendBonusMult = 1.35 } },
 
 		--// RARE
-		LightFeet = { Display = "Light Feet", Rarity = "Rare", Icon = "",
+		LightFeet = { Display = "Light Feet", Rarity = "Rare", Icon = "rbxassetid://95284852075166",
 			Description = "Sprint drains 20% slower",
 			Effects = { StaminaDrainMult = 0.80 } },
-		RushHourHero = { Display = "Rush Hour Hero", Rarity = "Rare", Icon = "",
+		RushHourHero = { Display = "Rush Hour Hero", Rarity = "Rare", Icon = "rbxassetid://130936531175265",
 			Description = "Move 12% faster during the RUSH",
 			Effects = { RushSpeedMult = 1.12 } },
-		FastService = { Display = "Fast Service", Rarity = "Rare", Icon = "",
+		FastService = { Display = "Fast Service", Rarity = "Rare", Icon = "rbxassetid://115762699903457",
 			Description = "Dishes you serve give 30% more patience",
 			Effects = { ServeBonusMult = 1.30 } },
-		ChefsKiss = { Display = "Chef's Kiss", Rarity = "Rare", Icon = "",
+		ChefsKiss = { Display = "Chef's Kiss", Rarity = "Rare", Icon = "rbxassetid://138855825254120",
 			Description = "Perfect dishes you cook earn 15% extra",
 			Effects = { PerfectBonusFraction = 0.15 } },
-		ChargedUp = { Display = "Charged Up", Rarity = "Rare", Icon = "",
+		ChargedUp = { Display = "Charged Up", Rarity = "Rare", Icon = "rbxassetid://132529366633365",
 			Description = "Your ultimate charges 15% faster",
 			Effects = { ChargeMult = 1.15 } },
 
 		--// EPIC
-		QuickStep = { Display = "Quick Step", Rarity = "Epic", Icon = "",
+		QuickStep = { Display = "Quick Step", Rarity = "Epic", Icon = "rbxassetid://122115856119479",
 			Description = "Move 7% faster, always",
 			Effects = { WalkSpeedMult = 1.07 } },
-		HotStreak = { Display = "Hot Streak", Rarity = "Epic", Icon = "",
+		HotStreak = { Display = "Hot Streak", Rarity = "Epic", Icon = "rbxassetid://73351767112598",
 			Description = "Each Perfect in a row earns 4% more, a miss resets it",
 			Effects = { StreakBonusStep = 0.04 } },
-		SilverTongue = { Display = "Silver Tongue", Rarity = "Epic", Icon = "",
+		SilverTongue = { Display = "Silver Tongue", Rarity = "Epic", Icon = "rbxassetid://133562798343795",
 			Description = "Payments you collect are worth 12% more",
 			Effects = { MoneyMult = 1.12 } },
-		QuickRecharge = { Display = "Quick Recharge", Rarity = "Epic", Icon = "",
+		QuickRecharge = { Display = "Quick Recharge", Rarity = "Epic", Icon = "rbxassetid://129513382195119",
 			Description = "Q and R cool down 15% faster",
 			Effects = { CooldownMult = 0.85 } },
 
 		--// LEGENDARY
-		Overtime = { Display = "Overtime", Rarity = "Legendary", Icon = "",
+		Overtime = { Display = "Overtime", Rarity = "Legendary", Icon = "rbxassetid://96640092165504",
 			Description = "15% bonus coins into your wallet every shift",
 			Effects = { WalletBonusMult = 1.15 } },
-		BigPockets = { Display = "Big Pockets", Rarity = "Legendary", Icon = "",
+		BigPockets = { Display = "Big Pockets", Rarity = "Legendary", Icon = "rbxassetid://103991587954996",
 			Description = "Carry 3 items instead of 2",
 			Effects = { CarryBonus = 1 } },
 	},
@@ -3795,6 +3858,9 @@ Config.Profile = {
 		--// PASSIVES (Oct 2026): owned set + the one equipped (Config.Passives)
 		OwnedPassives = {},           -- ["LightFeet"] = true
 		EquippedPassive = "",         -- "" = none
+		CratePityEpic = 0,            -- crates opened since the last Epic-or-better
+		CratePityLegendary = 0,       -- crates opened since the last Legendary
+		CratesOpened = 0,             -- lifetime count
 
 		--// Cumulative, lifetime. Single-shift challenge counts live in server
 		--// memory (spec 4) - only their completions land here.

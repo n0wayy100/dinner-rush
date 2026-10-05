@@ -42,6 +42,7 @@
 	ProfileAPI.UpgradeClass(player, classKey)  -> ok, reasonText?
 	ProfileAPI.GrantPassive(player, key)       -> ok, reasonText?  (crates)
 	ProfileAPI.EquipPassive(player, key)       -> ok, reasonText?  ("" unequips)
+	ProfileAPI.OpenCrate(player)               -> ok, result | reasonText  (pay + roll)
 	ProfileAPI.Changed -> Signal(player)
 	=============================================================
 
@@ -161,7 +162,13 @@ local function playtestGrant(player, data)
 	if data.Wallet >= target then
 		return false
 	end
-	data.Wallet = target
+	--// through AddWallet so the visible leaderstats Wallet updates too (a
+	--// direct write left the screen showing 0 while the save held 10k)
+	if Profiles then
+		Profiles.AddWallet(player, target - data.Wallet)
+	else
+		data.Wallet = target
+	end
 	warn(("[ProfileAPI] PLAYTEST GRANT: topped %s up to %d coins")
 		:format(player.Name, target))
 	return true
@@ -228,6 +235,8 @@ local function emptySnapshot()
 		EquippedClass = "",
 		OwnedPassives = {},
 		EquippedPassive = "",
+		CratePityEpic = 0,
+		CratePityLegendary = 0,
 		ClassLevels = {},
 		TaskProgress = tasks,
 		Stats = stats,
@@ -252,6 +261,9 @@ function ProfileAPI.GetSnapshot(player)
 		EquippedClass = data.EquippedClass or "",
 		OwnedPassives = table.clone(data.OwnedPassives or {}),
 		EquippedPassive = data.EquippedPassive or "",
+		CratePityEpic = data.CratePityEpic or 0,
+		CratePityLegendary = data.CratePityLegendary or 0,
+		CratesOpened = data.CratesOpened or 0,
 		ClassLevels = table.clone(data.ClassLevels),
 		TaskProgress = table.clone(data.TaskProgress),
 		Stats = table.clone(data.Stats),
@@ -480,6 +492,103 @@ function ProfileAPI.EquipPassive(player, key)
 	print(("[ProfileAPI] %s equipped passive %s"):format(player.Name,
 		key ~= "" and key or "(none)"))
 	return true
+end
+
+--// THE CRATE (Oct 2026). The whole roll happens HERE, server-side, against
+--// the saved profile: pay, roll the rarity (with pity), roll a passive in
+--// that rarity, then either grant it or refund a duplicate. Callers
+--// (CrateServer) do the policy / cooldown checks before calling this.
+local crateRng = Random.new()
+
+local function rollRarity(epicMiss, legendaryMiss)
+	local P = Config.Passives
+	--// pity: the counters already include THIS crate
+	if legendaryMiss >= P.PityLegendary then
+		return "Legendary", "pity"
+	end
+	local pool = {}
+	for name, info in pairs(P.Rarities) do
+		if epicMiss < P.PityEpic or info.Order >= P.Rarities.Epic.Order then
+			table.insert(pool, { Name = name, Weight = info.Weight, Order = info.Order })
+		end
+	end
+	table.sort(pool, function(a, b) return a.Order < b.Order end)
+	local total = 0
+	for _, entry in ipairs(pool) do total += entry.Weight end
+	local pick = crateRng:NextNumber() * total
+	for _, entry in ipairs(pool) do
+		pick -= entry.Weight
+		if pick <= 0 then
+			return entry.Name, (epicMiss >= P.PityEpic) and "pity" or "luck"
+		end
+	end
+	return pool[#pool].Name, "luck"
+end
+
+function ProfileAPI.OpenCrate(player)
+	local P = Config.Passives
+	local data = profileFor(player)
+	if not data or not Profiles then
+		return false, NOT_READY
+	end
+	local price = P.CratePrice
+	if not Profiles.TrySpendWallet(player, price) then
+		return false, ("Need %d more coins!"):format(math.max(0, price - (data.Wallet or 0)))
+	end
+
+	local epicMiss = (data.CratePityEpic or 0) + 1
+	local legendaryMiss = (data.CratePityLegendary or 0) + 1
+	local rarity, how = rollRarity(epicMiss, legendaryMiss)
+
+	--// pity counters: an Epic resets the Epic counter, a Legendary both
+	if rarity == "Legendary" then
+		data.CratePityEpic, data.CratePityLegendary = 0, 0
+	elseif rarity == "Epic" then
+		data.CratePityEpic, data.CratePityLegendary = 0, legendaryMiss
+	else
+		data.CratePityEpic, data.CratePityLegendary = epicMiss, legendaryMiss
+	end
+	data.CratesOpened = (data.CratesOpened or 0) + 1
+
+	--// an even split inside the rarity
+	local inRarity = {}
+	for _, key in ipairs(P.Order) do
+		local passive = P.List[key]
+		if passive and passive.Rarity == rarity then
+			table.insert(inRarity, key)
+		end
+	end
+	local key = inRarity[crateRng:NextInteger(1, #inRarity)]
+
+	data.OwnedPassives = data.OwnedPassives or {}
+	local duplicate = data.OwnedPassives[key] == true
+	local refund = 0
+	local autoEquipped = false
+	if duplicate then
+		refund = math.floor(price * (P.DuplicateRefund[rarity] or 0))
+		if refund > 0 then
+			Profiles.AddWallet(player, refund)
+		end
+	else
+		data.OwnedPassives[key] = true
+		--// a first passive goes straight on - nothing to lose
+		if (data.EquippedPassive or "") == "" then
+			data.EquippedPassive = key
+			autoEquipped = true
+		end
+	end
+
+	changed:Fire(player)
+	print(("[ProfileAPI] %s opened a crate: %s %s (%s)%s"):format(player.Name, rarity, key, how,
+		duplicate and (" - duplicate, refunded %d"):format(refund) or ""))
+	return true, {
+		Key = key,
+		Rarity = rarity,
+		Duplicate = duplicate,
+		Refund = refund,
+		AutoEquipped = autoEquipped,
+		Pity = how == "pity",
+	}
 end
 
 --// Task gates, money pays: the level-up needs BOTH the class's cumulative
