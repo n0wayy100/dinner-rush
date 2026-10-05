@@ -527,7 +527,12 @@ end
 workspace:GetAttributeChangedSignal("MatchMapId"):Connect(function()
 	for part, sourceTag in pairs(sourceParts) do
 		if part.Parent then
-			buildSourceIcons(part, sourceTag, ingredientsFor(sourceTag))
+			local offered = ingredientsFor(sourceTag)
+			buildSourceIcons(part, sourceTag, offered)
+			--// say it again: the setup line above can predate the map id
+			--// and name the Diner fallback, which reads as a broken kitchen
+			print(("[Kitchen] %s now offers %s (map %s)"):format(part:GetFullName(),
+				table.concat(offered, ", "), tostring(workspace:GetAttribute("MatchMapId"))))
 		end
 	end
 end)
