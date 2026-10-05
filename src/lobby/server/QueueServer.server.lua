@@ -50,10 +50,11 @@ local COUNTDOWN_SECONDS = 30
 --// A full party has nobody left to wait for, so the countdown snaps down
 local FULL_PARTY_SECONDS = 5
 
---// How many players a party needs before the countdown starts. At 1 the host
---// can start alone, which is what makes solo testing possible. Set it to 2 to
---// require someone other than the host.
-local MIN_PLAYERS_TO_START = 1
+--// How many players a party needs before the countdown starts: the HARD
+--// MINIMUM of 3 (owner ruling, Oct 5 2026 - Config.MinPlayers). Studio is
+--// exempt so the lobby flow can still be tested alone (it cannot teleport
+--// there anyway).
+local MIN_PLAYERS_TO_START = game:GetService("RunService"):IsStudio() and 1 or MIN_PLAYERS
 
 --// The MainGame place inside the DinnerRush experience.
 --// Left at 0 the countdown still runs, it just does not teleport anyone.
@@ -70,6 +71,7 @@ function SanitizeSettings(Settings)
         MaxPlayers = 3,
         Difficulty = "NORMAL",
         FriendsOnly = false,
+        MapId = Config.DefaultMapId,
     }
 
     if typeof(Settings) ~= "table" then
@@ -79,6 +81,18 @@ function SanitizeSettings(Settings)
     local Max = tonumber(Settings.MaxPlayers)
     if Max then
         Clean.MaxPlayers = math.clamp(math.floor(Max), MIN_PLAYERS, MAX_PLAYERS)
+    end
+
+    --// NEVER trust a MapId from a client. A modified one could ask for a map
+    --// that is not built yet, or does not exist at all, and MatchServer would
+    --// clone nothing - a shift in an empty world. Anything unrecognised falls
+    --// back to the default rather than being refused, so a stale client
+    --// still gets a playable game.
+    if typeof(Settings.MapId) == "string" and Config.IsPlayableMap(Settings.MapId) then
+        Clean.MapId = Settings.MapId
+    elseif Settings.MapId ~= nil and Settings.MapId ~= Config.DefaultMapId then
+        warn(("[QueueServer] rejected map '%s' - falling back to %s"):format(
+            tostring(Settings.MapId), Config.DefaultMapId))
     end
 
     if typeof(Settings.Difficulty) == "string" then
@@ -170,6 +184,10 @@ function UpdateBillboard(TpZones)
             StateLabel.Text = STATE_STARTING:format(Data.Remaining)
         elseif Count >= Max then
             StateLabel.Text = STATE_FULL
+        elseif Count < MIN_PLAYERS_TO_START then
+            --// below the hard minimum: say exactly how many more are needed
+            local need = MIN_PLAYERS_TO_START - Count
+            StateLabel.Text = ("Need %d more player%s"):format(need, need == 1 and "" or "s")
         else
             StateLabel.Text = STATE_WAITING
         end
@@ -244,6 +262,15 @@ end
 function StartMatch(TpZones)
     local Data = ZoneData[TpZones]
 
+    --// Last-second check of the hard minimum: someone may have dropped out
+    --// (or disconnected) as the countdown ran out. Wait for more instead.
+    if #Data.Players < MIN_PLAYERS_TO_START then
+        print(("[QueueServer] start cancelled: only %d player(s), need %d"):format(
+            #Data.Players, MIN_PLAYERS_TO_START))
+        UpdateBillboard(TpZones)
+        return
+    end
+
     print(("[QueueServer] match starting: %d player(s), difficulty %s"):format(
         #Data.Players, Data.Settings.Difficulty))
 
@@ -277,7 +304,7 @@ function StartMatch(TpZones)
         MaxPlayers = Data.Settings.MaxPlayers,
         Difficulty = Data.Settings.Difficulty,
         FriendsOnly = Data.Settings.FriendsOnly,
-        MapId = Data.Settings.MapId or "Diner",
+        MapId = Data.Settings.MapId or Config.DefaultMapId,
     })
 
     local Sent, Err = pcall(function()
@@ -399,8 +426,8 @@ function CreateParty(Plr, Settings)
     QueueRemote:FireClient(Plr, "PartyCreated", Data.Settings)
     UpdateBillboard(TpZones) --// size is decided, so the count can show now
 
-    --// At MIN_PLAYERS_TO_START = 1 the host alone is enough, so the countdown
-    --// begins the moment the party exists
+    --// The countdown begins once the party reaches MIN_PLAYERS_TO_START (3 -
+    --// the hard minimum; 1 in Studio only)
     if #Data.Players >= MIN_PLAYERS_TO_START then
         StartCountdown(TpZones)
     end

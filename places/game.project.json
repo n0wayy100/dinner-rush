@@ -7,6 +7,10 @@
       "Shared": { "$path": "../src/shared" }
     },
 
+    "ServerStorage": {
+      "Shared": { "$path": "../src/shared-server" }
+    },
+
     "ServerScriptService": {
       "Server": { "$path": "../src/game/server" }
     },
