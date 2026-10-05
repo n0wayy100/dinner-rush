@@ -88,6 +88,7 @@ local function addCharge(player, key, count)
 
 	local per = ULT.ChargePer[key] or 0
 	if per <= 0 then return end
+	per *= player:GetAttribute("ChargeMult") or 1 --// CHARGED UP passive
 
 	local current = player:GetAttribute("UltimateCharge") or 0
 	if current >= ULT.MaxCharge then return end

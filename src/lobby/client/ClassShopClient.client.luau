@@ -416,7 +416,7 @@ taskHeader.Position = UDim2.fromScale(0.5, 0.502)
 taskHeader.Size = UDim2.fromScale(0.9, 0.042)
 taskHeader.BackgroundTransparency = 0
 taskHeader.BackgroundColor3 = BASIL
-taskHeader.Text = "REQUIRED TASK"
+taskHeader.Text = "PASSIVE"
 taskHeader.TextStrokeColor3 = CHOC
 taskHeader.TextStrokeTransparency = 0.4
 stylize(taskHeader, 2)
@@ -471,10 +471,18 @@ if kit.skin(taskHeader, "SectionBanner") then
 end
 
 --// Powers
-local dPassive = makeText(detail, "Passive", Enum.Font.GothamMedium, CHOC)
+--// THE PASSIVE (owner, Oct 5 2026): sits under the PASSIVE banner, in the
+--// space the old task label + task bar used (those are retired - levels
+--// are bought with coins alone now)
+local dPassive = makeText(detail, "Passive", Enum.Font.FredokaOne, CHOC)
 dPassive.AnchorPoint = Vector2.new(0.5, 0)
-dPassive.Position = UDim2.fromScale(0.5, 0.675)
-dPassive.Size = UDim2.fromScale(0.9, 0.045)
+dPassive.Position = UDim2.fromScale(0.5, 0.56)
+dPassive.Size = UDim2.fromScale(0.86, 0.1)
+local passiveCap = Instance.new("UITextSizeConstraint")
+passiveCap.MaxTextSize = 26
+passiveCap.Parent = dPassive
+taskLabel.Visible = false
+taskBack.Visible = false
 
 --// SKILLS: one tile per key - Q, R, then the ultimate on T. Tapping a tile
 --// opens a big readable card in the middle of the screen, because a skill
@@ -1068,39 +1076,22 @@ local function renderDetail()
 		detailLock.Visible = not owned
 	end
 
-	--// Level + the task track: finish the task, then pay to level
+	--// Level: bought with coins alone (owner, Oct 5 2026 - the task gate is
+	--// gone; the PASSIVE section took its place)
 	local track = class.UpgradeTrack
 	local level = (snapshot and snapshot.ClassLevels[classKey]) or 1
-	local taskDone, upgradeCost = false, 0
+	local upgradeCost = 0
 	local progressShown = track ~= nil
 
 	levelCaption.Visible = progressShown
 	levelBack.Visible = progressShown
-	taskHeader.Visible = progressShown
-	taskLabel.Visible = progressShown
-	taskBack.Visible = progressShown
 
 	if track then
 		local maxLevel = #track.Steps + 1
 		levelText.Text = ("Lv %d / %d"):format(level, maxLevel)
 		levelFill.Size = UDim2.fromScale(math.clamp(level / maxLevel, 0, 1), 1)
-
 		if level <= #track.Steps then
-			local progress = (snapshot and snapshot.TaskProgress
-				and snapshot.TaskProgress[track.Counter]) or 0
-			local needed = track.Steps[level]
-			taskDone = progress >= needed
 			upgradeCost = track.Costs[level]
-
-			taskLabel.Text = track.Label
-			taskCount.Text = ("%d / %d"):format(math.min(progress, needed), needed)
-			taskFill.Size = UDim2.fromScale(math.clamp(progress / needed, 0, 1), 1)
-			taskFill.BackgroundColor3 = taskDone and BASIL or MUSTARD
-		else
-			taskLabel.Text = "Every task complete!"
-			taskCount.Text = "MAX LEVEL"
-			taskFill.Size = UDim2.fromScale(1, 1)
-			taskFill.BackgroundColor3 = BASIL
 		end
 	end
 
@@ -1114,7 +1105,7 @@ local function renderDetail()
 			upgradeBtn.TextColor3 = GREY_TEXT
 			upgradeBtn.AutoButtonColor = false
 		else
-			local ready = taskDone and snapshot and snapshot.Wallet >= upgradeCost
+			local ready = snapshot and snapshot.Wallet >= upgradeCost
 			upgradeBtn.Text = ("UPGRADE · $%d"):format(upgradeCost)
 			upgradeBtn.BackgroundColor3 = ready and GOLD or GREY
 			upgradeBtn.TextColor3 = ready and Color3.new(1, 1, 1) or GREY_TEXT

@@ -30,7 +30,12 @@ local Config = {}
 ----------------------------------------------------------------
 Config.Shift = {
 	LengthSeconds = 480,              -- 8 min MVP shift
-	PrepTimeSeconds = 45,             -- vote-skippable
+	PrepTimeSeconds = 20,             -- the "SHIFT STARTS IN" countdown
+	--// SKIP VOTE (Oct 2026): a SKIP button under the countdown. Once at
+	--// least SkipVoteFraction of the players in the server press it, the
+	--// countdown drops straight to SkipToSeconds (never lengthens it).
+	SkipToSeconds = 5,
+	SkipVoteFraction = 0.5,           -- 0.5 = half the team (rounded up), min 1 vote
 
 	--// When the clock runs out the doors close but the room is not empty.
 	--// CLOSING lets everyone already inside finish eating and paying; no new
@@ -534,12 +539,8 @@ Config.Tutorial = {
 			},
 			Objective = "Listen to Bruno!",
 		},
-		Greet = {
-			Bruno = { "Customers at the door! Walk over and say hello. A friendly hi keeps them happy to wait!" },
-			Objective = "Greet the customers!",
-		},
 		Seat = {
-			Bruno = { "Now give them a table! Seat them." },
+			Bruno = { "Customers at the door! Walk over and give them a table." },
 			Objective = "Seat the customers!",
 		},
 		Patience = {
@@ -1044,7 +1045,6 @@ Config.Difficulty = {
 		PartySizeWeights = { [1] = 0.35, [2] = 0.65 },
 		VIPChance = 0.05,
 		DoorQueueMax = 3,
-		GreetingBonus = 12,
 		PitcherCapacity = 5,
 		EatingSeconds = 10,
 		DashWindowSeconds = 20,
@@ -1111,7 +1111,6 @@ Config.Difficulty = {
 		PartySizeWeights = { [1] = 0.25, [2] = 0.75 },
 		VIPChance = 0.10,
 		DoorQueueMax = 4,
-		GreetingBonus = 10,
 		PitcherCapacity = 4,
 		EatingSeconds = 12,
 		DashWindowSeconds = 15,
@@ -1173,7 +1172,6 @@ Config.Difficulty = {
 		PartySizeWeights = { [1] = 0.20, [2] = 0.80 },
 		VIPChance = 0.15,
 		DoorQueueMax = 5,
-		GreetingBonus = 8,
 		PitcherCapacity = 3,
 		EatingSeconds = 14,           -- slow eaters throttle table turnover
 		DashWindowSeconds = 10,
@@ -1373,6 +1371,15 @@ Config.Events = {
 Config.Money = {
 	ShiftStartingTill = 0,
 	RemainderToFirstPlayer = true,  -- odd coins go somewhere rather than vanishing
+	--// THE GROUP SHARE (owner, Oct 5 2026): at shift end EVERY player takes
+	--// home this fraction of the whole till (never less than an even split).
+	--// 0.45 with 4 players = 180% paid out in total - bigger teams earn more
+	--// each, which suits the 3-6 player game. nil = the old even split.
+	PlayerShareFraction = 0.45,
+	--// the shift's MVP takes this much MORE of the till on top (0.10 = the
+	--// MVP gets 55% where everyone else gets 45%). Groups only - a solo
+	--// player already takes the whole till.
+	MvpBonusFraction = 0.10,
 }
 
 ----------------------------------------------------------------
@@ -1384,7 +1391,11 @@ Config.PartySizeSpawnMult = {
 	[1] = 0.6, [2] = 0.75, [3] = 0.9, [4] = 1.0, [5] = 1.15, [6] = 1.3,
 }
 
-Config.MinPlayers = 1
+--// THE HARD MINIMUM (owner ruling, Oct 5 2026): a shift needs at least 3
+--// players - "it really cannot work with less than 3". The lobby queue will
+--// not start a party below this, and the party-size picker starts here.
+--// (Studio is exempt in QueueServer so the lobby flow can be tested solo.)
+Config.MinPlayers = 3
 Config.MaxPlayers = 6
 
 ----------------------------------------------------------------
@@ -1939,7 +1950,7 @@ Config.Classes = {
 		UpgradeTrack = {
 			Counter = "PerfectCooks", Label = "Perfect cooks",
 			Steps = { 15, 40, 80, 150 },
-			Costs = { 300, 600, 1200, 2000 },
+			Costs = { 600, 1200, 2400, 4000 }, -- coins-only levelling (Oct 5 2026, 2x the old prices)
 		},
 	},
 	Waiter = {
@@ -1988,7 +1999,7 @@ Config.Classes = {
 		UpgradeTrack = {
 			Counter = "DishesServed", Label = "Dishes served",
 			Steps = { 20, 60, 120, 220 },
-			Costs = { 300, 600, 1200, 2000 },
+			Costs = { 600, 1200, 2400, 4000 }, -- coins-only levelling (Oct 5 2026, 2x the old prices)
 		},
 	},
 	Fixer = {
@@ -2029,7 +2040,7 @@ Config.Classes = {
 		UpgradeTrack = {
 			Counter = "EventChannels", Label = "Emergencies fixed",
 			Steps = { 3, 8, 16, 30 },
-			Costs = { 500, 1000, 2000, 3500 },
+			Costs = { 1000, 2000, 4000, 7000 }, -- coins-only levelling (Oct 5 2026, 2x the old prices)
 		},
 	},
 	Charmer = {
@@ -2072,7 +2083,7 @@ Config.Classes = {
 		UpgradeTrack = {
 			Counter = "PaymentsCollected", Label = "Payments collected",
 			Steps = { 12, 35, 70, 130 },
-			Costs = { 800, 1600, 3200, 5500 },
+			Costs = { 1600, 3200, 6400, 11000 }, -- coins-only levelling (Oct 5 2026, 2x the old prices)
 		},
 	},
 	--// THE JANITOR (Sep 30 2026): owns the TIDINESS system (CleanlinessService).
@@ -2120,7 +2131,7 @@ Config.Classes = {
 		UpgradeTrack = {
 			Counter = "MessesCleaned", Label = "Messes cleaned",
 			Steps = { 25, 70, 140, 250 },
-			Costs = { 500, 1000, 2000, 3500 },
+			Costs = { 1000, 2000, 4000, 7000 }, -- coins-only levelling (Oct 5 2026, 2x the old prices)
 		},
 	},
 }
@@ -2901,7 +2912,8 @@ function Config.SpawnIntervalFor(phase, difficultyName, playerCount)
 	assert(base ~= nil, "Unknown phase: " .. tostring(phase))
 
 	local diff = Config.ForDifficulty(difficultyName)
-	local clamped = math.clamp(playerCount or 1, Config.MinPlayers, Config.MaxPlayers)
+	--// counts from 1, not MinPlayers: a Studio solo test keeps solo pacing
+	local clamped = math.clamp(playerCount or 1, 1, Config.MaxPlayers)
 	local partyMult = Config.PartySizeSpawnMult[clamped]
 
 	--// Higher rate means shorter gaps between arrivals
@@ -3213,44 +3225,6 @@ end
 -- Leave an Id empty and that sound is simply silent. Nothing breaks, and the
 -- log says once which one is missing.
 ----------------------------------------------------------------
-----------------------------------------------------------------
--- THE HELPER (HelperService): an NPC coworker who runs the FLOOR when
--- the shift starts short-handed - seats parties, takes plain orders,
--- ferries plated dishes from the pass, collects payments. Deliberately
--- WEAKER than a player: ambles, one task at a time, never cooks, never
--- fixes events, never greets/recommends/punches, and credits nobody
--- (no careers, charge or hidden score). Player-count mercy, not
--- difficulty mercy - runs on every difficulty.
-----------------------------------------------------------------
-Config.Helper = {
-	Enabled = false,             -- TEMP (Sep 22): off so it stops interfering with
-	                              -- skill playtests - set back to true for real play
-	MaxPlayersForHelper = 2,      -- helper spawns when the shift starts
-	                              -- with this many players or fewer
-	WalkSpeed = 13,               -- an amble; players can always outrun it
-	ThinkSeconds = 0.6,           -- pause between task decisions
-	Name = "HELPER",              -- the overhead tag
-
-	--// PACING (owner + Claude ruling): the polite pause exists only when
-	--// everything is calm - past the Calm phase, or with a queue, or a
-	--// draining door bar, he hustles.
-	SeatAtDoorFraction = 0.85,    -- in Calm, seat once the door bar dips here
-	SeatQueueRush = 2,            -- ...or the moment this many wait in line
-
-	--// CARRYING: like a player, two hands. He gathers a table's whole
-	--// order before walking when patience allows...
-	MaxCarry = 2,
-	DeliverAnywayFraction = 0.4,  -- ...but below this patience he stops
-	                              -- waiting for the kitchen and delivers
-	                              -- whatever he holds
-
-	--// The suit: paste any shirt/pants TEMPLATE ids the group may use
-	--// (clothing is image data - script-free, safe). Empty = a smart
-	--// charcoal-suit body-colour fallback.
-	ShirtTemplate = "",
-	PantsTemplate = "",
-}
-
 ----------------------------------------------------------------
 -- EVENT ARROW (EventArrowClient): an edge-of-screen pointer toward
 -- whatever the current crisis needs - the TOOL mount first when the
@@ -3651,6 +3625,130 @@ Config.Music = {
 }
 
 ----------------------------------------------------------------
+-- PASSIVES (Oct 2026, owner design): passives moved OFF the classes and
+-- into the crate system. Each passive has ONE fixed rarity and ONE value.
+-- A player equips one (SlotCount) and ClassService publishes its Effects
+-- as Player attributes - the same attribute seam the old class passives
+-- used, so every system reads them the same way. Everything here is
+-- PERSONAL: a passive only ever affects the player who has it.
+--
+-- Effect attributes (missing = the Defaults value, i.e. no effect):
+--   StaminaDrainMult / StaminaRegenMult  sprint feel (SprintClient)
+--   WalkSpeedMult                        all movement (SprintClient)
+--   RushSpeedMult                        movement during RUSH only
+--   MoneyMult                            payments you collect
+--   WalletBonusMult                      your shift-end wallet deposit
+--   SeatBonusFraction                    seated bar +fraction when you seat
+--   OrderBonusFraction                   seated bar +fraction when you take an order
+--   RecommendBonusMult                   your recommendation patience bonus
+--   ServeBonusMult                       per-dish serve patience bonus
+--   PerfectBonusFraction                 Perfect dish you cook adds this x a
+--                                        dish's value to the till
+--   StreakBonusStep                      each Perfect in a row adds this more
+--   FillHoldMult                         pitcher fill hold time
+--   ChargeMult                           ultimate charge earned
+--   CooldownMult                         Q / R cooldowns
+--   CarryBonus                           extra carry slots (a COUNT)
+--
+-- THE LAW: nothing here touches cook times or PERFECT windows.
+----------------------------------------------------------------
+Config.Passives = {
+	SlotCount = 1,
+
+	--// STUDIO ONLY (live-ignored): force this passive on every Studio
+	--// player for testing, whatever the save says. "" = off.
+	StudioEquip = "",
+
+	--// Fixed rarity odds (crate system). A rarity's chance never changes
+	--// however many passives sit inside it; its passives split it evenly.
+	Rarities = {
+		Common    = { Order = 1, Weight = 62, Color = Color3.fromRGB(214, 206, 196) },
+		Rare      = { Order = 2, Weight = 32, Color = Color3.fromRGB(74, 144, 226) },
+		Epic      = { Order = 3, Weight = 5,  Color = Color3.fromRGB(155, 89, 214) },
+		Legendary = { Order = 4, Weight = 1,  Color = Color3.fromRGB(255, 196, 46) },
+	},
+	PityEpic = 30,        -- Epic or better guaranteed within this many crates
+	PityLegendary = 80,   -- Legendary guaranteed within this many crates
+
+	HotStreakCap = 10,    -- Hot Streak stops growing after this many Perfects in a row
+
+	--// What "no passive" means for each attribute
+	Defaults = {
+		StaminaDrainMult = 1, StaminaRegenMult = 1, WalkSpeedMult = 1,
+		RushSpeedMult = 1, MoneyMult = 1, WalletBonusMult = 1,
+		SeatBonusFraction = 0, OrderBonusFraction = 0, RecommendBonusMult = 1,
+		ServeBonusMult = 1, PerfectBonusFraction = 0, StreakBonusStep = 0,
+		FillHoldMult = 1, ChargeMult = 1, CooldownMult = 1, CarryBonus = 0,
+	},
+
+	--// Display order (also the crate odds table order)
+	Order = {
+		"SecondWind", "Waterboy", "SeatMaster", "OrderAce", "SmoothTalker",
+		"LightFeet", "RushHourHero", "FastService", "ChefsKiss", "ChargedUp",
+		"QuickStep", "HotStreak", "SilverTongue", "QuickRecharge",
+		"Overtime", "BigPockets",
+	},
+
+	List = {
+		--// COMMON
+		SecondWind = { Display = "Second Wind", Rarity = "Common", Icon = "",
+			Description = "Stamina refills 25% faster",
+			Effects = { StaminaRegenMult = 1.25 } },
+		Waterboy = { Display = "Waterboy", Rarity = "Common", Icon = "",
+			Description = "Fill the water pitcher 35% faster",
+			Effects = { FillHoldMult = 1 / 1.35 } },
+		SeatMaster = { Display = "Seat Master", Rarity = "Common", Icon = "",
+			Description = "Parties you seat get 10% more patience",
+			Effects = { SeatBonusFraction = 0.10 } },
+		OrderAce = { Display = "Order Ace", Rarity = "Common", Icon = "",
+			Description = "Orders you take give 10% more patience",
+			Effects = { OrderBonusFraction = 0.10 } },
+		SmoothTalker = { Display = "Smooth Talker", Rarity = "Common", Icon = "",
+			Description = "Your recommendations calm tables 35% more",
+			Effects = { RecommendBonusMult = 1.35 } },
+
+		--// RARE
+		LightFeet = { Display = "Light Feet", Rarity = "Rare", Icon = "",
+			Description = "Sprint drains 20% slower",
+			Effects = { StaminaDrainMult = 0.80 } },
+		RushHourHero = { Display = "Rush Hour Hero", Rarity = "Rare", Icon = "",
+			Description = "Move 12% faster during the RUSH",
+			Effects = { RushSpeedMult = 1.12 } },
+		FastService = { Display = "Fast Service", Rarity = "Rare", Icon = "",
+			Description = "Dishes you serve give 30% more patience",
+			Effects = { ServeBonusMult = 1.30 } },
+		ChefsKiss = { Display = "Chef's Kiss", Rarity = "Rare", Icon = "",
+			Description = "Perfect dishes you cook earn 15% extra",
+			Effects = { PerfectBonusFraction = 0.15 } },
+		ChargedUp = { Display = "Charged Up", Rarity = "Rare", Icon = "",
+			Description = "Your ultimate charges 15% faster",
+			Effects = { ChargeMult = 1.15 } },
+
+		--// EPIC
+		QuickStep = { Display = "Quick Step", Rarity = "Epic", Icon = "",
+			Description = "Move 7% faster, always",
+			Effects = { WalkSpeedMult = 1.07 } },
+		HotStreak = { Display = "Hot Streak", Rarity = "Epic", Icon = "",
+			Description = "Each Perfect in a row earns 4% more, a miss resets it",
+			Effects = { StreakBonusStep = 0.04 } },
+		SilverTongue = { Display = "Silver Tongue", Rarity = "Epic", Icon = "",
+			Description = "Payments you collect are worth 12% more",
+			Effects = { MoneyMult = 1.12 } },
+		QuickRecharge = { Display = "Quick Recharge", Rarity = "Epic", Icon = "",
+			Description = "Q and R cool down 15% faster",
+			Effects = { CooldownMult = 0.85 } },
+
+		--// LEGENDARY
+		Overtime = { Display = "Overtime", Rarity = "Legendary", Icon = "",
+			Description = "15% bonus coins into your wallet every shift",
+			Effects = { WalletBonusMult = 1.15 } },
+		BigPockets = { Display = "Big Pockets", Rarity = "Legendary", Icon = "",
+			Description = "Carry 3 items instead of 2",
+			Effects = { CarryBonus = 1 } },
+	},
+}
+
+----------------------------------------------------------------
 -- PERSISTENCE (the savefile)
 ----------------------------------------------------------------
 Config.Profile = {
@@ -3693,6 +3791,10 @@ Config.Profile = {
 		OwnedClasses = {},            -- ["Chef"] = true
 		ClassLevels = {},             -- ["Chef"] = 1..5
 		EquippedClass = "",           -- "" = classless, which is legal
+
+		--// PASSIVES (Oct 2026): owned set + the one equipped (Config.Passives)
+		OwnedPassives = {},           -- ["LightFeet"] = true
+		EquippedPassive = "",         -- "" = none
 
 		--// Cumulative, lifetime. Single-shift challenge counts live in server
 		--// memory (spec 4) - only their completions land here.

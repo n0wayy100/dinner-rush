@@ -231,8 +231,22 @@ end
 
 --// DOUBLE TIME (Waiter ultimate): the server sets SpeedBoostMult on the
 --// Player for the burst; every speed this script applies scales by it
-local function speedMult()
+local function boostMult()
 	return player:GetAttribute("SpeedBoostMult") or 1
+end
+
+--// PASSIVES (Oct 2026): QUICK STEP (always) and RUSH HOUR HERO (only
+--// while the shift is in its RUSH phase, "Crescendo" internally) stack on
+--// top of the ultimate's boost. Server-set attributes; this script only
+--// applies them, like every other speed here.
+local shiftState = ReplicatedStorage:FindFirstChild("ShiftState")
+local function speedMult()
+	local mult = boostMult() * (player:GetAttribute("WalkSpeedMult") or 1)
+	if shiftState and shiftState:GetAttribute("Phase") == "Crescendo"
+		and shiftState:GetAttribute("State") == "RUNNING" then
+		mult *= player:GetAttribute("RushSpeedMult") or 1
+	end
+	return mult
 end
 
 local function startSprint()
@@ -266,7 +280,7 @@ local function startBoostAnimLoop()
 	boostLoopToken += 1
 	local myToken = boostLoopToken
 	task.spawn(function()
-		while boostLoopToken == myToken and speedMult() > 1 do
+		while boostLoopToken == myToken and boostMult() > 1 do
 			if humanoid and humanoid.MoveDirection.Magnitude > 0.1 then
 				playBoostAnim()
 			else
@@ -283,12 +297,30 @@ player:GetAttributeChangedSignal("SpeedBoostMult"):Connect(function()
 		humanoid.WalkSpeed =
 			(active and Sprint.SprintSpeed or Sprint.BaseWalkSpeed) * speedMult()
 	end
-	if speedMult() > 1 then
+	if boostMult() > 1 then
 		startBoostAnimLoop()
 	else
 		boostLoopToken += 1 --// end any running loop
 		stopBoostAnim()
 	end
+end)
+
+--// Passive speed changes (equip, or the RUSH phase starting/ending)
+--// re-apply whichever speed is current, same as the boost above
+local function reapplySpeed()
+	if humanoid and humanoid.Health > 0 then
+		humanoid.WalkSpeed =
+			(active and Sprint.SprintSpeed or Sprint.BaseWalkSpeed) * speedMult()
+	end
+end
+player:GetAttributeChangedSignal("WalkSpeedMult"):Connect(reapplySpeed)
+player:GetAttributeChangedSignal("RushSpeedMult"):Connect(reapplySpeed)
+task.spawn(function()
+	shiftState = shiftState or ReplicatedStorage:WaitForChild("ShiftState", 30)
+	if not shiftState then return end
+	shiftState:GetAttributeChangedSignal("Phase"):Connect(reapplySpeed)
+	shiftState:GetAttributeChangedSignal("State"):Connect(reapplySpeed)
+	reapplySpeed()
 end)
 
 ----------------------------------------------------------------

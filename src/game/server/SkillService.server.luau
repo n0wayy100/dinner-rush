@@ -1048,7 +1048,8 @@ skillRemote.OnServerEvent:Connect(function(player, action, a, b)
 
 	local ok, reason = runSkill(player, skillDef, aim)
 	if ok then
-		local cd = skillDef.CooldownSeconds or 20
+		--// QUICK RECHARGE passive trims the cooldown
+		local cd = (skillDef.CooldownSeconds or 20) * (player:GetAttribute("CooldownMult") or 1)
 		cooldowns[player][slot] = now + cd
 		skillRemote:FireClient(player, "Cooldown", slot, cd)
 	else

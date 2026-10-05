@@ -300,11 +300,11 @@ task.spawn(function()
 	local hasVacuumMount = Config.Tidiness and Config.Tidiness.Enabled
 		and #CollectionService:GetTagged("VacuumMount") > 0
 
-	--// welcome/greet/seat/patience/order/cooking-intro + 3 per dish +
+	--// welcome/seat/patience/order/cooking-intro + 3 per dish +
 	--// the second table's seat and order + collect + (tidy) + fire drill
 	--// + critic + wrap
 	State:SetAttribute("StepCount",
-		6 + #ticket * 3 + (tableCount == 2 and 2 or 0) + 4
+		5 + #ticket * 3 + (tableCount == 2 and 2 or 0) + 4
 			+ (hasVacuumMount and 1 or 0))
 	print(("[Tutorial] teaching with: %s"):format(table.concat(ticket, ", ")))
 
@@ -377,12 +377,7 @@ task.spawn(function()
 	--// Pin the first teaching cook before anyone touches a pan
 	workspace:SetAttribute("TutorialForceGame", TUT.CookGameOrder[1])
 
-	--// 2: GREET - FIRST, at the queue: the greet prompt lives on the
-	--// QUEUED pawn and retires the moment the party is seated, so
-	--// hello must come before the table
-	setStep(TUT.Text.Greet, nil, "CustomerParty", nil, "Greet")
-	waitUntil(function() return stat("Greetings") >= 1 end)
-	waitSeconds(TUT.StepSettleSeconds)
+	--// (The GREET step was retired with the greet prompt, Oct 2026)
 
 	--// 3: SEAT (the party pawns themselves are the target)
 	setStep(TUT.Text.Seat, nil, "CustomerParty", nil, "Seat")

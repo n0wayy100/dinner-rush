@@ -116,7 +116,7 @@ local function tutorialGateAllows(action)
 end
 
 -- DEBUG knobs (set to nil to use real Config values)
-local DEBUG_PREP_SECONDS = 8        -- real: Config.Shift.PrepTimeSeconds (45)
+local DEBUG_PREP_SECONDS = nil      -- real: Config.Shift.PrepTimeSeconds (20)
 local DEBUG_SHIFT_SECONDS = nil     -- e.g. 180 for a 3-minute test shift
 local DEBUG_FORCE_FIRST_DASH = false -- first party to finish eating ALWAYS dashes,
                                      -- once per server - set false for real play
@@ -584,6 +584,41 @@ end
 --// TILL BRIDGE: lets other systems bank money into the shared till (e.g. the
 --// Health Inspector's clean-bill bonus). EarnedTotal is bumped so the shift
 --// report counts it as money made.
+--// CHEF'S KISS + HOT STREAK passives (Oct 2026). KitchenService reports
+--// every collect's quality here. A Perfect pays the cook's bonus into the
+--// till as a fraction of one dish's value (one diner's Perfect share of a
+--// bill); anything else - Good, Overcooked, Ruined - breaks the streak.
+--// Streaks reset each shift. Money only: THE LAW's cook windows untouched.
+local cookStreaks = {} --// [player] = Perfects in a row this shift
+do
+	local bridge = Instance.new("BindableFunction")
+	bridge.Name = "PassiveCookResult"
+	bridge.OnInvoke = function(player, quality)
+		if typeof(player) ~= "Instance" or not player:IsA("Player") then return false end
+		if quality ~= "Perfect" then
+			cookStreaks[player] = 0
+			return true
+		end
+		local cap = Config.Passives.HotStreakCap or 10
+		local streak = math.min((cookStreaks[player] or 0) + 1, cap)
+		cookStreaks[player] = streak
+
+		local fraction = (player:GetAttribute("PerfectBonusFraction") or 0)
+			+ (player:GetAttribute("StreakBonusStep") or 0) * streak
+		if fraction <= 0 or not diff then return true end
+		local dishValue = BASE_COINS_PER_PARTY * diff.Rewards.CoinMult
+			* Config.Kitchen.PerfectPayMult
+		local bonus = math.max(1, math.floor(dishValue * fraction + 0.5))
+		addToTill(bonus, ("%s's passive (streak %d)"):format(player.Name, streak))
+		shift.EarnedTotal += bonus
+		return true
+	end
+	bridge.Parent = game:GetService("ServerStorage")
+	Players.PlayerRemoving:Connect(function(player)
+		cookStreaks[player] = nil
+	end)
+end
+
 do
 	local bridge = Instance.new("BindableFunction")
 	bridge.Name = "AddToTill"
@@ -2067,6 +2102,19 @@ if waterPart then
 	prompt.RequiresLineOfSight = Config.Interaction.PromptRequiresLineOfSight
 	prompt.Parent = waterPart
 
+	--// WATERBOY passive: HoldDuration lives on the shared prompt, so scale
+	--// it the instant THIS player starts holding and restore on release
+	--// (the per-player hold trick the old Chef collect passive used).
+	prompt.PromptButtonHoldBegan:Connect(function(player)
+		local mult = player:GetAttribute("FillHoldMult") or 1
+		if mult ~= 1 then
+			prompt.HoldDuration = Config.Customers.WaterStationHoldSeconds * mult
+		end
+	end)
+	prompt.PromptButtonHoldEnded:Connect(function()
+		prompt.HoldDuration = Config.Customers.WaterStationHoldSeconds
+	end)
+
 	prompt.Triggered:Connect(function(player)
 		local character = player.Character
 		if not character then return end
@@ -3086,6 +3134,11 @@ local function resolveDialogue(dlg, pickedKey, notifyClient)
 	--// The order is officially in - the hidden score counts the trip
 	if dlg.Player and dlg.Player.Parent then
 		scoreOnly(dlg.Player, "OrdersTaken", 1)
+		--// ORDER ACE passive: the order-taker's table gets a bigger bar
+		local orderBonus = dlg.Player:GetAttribute("OrderBonusFraction") or 0
+		if orderBonus > 0 and party.BarTotal then
+			extendBar(party, party.BarTotal * orderBonus, "Order Ace")
+		end
 	end
 
 	nextOrderNumber += 1
@@ -3418,7 +3471,9 @@ local function serveDishToParty(party, tableId, dishName, quality, plateSlot, se
 	end
 	playGesture(party, "Cheer") --// food! the table celebrates
 	if party.DishesRemaining > 0 then
-		extendBar(party, Config.Customers.PerDishServeBonus, "dish landed")
+		--// FAST SERVICE passive scales the server's serve bonus
+		local serveMult = server and (server:GetAttribute("ServeBonusMult") or 1) or 1
+		extendBar(party, Config.Customers.PerDishServeBonus * serveMult, "dish landed")
 		refreshTablePrompt(tableId)
 	else
 		--// Everything they asked for is on the table. The payoff beat, so
@@ -3636,6 +3691,12 @@ local function seatParty(party, seater)
 		end
 		setPartyState(party, STATE.SEATED)
 		startSeatedBar(party)
+		--// SEAT MASTER passive: whoever seated them buys a bigger bar
+		local seatBonus = seater and seater.Parent
+			and (seater:GetAttribute("SeatBonusFraction") or 0) or 0
+		if seatBonus > 0 and party.BarTotal then
+			extendBar(party, party.BarTotal * seatBonus, "Seat Master")
+		end
 		refreshTablePrompt(tableId)
 	end
 
@@ -3735,36 +3796,10 @@ local function attachQueuePrompts(party)
 	seat.Parent = party.Pawn
 	party.SeatPrompt = seat
 
-	local greet = Instance.new("ProximityPrompt")
-	greet.ActionText = "Greet"
-	greet.ObjectText = "A warm welcome buys time"
-	greet.HoldDuration = 0 --// a hello is instant (owner call - no sticky holds
-	                       --// on front-of-house pleasantries)
-	greet.KeyboardKeyCode = Enum.KeyCode.F
-	greet.UIOffset = Vector2.new(0, 60)
-	greet.MaxActivationDistance = Config.Interaction.PromptRangeStuds
-	greet.RequiresLineOfSight = Config.Interaction.PromptRequiresLineOfSight
-	greet.Parent = party.Pawn
-	party.GreetPrompt = greet --// so seatParty can retire it too
-
-	greet.Triggered:Connect(function(player)
-		if not tutorialGateAllows("Greet") then
-			local previous = greet.ObjectText
-			greet.ObjectText = "Wait for Bruno!"
-			task.delay(1.5, function()
-				if greet.Parent then greet.ObjectText = previous end
-			end)
-			return
-		end
-		--// Gap 2 closed: the greeter is no longer anonymous - their career
-		--// (and later their charge) credits the warm welcome
-		if party.State ~= STATE.QUEUED or party.Greeted then return end
-		party.Greeted = true
-		greet:Destroy()
-		extendBar(party, diff.GreetingBonus, "greeting")
-		creditStat(player, "Greetings", 1)
-		playGesture(party, "Wave") --// the whole party waves back
-	end)
+	--// THE GREET PROMPT IS RETIRED (owner ruling, Oct 2026): the F "Greet"
+	--// at the queue is gone. Patience bonuses now come from passives
+	--// (Seat Master / Order Ace). The Greetings career stat stays in old
+	--// saves, it simply stops counting.
 
 	seat.Triggered:Connect(function(player)
 		if not tutorialGateAllows("Seat") then
@@ -4376,13 +4411,48 @@ local function endShift(success, reason)
 	local everyone = Players:GetPlayers()
 	local paidBy = {} --// [player] = their coin share (the SHIFT LOG records it)
 	if #everyone > 0 and shift.Till > 0 then
-		local share = math.floor(shift.Till / #everyone)
-		local remainder = shift.Till - (share * #everyone)
+		--// THE GROUP SHARE (owner, Oct 5 2026 - Config.Money.PlayerShareFraction):
+		--// every player takes home that fraction of the WHOLE till instead of
+		--// an even slice, so bigger groups earn more each (the extra coins
+		--// are minted, nobody's share shrinks). Never below the even split,
+		--// so a Studio solo test still gets the full till.
+		local even = math.floor(shift.Till / #everyone)
+		local fraction = tonumber(Config.Money.PlayerShareFraction)
+		local share = fraction and math.max(even, math.floor(shift.Till * fraction)) or even
+		local remainder = share == even and (shift.Till - (share * #everyone)) or 0
+
+		--// THE MVP BONUS (owner, Oct 5 2026 - Config.Money.MvpBonusFraction):
+		--// the shift's MVP takes that much MORE of the till. ScoreService
+		--// works the MVP out on request, so asking here (before the report)
+		--// names the same player the ceremony crowns.
+		local mvpUserId = nil
+		local mvpBonus = tonumber(Config.Money.MvpBonusFraction) or 0
+		if mvpBonus > 0 and #everyone > 1 then
+			local awardsBridge = game:GetService("ServerStorage"):FindFirstChild("GetShiftAwards")
+			if awardsBridge then
+				local okAwards, awards = pcall(function() return awardsBridge:Invoke() end)
+				if okAwards and type(awards) == "table" and type(awards.MVP) == "table" then
+					mvpUserId = awards.MVP.UserId
+				end
+			end
+		end
 
 		for index, member in ipairs(everyone) do
 			local paid = share
 			if index == 1 and Config.Money.RemainderToFirstPlayer then
 				paid += remainder
+			end
+			if mvpUserId and member.UserId == mvpUserId then
+				paid += math.floor(shift.Till * mvpBonus)
+				print(("[Service] MVP bonus: %s takes %d%% more"):format(member.Name, mvpBonus * 100))
+			end
+			--// OVERTIME passive: bonus coins on top of this player's own share
+			--// (minted, never taken from the team's split)
+			local walletMult = member:GetAttribute("WalletBonusMult") or 1
+			if walletMult > 1 and paid > 0 then
+				local extra = math.floor(paid * (walletMult - 1))
+				paid += extra
+				print(("[Service] Overtime: %s earns +%d bonus coins"):format(member.Name, extra))
 			end
 			paidBy[member] = paid
 			awardCoins(member, paid)
@@ -4394,7 +4464,7 @@ local function endShift(success, reason)
 			end
 		end
 
-		print(("[Service] Till %d split %d ways - %d each%s"):format(
+		print(("[Service] Till %d paid to %d player(s) - %d each%s"):format(
 			shift.Till, #everyone, share,
 			remainder > 0 and (" (+%d remainder)"):format(remainder) or ""))
 		shift.Till = 0
@@ -4824,6 +4894,59 @@ do
 	end
 end
 
+--// PREP SKIP VOTE (Oct 2026): HudClient's SKIP button fires "Skip" here.
+--// Once enough of the team has voted (Config.Shift.SkipVoteFraction), the
+--// prep countdown drops to SkipToSeconds. Votes only count during PREP and
+--// can only ever shorten the countdown. Published as SkipVotes/SkipNeeded.
+local prepSkipVotes = {}
+local function skipVotesNeeded()
+	local fraction = tonumber(Config.Shift.SkipVoteFraction) or 0.5
+	return math.max(1, math.ceil(#Players:GetPlayers() * fraction))
+end
+local function publishSkipVotes()
+	local count = 0
+	for member in pairs(prepSkipVotes) do
+		if member.Parent == Players then count += 1 end
+	end
+	ShiftState:SetAttribute("SkipVotes", count)
+	ShiftState:SetAttribute("SkipNeeded", skipVotesNeeded())
+	return count
+end
+do
+	local folder = ReplicatedStorage:FindFirstChild("Remotes")
+	if not folder then
+		folder = Instance.new("Folder")
+		folder.Name = "Remotes"
+		folder.Parent = ReplicatedStorage
+	end
+	local remote = folder:FindFirstChild("PrepSkipRemote")
+	if not remote then
+		remote = Instance.new("RemoteEvent")
+		remote.Name = "PrepSkipRemote"
+		remote.Parent = folder
+	end
+	remote.OnServerEvent:Connect(function(player, action)
+		if action ~= "Skip" or shift.State ~= "PREP" or tutorialMode() then return end
+		if prepSkipVotes[player] then return end
+		prepSkipVotes[player] = true
+		local count = publishSkipVotes()
+		local skipTo = tonumber(Config.Shift.SkipToSeconds) or 5
+		if count >= skipVotesNeeded() and (shift.PrepRemaining or 0) > skipTo then
+			shift.PrepRemaining = skipTo
+			ShiftState:SetAttribute("PrepSkipped", true)
+			publishShift()
+			print(("[Service] prep skipped by vote (%d) - shift starts in %ds")
+				:format(count, skipTo))
+		end
+	end)
+	Players.PlayerAdded:Connect(publishSkipVotes)
+	Players.PlayerRemoving:Connect(function(player)
+		prepSkipVotes[player] = nil
+		task.defer(publishSkipVotes)
+	end)
+	publishSkipVotes()
+end
+
 local function waitForEntranceCutscenes()
 	if not cutsceneGate or tutorialMode() then return end
 	local holdUntil = os.clock() + (Config.EntranceCutscene.MaxHoldSeconds or 20)
@@ -4856,13 +4979,17 @@ task.spawn(function()
 	shift.PrepRemaining = DEBUG_PREP_SECONDS or Config.Shift.PrepTimeSeconds
 	publishShift()
 	print(("[Service] Prep: shift starts in %ds"):format(shift.PrepRemaining))
-	task.wait(shift.PrepRemaining)
+	--// Heartbeat counts PrepRemaining down; a skip vote can cut it short
+	while shift.PrepRemaining > 0 do
+		task.wait(0.1)
+	end
 	waitForEntranceCutscenes() --// no customers until everyone's film is done
 
 	--// Global: the whole team starts together
 	Sfx.Play("ShiftStart")
 	shift.State = "RUNNING"
 	shift.Elapsed = 0
+	table.clear(cookStreaks) --// Hot Streak starts fresh every shift
 	shift.Till = Config.Money.ShiftStartingTill --// every shift opens at zero
 
 	--// Plan tonight's critic (at most one; EASY never - THE FREEZE)

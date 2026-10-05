@@ -181,6 +181,107 @@ do
 	intro = gui
 end
 
+--// PREP SKIP VOTE (Oct 2026): a mustard SKIP sticker under the countdown.
+--// Intent only - ServiceLoop counts the votes and decides when to cut the
+--// countdown to Config.Shift.SkipToSeconds.
+local skipButton, skipLabel, prepLabel
+local skipVoted = false
+do
+	skipButton = Instance.new("TextButton")
+	skipButton.Name = "SkipButton"
+	skipButton.AnchorPoint = Vector2.new(0.5, 1)
+	skipButton.Position = UDim2.fromScale(0.5, 0.94) --// bottom centre, clear of the countdown
+	skipButton.Size = UDim2.fromScale(0.16, 0.07)
+	skipButton.BackgroundColor3 = MUSTARD
+	skipButton.AutoButtonColor = true
+	skipButton.Text = ""
+	skipButton.Visible = false
+	skipButton.Parent = intro
+
+	local ratio = Instance.new("UIAspectRatioConstraint")
+	ratio.AspectRatio = 3.4
+	ratio.Parent = skipButton
+	local sizeCap = Instance.new("UISizeConstraint")
+	sizeCap.MinSize = Vector2.new(130, 38)
+	sizeCap.MaxSize = Vector2.new(260, 76)
+	sizeCap.Parent = skipButton
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0.35, 0)
+	corner.Parent = skipButton
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = CHOC
+	stroke.Thickness = 3
+	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	stroke.Parent = skipButton
+
+	skipLabel = Instance.new("TextLabel")
+	skipLabel.BackgroundTransparency = 1
+	skipLabel.AnchorPoint = Vector2.new(0.5, 0.5)
+	skipLabel.Position = UDim2.fromScale(0.5, 0.5)
+	skipLabel.Size = UDim2.fromScale(0.86, 0.7)
+	skipLabel.Font = Enum.Font.FredokaOne
+	skipLabel.TextScaled = true
+	skipLabel.TextColor3 = CHOC
+	skipLabel.Text = "SKIP"
+	skipLabel.Parent = skipButton
+
+	--// The prep countdown itself, small, sitting just above the button
+	prepLabel = Instance.new("TextLabel")
+	prepLabel.Name = "PrepCountdown"
+	prepLabel.BackgroundTransparency = 1
+	prepLabel.AnchorPoint = Vector2.new(0.5, 1)
+	prepLabel.Position = UDim2.fromScale(0.5, 0.94)
+	prepLabel.Size = UDim2.new(0.4, 0, 0, 30)
+	prepLabel.Font = Enum.Font.FredokaOne
+	prepLabel.TextScaled = true
+	prepLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+	prepLabel.TextStrokeColor3 = CHOC
+	prepLabel.TextStrokeTransparency = 0
+	prepLabel.Text = ""
+	prepLabel.Visible = false
+	prepLabel.Parent = intro
+
+	skipButton.Activated:Connect(function()
+		if skipVoted then return end
+		local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+		local remote = remotes and remotes:FindFirstChild("PrepSkipRemote")
+		if not remote then return end
+		skipVoted = true
+		remote:FireServer("Skip")
+	end)
+end
+
+local function updateSkipButton(state, prep)
+	local skipTo = Config.Shift.SkipToSeconds or 5
+	local tutorial = workspace:GetAttribute("MatchMode") == "TUTORIAL"
+	local show = state == "PREP" and not tutorial and prep > skipTo
+		and ShiftState:GetAttribute("PrepSkipped") ~= true
+	skipButton.Visible = show
+
+	--// Small countdown: stacks above the button, drops into its spot once
+	--// the button is gone (the last SkipToSeconds still count down here)
+	prepLabel.Visible = state == "PREP"
+	prepLabel.Text = ("Shift starts in %d"):format(math.max(0, prep))
+	prepLabel.Position = show
+		and UDim2.new(0.5, 0, 0.94, -(skipButton.AbsoluteSize.Y + 6))
+		or UDim2.fromScale(0.5, 0.94)
+
+	if not show then
+		if state ~= "PREP" then skipVoted = false end
+		return
+	end
+	local votes = ShiftState:GetAttribute("SkipVotes") or 0
+	local needed = ShiftState:GetAttribute("SkipNeeded") or 1
+	if needed <= 1 then
+		skipLabel.Text = "SKIP ▶"
+	elseif skipVoted then
+		skipLabel.Text = ("VOTED %d/%d"):format(votes, needed)
+	else
+		skipLabel.Text = ("SKIP ▶ %d/%d"):format(votes, needed)
+	end
+	skipButton.BackgroundColor3 = skipVoted and BASIL or MUSTARD
+end
+
 --// Owner ruling (Aug 2026): the old Studio panel is RETIRED - its
 --// ScreenGui stays disabled forever (the code-built shift bar, rep
 --// meter and money readout own the screen now). "Visible" only governs
@@ -744,6 +845,7 @@ local function refresh()
 
 	local state = attr("State", "WAITING")
 	local prep = math.ceil(attr("PrepRemaining", 0))
+	updateSkipButton(state, prep)
 
 	local hudHidden = (state == "WAITING") or (state == "PREP")
 	if state ~= lastState then
@@ -763,16 +865,22 @@ local function refresh()
 	--// Intro overlay owns the screen until the shift starts, then hands over
 	if state == "WAITING" then
 		intro.Enabled = true
+		introTitle.Visible = true
+		introValue.Visible = true
 		introTitle.Text = "WAITING FOR PLAYERS"
 		introValue.Text = "..."
 		setHudVisible(false)
 	elseif state == "PREP" then
+		--// The big centre text is gone for prep: the small countdown above
+		--// the SKIP button (updateSkipButton) carries it
 		intro.Enabled = true
-		introTitle.Text = "SHIFT STARTS IN"
-		introValue.Text = tostring(math.max(0, prep))
+		introTitle.Visible = false
+		introValue.Visible = false
 		setHudVisible(false)
 	elseif state == "ENDED" then
 		intro.Enabled = true
+		introTitle.Visible = true
+		introValue.Visible = true
 		introTitle.Text = ShiftState:GetAttribute("EndText") or "SHIFT OVER"
 		--// The end-of-shift reveal: just the count, no target framing
 		introValue.Text = ("%d parties served"):format(

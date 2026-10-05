@@ -59,6 +59,17 @@ local function scoreOnly(player, key, amount)
 	end
 end
 
+--// CHEF'S KISS / HOT STREAK passives: every cook result goes to ServiceLoop,
+--// which pays Perfect bonuses into the till and breaks streaks on a miss
+local function reportCookResult(player, quality)
+	local bridge = game:GetService("ServerStorage"):FindFirstChild("PassiveCookResult")
+	if bridge and player and player.Parent then
+		task.spawn(function()
+			pcall(function() bridge:Invoke(player, quality) end)
+		end)
+	end
+end
+
 --// Career + ultimate charge + hidden score in one call
 local function creditStat(player, key, amount)
 	ProfileAPI.AddStat(player, key, amount)
@@ -1107,6 +1118,7 @@ local function beginMathSession(station, player)
 		end
 
 		if quality == "Ruined" then
+			reportCookResult(player, "Ruined") --// breaks Hot Streak
 			station.ForcedQuality = nil
 			if station.State ~= "IDLE" then
 				station.State = "BURNT"
@@ -1343,6 +1355,7 @@ local function beginCardSession(station, player)
 
 		local quality = cardQualityFor(session.PairsFound)
 		if quality == "Ruined" then
+			reportCookResult(player, "Ruined") --// breaks Hot Streak
 			--// UNSERVABLE: the station flips to the cleanup state (on
 			--// ramen the labels say RUINED, everywhere else BURNT)
 			station.ForcedQuality = nil
@@ -1472,6 +1485,9 @@ local function applyCookResult(station, quality)
 end
 
 local function scheduleMinigameGrant(station, player, quality, sessionsTable)
+	if quality == "Ruined" then
+		reportCookResult(player, "Ruined") --// a ruined dish breaks Hot Streak
+	end
 	if quality ~= "Ruined" and player.Parent then
 		task.delay(1.2, function()
 			if station.ForcedQuality and not sessionsTable[station]
@@ -1893,6 +1909,7 @@ local function collect(station, player)
 
 	--// The perfect COLLECT is the skill moment - career and ultimate charge
 	--// credit here, at the pan, not later at the table (owner call)
+	reportCookResult(player, quality)
 	if quality == "Perfect" then
 		creditStat(player, "PerfectCooks", 1)
 	elseif quality == "Good" then
@@ -1989,6 +2006,7 @@ function grantFromMinigame(station, player, quality)
 	tool.Parent = character
 	applyDoubleBatch(player, character, recipe, dishName, quality)
 
+	reportCookResult(player, quality)
 	if quality == "Perfect" then
 		creditStat(player, "PerfectCooks", 1) --// the Chef's moment, as ever
 	elseif quality == "Good" then

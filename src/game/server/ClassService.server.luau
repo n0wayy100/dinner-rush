@@ -2,9 +2,12 @@
 	Dinner Rush - ClassService
 	ServerScriptService.Server.ClassService  (regular Script, server-side)
 
-	Phase 2, step 1: PASSIVES. Reads each player's EquippedClass from the
-	profile (ProfileAPI, now in ServerStorage.Shared) and publishes their
-	class modifiers as ATTRIBUTES ON THE PLAYER:
+	Reads each player's EquippedClass AND EquippedPassive from the profile
+	(ProfileAPI, ServerStorage.Shared). Since Oct 2026 the modifiers come
+	from the EQUIPPED PASSIVE (Config.Passives - the crate system), not the
+	class; the class only decides ClassKey / ClassLevel. Published as
+	ATTRIBUTES ON THE PLAYER (the list below is the pre-crate history; the
+	live set is Config.Passives.Defaults + PassiveKey + CarryLimit):
 
 	  ClassKey            "Chef" / "Waiter" / "Fixer" / "Charmer" / ""
 	  CarryLimit          Chef: how many items they can hold (2 + CarryBonus)
@@ -44,16 +47,25 @@ local ProfileAPI = require(ServerStorage:WaitForChild("Shared"):WaitForChild("Pr
 
 print("[Class] script started")
 
---// attribute name -> Config.Classes field it reads (missing field = 1)
-local MODIFIERS = {
-	CollectHoldMult = "CollectHoldMult",
-	StaminaDrainMult = "StaminaDrainMult",
-	StaminaRegenMult = "StaminaRegenMult",
-	ChannelMult = "ChannelMult",
-	MoneyMult = "MoneyMult",
-	RecommendBonusMult = "RecommendBonusMult",
-	CleanMult = "CleanMult",
-}
+--// PASSIVES MOVED TO CRATES (Oct 2026, owner design): classes no longer
+--// carry passives. Every modifier attribute now comes from the player's
+--// EQUIPPED PASSIVE (Config.Passives). Classes keep Q / R / ultimate.
+--// These two legacy attributes stay published at 1 (their readers remain).
+local LEGACY_ONES = { "CollectHoldMult", "ChannelMult", "CleanMult" }
+
+--// The passive this player plays with: the save's equipped one, if they
+--// still own it. Studio's StudioEquip knob overrides for testing.
+local function equippedPassive(snapshot)
+	local passives = Config.Passives
+	if game:GetService("RunService"):IsStudio() and (passives.StudioEquip or "") ~= "" then
+		return passives.StudioEquip, passives.List[passives.StudioEquip]
+	end
+	local key = snapshot.EquippedPassive or ""
+	if key == "" or not (snapshot.OwnedPassives or {})[key] then
+		return "", nil
+	end
+	return key, passives.List[key]
+end
 
 local function shiftRunning()
 	local bridge = ServerStorage:FindFirstChild("GetShiftInfo")
@@ -89,14 +101,29 @@ local function applyClass(player)
 
 	local before = player:GetAttribute("ClassKey")
 	player:SetAttribute("ClassKey", classKey)
-	for attribute, field in pairs(MODIFIERS) do
-		player:SetAttribute(attribute, (class and class[field]) or 1)
+	for _, attribute in ipairs(LEGACY_ONES) do
+		player:SetAttribute(attribute, 1)
 	end
 
-	--// Carry limit is a COUNT, not a multiplier, so it is set apart from the
-	--// MODIFIERS loop (which defaults missing fields to 1). The Chef's +1
-	--// makes it 3; everyone else sits at the Config default. THE LAW safe.
-	local carryBonus = (class and class.CarryBonus) or 0
+	--// THE EQUIPPED PASSIVE: every Defaults attribute is written each
+	--// apply, the passive's Effects over the top - so swapping passives
+	--// never leaves a stale bonus behind.
+	local passiveKey, passive = equippedPassive(snapshot)
+	local effects = passive and passive.Effects or {}
+	for attribute, default in pairs(Config.Passives.Defaults) do
+		if attribute ~= "CarryBonus" then
+			player:SetAttribute(attribute, effects[attribute] or default)
+		end
+	end
+	local beforePassive = player:GetAttribute("PassiveKey")
+	player:SetAttribute("PassiveKey", passiveKey)
+	if beforePassive ~= passiveKey then
+		print(("[Class] %s passive: %s"):format(player.Name,
+			passive and passive.Display or "none"))
+	end
+
+	--// Carry limit is a COUNT: Big Pockets adds to the Config default.
+	local carryBonus = effects.CarryBonus or 0
 	player:SetAttribute("CarryLimit", Config.Kitchen.MaxCarriedItems + carryBonus)
 
 	--// THE LEVEL GATE (Oct 2026): the equipped class's level, read off the

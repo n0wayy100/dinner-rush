@@ -52,8 +52,8 @@ local valueLabel = need(playersCard, "ValueLabel")
 local minusBtn = need(playersCard, "MinusButton")
 local plusBtn = need(playersCard, "PlusButton")
 
-local MIN_PLAYERS = 1
-local MAX_PLAYERS = 6
+local MIN_PLAYERS = Config.MinPlayers --// 3: the hard minimum (owner, Oct 2026)
+local MAX_PLAYERS = Config.MaxPlayers
 local playerCount = 3
 
 local function refreshPlayers()

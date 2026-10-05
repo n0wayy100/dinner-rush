@@ -40,6 +40,8 @@
 	ProfileAPI.PurchaseClass(player, classKey) -> ok, reasonText?
 	ProfileAPI.EquipClass(player, classKey)    -> ok, reasonText?
 	ProfileAPI.UpgradeClass(player, classKey)  -> ok, reasonText?
+	ProfileAPI.GrantPassive(player, key)       -> ok, reasonText?  (crates)
+	ProfileAPI.EquipPassive(player, key)       -> ok, reasonText?  ("" unequips)
 	ProfileAPI.Changed -> Signal(player)
 	=============================================================
 
@@ -224,6 +226,8 @@ local function emptySnapshot()
 		Wallet = 0,
 		OwnedClasses = {},
 		EquippedClass = "",
+		OwnedPassives = {},
+		EquippedPassive = "",
 		ClassLevels = {},
 		TaskProgress = tasks,
 		Stats = stats,
@@ -246,6 +250,8 @@ function ProfileAPI.GetSnapshot(player)
 		Wallet = data.Wallet,
 		OwnedClasses = table.clone(data.OwnedClasses),
 		EquippedClass = data.EquippedClass or "",
+		OwnedPassives = table.clone(data.OwnedPassives or {}),
+		EquippedPassive = data.EquippedPassive or "",
 		ClassLevels = table.clone(data.ClassLevels),
 		TaskProgress = table.clone(data.TaskProgress),
 		Stats = table.clone(data.Stats),
@@ -434,6 +440,48 @@ function ProfileAPI.EquipClass(player, classKey)
 	return true
 end
 
+--// PASSIVES (Oct 2026). GrantPassive is the crate system's write - server
+--// code only, never reachable from a remote on its own. EquipPassive
+--// validates ownership; "" unequips.
+function ProfileAPI.GrantPassive(player, key)
+	if type(key) ~= "string" or not Config.Passives.List[key] then
+		return false, "That passive does not exist"
+	end
+	local data = profileFor(player)
+	if not data then
+		return false, NOT_READY
+	end
+	data.OwnedPassives = data.OwnedPassives or {}
+	if data.OwnedPassives[key] then
+		return false, "Already owned"
+	end
+	data.OwnedPassives[key] = true
+	changed:Fire(player)
+	print(("[ProfileAPI] %s gained passive %s"):format(player.Name, key))
+	return true
+end
+
+function ProfileAPI.EquipPassive(player, key)
+	if type(key) ~= "string" or (key ~= "" and not Config.Passives.List[key]) then
+		return false, "That passive does not exist"
+	end
+	local data = profileFor(player)
+	if not data then
+		return false, NOT_READY
+	end
+	if key ~= "" and not (data.OwnedPassives and data.OwnedPassives[key]) then
+		return false, "You don't own that yet!"
+	end
+	if (data.EquippedPassive or "") == key then
+		return false, "Already equipped!"
+	end
+	data.EquippedPassive = key
+	changed:Fire(player)
+	print(("[ProfileAPI] %s equipped passive %s"):format(player.Name,
+		key ~= "" and key or "(none)"))
+	return true
+end
+
 --// Task gates, money pays: the level-up needs BOTH the class's cumulative
 --// task threshold and the coin cost. Trainee (no UpgradeTrack) never levels.
 function ProfileAPI.UpgradeClass(player, classKey)
@@ -461,12 +509,8 @@ function ProfileAPI.UpgradeClass(player, classKey)
 		return false, "Already max level!"
 	end
 
-	local progress = data.TaskProgress[track.Counter] or 0
-	local needed = track.Steps[level]
-	if progress < needed then
-		return false, ("Finish the task first: %s %d/%d"):format(track.Label, progress, needed)
-	end
-
+	--// (owner, Oct 5 2026: no task gate any more - levels are bought with
+	--// coins alone. Track.Steps still sets the max level: #Steps + 1.)
 	local cost = track.Costs[level]
 	if data.Wallet < cost then
 		return false, ("Need %d more coins!"):format(cost - data.Wallet)
