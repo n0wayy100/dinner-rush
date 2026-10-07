@@ -483,6 +483,10 @@ passiveCap.MaxTextSize = 26
 passiveCap.Parent = dPassive
 taskLabel.Visible = false
 taskBack.Visible = false
+--// PASSIVES MOVED TO CRATES (Oct 2026, owner): the class screen no longer
+--// shows a passive at all - the banner and its line are hidden
+taskHeader.Visible = false
+dPassive.Visible = false
 
 --// SKILLS: one tile per key - Q, R, then the ultimate on T. Tapping a tile
 --// opens a big readable card in the middle of the screen, because a skill
@@ -1070,7 +1074,8 @@ local function renderDetail()
 	dIcon.Image = class.IconId
 	dInitial.Visible = class.IconId == ""
 	dInitial.Text = string.upper(string.sub(classKey, 1, 1))
-	dPassive.Text = class.PassiveText
+
+	dPassive.Text = ""
 	renderSkills(classKey, class, (snapshot and snapshot.ClassLevels[classKey]) or 1, owned)
 	if detailLock then
 		detailLock.Visible = not owned
