@@ -3221,7 +3221,7 @@ Config.PhaseBanner = {
 --// ingredients - without the lobby handoff or a per-test command line.
 --// "" falls back to DefaultMapId. Live servers ignore this completely:
 --// the lobby's teleport data always wins there.
-Config.StudioMapId = "French" --// playtesting the Paris bistro (Oct 2026; was "Filipino")
+Config.StudioMapId = "Sushi" --// playtesting Yamasaki Ramen, the Japanese map (Oct 2026; was "French")
 
 --// STUDIO-ONLY spawn burst: this many parties march in the moment the
 --// shift goes RUNNING, so route/seating tests need no command bar.
@@ -3596,8 +3596,38 @@ Config.Sfx = {
 -- Client-side by design: every player owns their own music so they can mute
 -- it, and the server spends nothing on it. Nothing here affects gameplay.
 ----------------------------------------------------------------
+----------------------------------------------------------------
+-- THE EVENT ALERT BANNER (EventClient) - Claude Design kit, Oct 2026.
+-- Slice = the stretchable middle in the image's own pixels; the hazard
+-- stripes and bolts live in the corners so they never smear.
+----------------------------------------------------------------
+Config.EventAlert = {
+	Art = {
+		Alert_Banner   = { Image = "rbxassetid://76611705067802", Size = { 1024, 256 }, Slice = { 290, 90, 734, 166 } },
+		Alert_Siren    = { Image = "rbxassetid://76556269262733" },
+		Siren_Beam     = { Image = "rbxassetid://91024508645664" },  -- white, pivot at the bottom
+		Fuse_BarFrame  = { Image = "rbxassetid://106000228048198", Size = { 1024, 128 }, Slice = { 110, 30, 914, 98 } },
+		Fuse_Spark     = { Image = "rbxassetid://132497354322271" },
+		Alarm_EdgeGlow = { Image = "rbxassetid://119378857290746" },
+		Icon_Badge     = { Image = "rbxassetid://113835950473457" },  -- white ring, tinted per event
+		Fixed_Stamp    = { Image = "rbxassetid://103309791308366" },
+	},
+	--// per event: its icon and the colour its badge, beams and fuse take
+	Events = {
+		ToiletEmergency = { Icon = "rbxassetid://107988314367221", Color = Color3.fromRGB(74, 159, 224) },
+		GreaseFire      = { Icon = "rbxassetid://126415766590962", Color = Color3.fromRGB(229, 72, 77) },
+		PowerOutage     = { Icon = "rbxassetid://97404666017990",  Color = Color3.fromRGB(245, 184, 65) },
+		Spill           = { Icon = "rbxassetid://117754272842780", Color = Color3.fromRGB(90, 190, 220) },
+		HealthInspector = { Icon = "rbxassetid://112781510792903", Color = Color3.fromRGB(76, 175, 109) },
+	},
+	UrgentFraction = 0.25,   -- fuse at/below this = shake, edge glow, fast sirens
+}
+
 Config.Music = {
 	Enabled = true,
+	--// STUDIO ONLY (live-ignored): every Studio playtest starts with music
+	--// muted, lobby and shift alike. Press M to hear it anyway.
+	StudioMuted = true,
 
 	--// 0..1. Background music should sit UNDER the prompts and event stings -
 	--// if players turn it off to hear the game, it is too loud.
