@@ -29,6 +29,9 @@ local TweenService = game:GetService("TweenService")
 local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
 local SWEEP = Config.Events and Config.Events.SpillSweep
 if not SWEEP then return end
+--// SIDE-BY-SIDE (Oct 2026): SpillSweep.Style picks the panel. This script
+--// is the "Classic" one; SpillFloorClient is "Diner".
+if (SWEEP.Style or "Classic") ~= "Classic" then return end
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")

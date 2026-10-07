@@ -1029,6 +1029,9 @@ Config.Tidiness = {
 	DustTimeoutSeconds = 20,     -- abandoned panel frees the grime
 	DustWalkAwayStuds = 14,      -- drift further from the spot and the panel closes
 	GrimeOffsetStuds = 9,        -- how far from a random table a spot can splat
+	--// POOP RETIRED (owner ruling, Oct 2026: too annoying). false = no poop
+	--// ever spawns; the numbers below are kept only for a possible return.
+	PoopEnabled = false,
 	--// POOP in the toilet: cleaned with the PLUNGER via the toilet TAP panel
 	--// (Config.PlungeTap drives the tap mechanic). Ambient, one at a time.
 	PoopChance = 0.30,           -- chance per grime tick a poop appears
@@ -1355,6 +1358,28 @@ Config.Events = {
 		WalkAwayStuds = 12,           -- drift further and the session ends
 		FloorImage = "",              -- optional owner art: square floor
 		                              -- background ("" = code-drawn planks)
+
+		--// WHICH PANEL SHOWS (Oct 2026 side-by-side, owner judges):
+		--//   "Classic" = SpillSweepClient (the plank floor)
+		--//   "Diner"   = SpillFloorClient (the checkered-floor scene below)
+		--// Same server, same rules - only the picture differs.
+		Style = "Diner",
+
+		--// THE DINER FLOOR SCENE (Claude Design, Prompt D)
+		DinerArt = {
+			Floor_Panel        = "rbxassetid://107038156056758",
+			Puddle_Big         = "rbxassetid://92906326615827",
+			Puddle_Medium      = "rbxassetid://101934262110144",
+			Puddle_Small       = "rbxassetid://107985258468900",
+			Broom              = "rbxassetid://114241724702603",  -- bristles at the bottom
+			Bristle_Dust_Sheet = "rbxassetid://133422916546030",  -- 4x4 flipbook
+			Droplet            = "rbxassetid://131632147461024",
+			Sparkle_Clean      = "rbxassetid://102514308722380",  -- white, tinted
+			Shine_Floor        = "rbxassetid://112853721326799",
+			Drag_Arrows        = "rbxassetid://116619074040737",
+			Wet_Sign           = "rbxassetid://129170221720990",
+			Clean_Stamp        = "rbxassetid://82735742214949",
+		},
 	},
 
 	ToiletEmergency = {
@@ -2379,6 +2404,29 @@ Config.WireFix = {
 		Color3.fromRGB(80, 150, 255),   -- blue
 		Color3.fromRGB(170, 110, 220),  -- grape
 	},
+
+	--// WHICH PANEL SHOWS (Oct 2026 side-by-side, owner judges):
+	--//   "Classic" = WireFixClient (the original plate)
+	--//   "Breaker" = WireBreakerClient (the breaker-box scene below)
+	--// Same server, same rules - only the picture differs.
+	Style = "Breaker",
+
+	--// THE BREAKER SCENE (Claude Design, Prompt C)
+	BreakerArt = {
+		Breaker_Panel  = "rbxassetid://137253217321191",
+		Wire_Plug      = "rbxassetid://101296073800688",  -- white, tinted per wire
+		Wire_Socket    = "rbxassetid://127176935916281",  -- white, tinted per wire
+		Wire_Cable     = "rbxassetid://113498329939537",  -- white, tinted, stretches
+		Spark_Sheet    = "rbxassetid://114387776832483",  -- 4x4 flipbook
+		Zap_Bolt       = "rbxassetid://104797227911063",
+		Light_Bulb_Off = "rbxassetid://107170482917823",
+		Light_Bulb_On  = "rbxassetid://115258885471932",
+		Lever_Base     = "rbxassetid://98313596909348",
+		Lever_Handle   = "rbxassetid://106408672730068",  -- pivot at (0.5, 0.86)
+		Dark_Overlay   = "rbxassetid://113905403907146",
+		Glow_Halo      = "rbxassetid://73305891866101",   -- white, tinted
+		Power_Stamp    = "rbxassetid://95667127269497",
+	},
 }
 
 ----------------------------------------------------------------
@@ -2436,6 +2484,28 @@ Config.PlungeTap = {
 	MaxTapsPerSecond = 10,     -- server ignores taps faster than this
 	TimeoutSeconds = 20,       -- abandoned panel frees the toilet
 	WalkAwayStuds = 10,        -- wander this far and the panel closes
+
+	--// WHICH PANEL SHOWS (Oct 2026 side-by-side, owner judges):
+	--//   "Classic"  = PlungeClient (the art-kit panel: toilet + plunger + bar)
+	--//   "Bathroom" = PlungeBathroomClient (the full bathroom scene below)
+	--// Same server, same rules - only the picture differs.
+	Style = "Bathroom",
+
+	--// THE BATHROOM SCENE (Claude Design, Prompt B)
+	BathroomArt = {
+		Bathroom_Panel  = "rbxassetid://117497130009513",
+		Toilet_Body     = "rbxassetid://102538232223275",
+		Toilet_Water    = "rbxassetid://74557026621280",   -- stacks exactly on Toilet_Body
+		Plunger         = "rbxassetid://103555123678530",
+		Bubbles_Sheet   = "rbxassetid://89176473639623",   -- 4x4 flipbook
+		Splash_Drop     = "rbxassetid://136275919662207",
+		Plunge_BarFrame = "rbxassetid://132447692317284",
+		Plunge_BarFill  = "rbxassetid://105339169417083",
+		Tap_Icon        = "rbxassetid://123310774345700",
+		Flood_Overlay   = "rbxassetid://104750272732484",
+		Fixed_Stamp     = "rbxassetid://103309791308366",  -- shared with the event banner
+	},
+	BowlY = 0.67,     -- where the bowl opening sits in the toilet art (0 top, 1 bottom)
 }
 
 ----------------------------------------------------------------

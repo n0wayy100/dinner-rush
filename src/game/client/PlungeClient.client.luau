@@ -26,6 +26,10 @@ local plungeRemote = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Plu
 
 local PLUNGE = Config.PlungeTap
 
+--// SIDE-BY-SIDE (Oct 2026): Config.PlungeTap.Style picks the panel. This
+--// script is the "Classic" one; PlungeBathroomClient is "Bathroom".
+if (PLUNGE.Style or "Classic") ~= "Classic" then return end
+
 local CREAM = Color3.fromRGB(255, 246, 233)
 local CHOC = Color3.fromRGB(59, 43, 32)
 local TOMATO = Color3.fromRGB(229, 72, 77)

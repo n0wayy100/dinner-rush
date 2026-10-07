@@ -32,6 +32,10 @@ local wireRemote = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("WireF
 
 local WIREFIX = Config.WireFix
 
+--// SIDE-BY-SIDE (Oct 2026): Config.WireFix.Style picks the panel. This
+--// script is the "Classic" one; WireBreakerClient is "Breaker".
+if (WIREFIX.Style or "Classic") ~= "Classic" then return end
+
 --// A little zap each time a wire seats (owner ruling: the fix sounds
 --// on the INTERACTION, not a loop for the whole puzzle). Local-only.
 local SoundService = game:GetService("SoundService")

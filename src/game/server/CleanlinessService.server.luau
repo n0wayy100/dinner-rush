@@ -677,6 +677,9 @@ end)
 
 --// build the poop mess sitting in the toilet, with a plunge prompt
 local function spawnPoop()
+	--// RETIRED (owner ruling, Oct 2026: "too annoying") - Config.Tidiness
+	--// .PoopEnabled = false keeps every poop path dormant; grime still spawns
+	if TID.PoopEnabled ~= true then return end
 	--// poop is part of the BAR challenge: it stops once the inspector judged
 	if poopMess or tidinessEnded or toiletEventActive() then return end
 	local toilet = firstToilet()
