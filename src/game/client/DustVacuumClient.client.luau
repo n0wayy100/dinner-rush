@@ -18,6 +18,8 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UiPop = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiPop"))
+local MinigameSkin = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MinigameSkin"))
+local MinigameJuice = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MinigameJuice"))
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local ContextActionService = game:GetService("ContextActionService")
@@ -104,7 +106,8 @@ local function buildPanel(dustCount)
 	progress.Parent = panel
 
 	--// the floor play area
-	local floor = Instance.new("Frame")
+	--// the art kit's repeating floor tile, when there is one
+	local floor = Instance.new(MinigameSkin.Has("FloorTile") and "ImageLabel" or "Frame")
 	floor.Name = "Floor"
 	floor.Active = false
 	floor.AnchorPoint = Vector2.new(0.5, 1)
@@ -113,6 +116,7 @@ local function buildPanel(dustCount)
 	floor.BackgroundColor3 = FLOOR_A
 	floor.ClipsDescendants = true
 	floor.Parent = panel
+	MinigameSkin.Tile(floor, "FloorTile")
 	local floorCorner = Instance.new("UICorner")
 	floorCorner.CornerRadius = UDim.new(0.04, 0)
 	floorCorner.Parent = floor
@@ -147,6 +151,19 @@ local function buildPanel(dustCount)
 		wisp.Text = "💨"
 		wisp.TextTransparency = 0.15
 		wisp.Parent = speck
+		--// THE ART KIT's dust clump replaces the drawn speck and its puff
+		local clump = MinigameSkin.Picture("Dust", "Dust")
+		if clump then
+			clump.AnchorPoint = speck.AnchorPoint
+			clump.Position = speck.Position
+			clump.Size = UDim2.fromScale(0.15, 0.15)
+			clump.Rotation = math.random(0, 359)
+			local square = Instance.new("UIAspectRatioConstraint")
+			square.Parent = clump
+			clump.Parent = floor
+			speck:Destroy()
+			speck = clump
+		end
 		table.insert(dusts, { Frame = speck, X = dx, Y = dy, Sucked = false })
 	end
 
@@ -163,6 +180,23 @@ local function buildPanel(dustCount)
 	nozzle.Text = "🌀"
 	nozzle.ZIndex = 5
 	nozzle.Parent = floor
+	--// THE ART KIT's vacuum head takes the emoji's place
+	local head = MinigameSkin.Picture("VacuumHead", "Nozzle")
+	if head then
+		head.AnchorPoint = nozzle.AnchorPoint
+		head.Position = nozzle.Position
+		head.Size = UDim2.fromScale(0.2, 0.2)
+		head.ZIndex = 5
+		local square = Instance.new("UIAspectRatioConstraint")
+		square.Parent = head
+		head.Parent = floor
+		nozzle:Destroy()
+		nozzle = head
+	end
+
+	--// THE ART KIT: the border round the panel, the plaque behind the title
+	MinigameSkin.Frame(panel)
+	MinigameSkin.Plaque(title)
 
 	return gui, floor, nozzle, dusts, progress
 end
@@ -246,6 +280,7 @@ vacuumRemote.OnClientEvent:Connect(function(action, a, b)
 						session.Progress.Text =
 							("%d%%"):format(math.floor(session.Sucked / session.Total * 100))
 						local frame = d.Frame
+						MinigameJuice.Burst(frame) --// a little sparkle per clump
 						local t = TweenService:Create(frame,
 							TweenInfo.new(0.18, Enum.EasingStyle.Quad),
 							{ Size = UDim2.fromScale(0, 0), BackgroundTransparency = 1 })
@@ -268,6 +303,7 @@ vacuumRemote.OnClientEvent:Connect(function(action, a, b)
 			if b and session.Progress then
 				session.Progress.Text = "SPOTLESS! ✨"
 				session.Progress.TextColor3 = BASIL
+				MinigameJuice.Verdict(session.Progress, "Perfect")
 				if session.Render then session.Render:Disconnect() session.Render = nil end
 				task.delay(0.5, teardown)
 			else

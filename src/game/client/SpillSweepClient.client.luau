@@ -19,6 +19,8 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UiPop = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiPop"))
+local MinigameSkin = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MinigameSkin"))
+local MinigameJuice = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MinigameJuice"))
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local ContextActionService = game:GetService("ContextActionService")
@@ -99,8 +101,9 @@ local function buildPanel(data)
 	titleCap.MaxTextSize = 22
 	titleCap.Parent = title
 
-	--// THE FLOOR: owner art when set, else code-drawn planks
-	local floor = Instance.new(SWEEP.FloorImage ~= "" and "ImageLabel" or "Frame")
+	--// THE FLOOR: the art kit's repeating tile, else owner art, else planks
+	local tiled = MinigameSkin.Has("FloorTile")
+	local floor = Instance.new((tiled or SWEEP.FloorImage ~= "") and "ImageLabel" or "Frame")
 	floor.Name = "Floor"
 	floor.Active = false
 	floor.AnchorPoint = Vector2.new(0.5, 1)
@@ -109,7 +112,9 @@ local function buildPanel(data)
 	floor.BackgroundColor3 = PLANK_A
 	floor.ClipsDescendants = true
 	floor.Parent = panel
-	if SWEEP.FloorImage ~= "" then
+	if tiled then
+		MinigameSkin.Tile(floor, "FloorTile")
+	elseif SWEEP.FloorImage ~= "" then
 		floor.Image = SWEEP.FloorImage
 		floor.ScaleType = Enum.ScaleType.Crop
 	end
@@ -121,7 +126,7 @@ local function buildPanel(data)
 	floorStroke.Color = CHOC
 	floorStroke.Parent = floor
 
-	if SWEEP.FloorImage == "" then
+	if not tiled and SWEEP.FloorImage == "" then
 		for i = 0, 5 do
 			local plank = Instance.new("Frame")
 			plank.Active = false
@@ -145,6 +150,19 @@ local function buildPanel(data)
 	local droplets = {}
 	for i = 1, DROPLETS do
 		local size = 0.1 + math.random() * 0.16
+		--// THE ART KIT's puddle, when there is one: square, any rotation
+		local puddle = MinigameSkin.Picture("Puddle", "Puddle")
+		if puddle then
+			puddle.AnchorPoint = Vector2.new(0.5, 0.5)
+			puddle.Size = UDim2.fromScale(size * 1.4, size * 1.4)
+			puddle.Position = UDim2.fromScale(0.2 + math.random() * 0.6, 0.2 + math.random() * 0.55)
+			puddle.Rotation = math.random(0, 359)
+			local square = Instance.new("UIAspectRatioConstraint")
+			square.Parent = puddle
+			puddle.Parent = floor
+			droplets[i] = puddle
+			continue
+		end
 		local blob = Instance.new("Frame")
 		blob.Active = false
 		blob.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -184,6 +202,19 @@ local function buildPanel(data)
 	broom.Text = "🧹"
 	broom.Rotation = -18
 	broom.Parent = floor
+	--// THE ART KIT's mop takes the emoji's place, same spot and tilt
+	local mop = MinigameSkin.Picture("Mop", "Broom")
+	if mop then
+		mop.AnchorPoint = broom.AnchorPoint
+		mop.Position = broom.Position
+		mop.Size = UDim2.fromScale(0.3, 0.3)
+		mop.Rotation = broom.Rotation
+		local square = Instance.new("UIAspectRatioConstraint")
+		square.Parent = mop
+		mop.Parent = floor
+		broom:Destroy()
+		broom = mop
+	end
 
 	--// progress: droplets left, in words kids skip anyway
 	local progress = Instance.new("TextLabel")
@@ -201,6 +232,10 @@ local function buildPanel(data)
 	local progressCap = Instance.new("UITextSizeConstraint")
 	progressCap.MaxTextSize = 18
 	progressCap.Parent = progress
+
+	--// THE ART KIT: the border round the panel, the plaque behind the title
+	MinigameSkin.Frame(panel)
+	MinigameSkin.Plaque(title)
 
 	return gui, panel, floor, broom, droplets, progress
 end
@@ -362,6 +397,7 @@ sweepRemote.OnClientEvent:Connect(function(action, a, b)
 			splash.TextStrokeColor3 = CHOC
 			splash.TextStrokeTransparency = 0
 			splash.Parent = session.Panel
+			MinigameJuice.Verdict(splash, "Perfect")
 			task.delay(0.9, teardown)
 		else
 			teardown()

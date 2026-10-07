@@ -70,6 +70,37 @@ function MinigameSkin.Apply(gui, key)
 	return true
 end
 
+--// A PICTURE at its own proportions (a mop, a plunger, a dust clump...):
+--// a fresh ImageLabel, never stretched, or nil while its id is empty so
+--// the caller keeps its code-drawn stand-in
+function MinigameSkin.Picture(key, name)
+	if not MinigameSkin.Has(key) then return nil end
+	local picture = Instance.new("ImageLabel")
+	picture.Name = name or key
+	picture.Active = false
+	picture.BackgroundTransparency = 1
+	MinigameSkin.Apply(picture, key)
+	picture.ScaleType = Enum.ScaleType.Fit
+	return picture
+end
+
+--// A REPEATING floor: the image tiled at its own shape, TilesAcross copies
+--// down the label's height, so tiles stay square on any panel. False (and
+--// nothing changed) while the id is empty.
+function MinigameSkin.Tile(imageLabel, key)
+	if not MinigameSkin.Has(key) then return false end
+	MinigameSkin.Apply(imageLabel, key)
+	imageLabel.ScaleType = Enum.ScaleType.Tile
+	local across = (entry(key) and entry(key).TilesAcross) or 2
+	local function fit()
+		local side = math.max(imageLabel.AbsoluteSize.Y / across, 8)
+		imageLabel.TileSize = UDim2.fromOffset(side, side)
+	end
+	imageLabel:GetPropertyChangedSignal("AbsoluteSize"):Connect(fit)
+	fit()
+	return true
+end
+
 local function artLabel(key, name)
 	local label = Instance.new("ImageLabel")
 	label.Name = name
@@ -232,28 +263,21 @@ function MinigameSkin.Plaque(label)
 	return true
 end
 
---// One bar piece filling `holder`, its rounded caps kept round at any
---// height by scaling the slice to the bar's real height
-local function barArt(holder, key, name)
-	local label = artLabel(key, name)
-	label.Size = UDim2.fromScale(1, 1)
-	label.ZIndex = holder.ZIndex
-	label.Parent = holder
-	local imageHeight = (entry(key) and entry(key).Height) or 128
-	local function fit()
-		label.SliceScale = math.max(holder.AbsoluteSize.Y / imageHeight, 0.01)
-	end
-	holder:GetPropertyChangedSignal("AbsoluteSize"):Connect(fit)
-	fit()
-	return label
-end
-
---// THE TIMER BAR: the track behind, the fill on top TINTED to the game's
---// own colour. The caller keeps shrinking `fill` exactly as before.
+--// THE TIMER BAR, DRAWN AS MADE (owner playtest, Oct 2026). Both pieces
+--// keep their own proportions and are never stretched: stretching needs
+--// the image's exact pixel layout, and the guessed numbers squashed the
+--// track into a slanted sliver. The track sits centred in its holder.
+--// The fill does NOT shrink - it stays full size while the `fill` frame
+--// the caller already shrinks becomes a window onto it, so emptying the
+--// bar slides a cover across the art instead of squashing it.
 function MinigameSkin.Bar(track, fill, fillColor)
 	local skinned = false
 	if MinigameSkin.Has("TimerTrack") then
-		barArt(track, "TimerTrack", "SkinTrack")
+		local art = artLabel("TimerTrack", "SkinTrack")
+		art.ScaleType = Enum.ScaleType.Fit
+		art.Size = UDim2.fromScale(1, 1)
+		art.ZIndex = track.ZIndex
+		art.Parent = track
 		track.BackgroundTransparency = 1
 		skinned = true
 	end
@@ -261,9 +285,21 @@ function MinigameSkin.Bar(track, fill, fillColor)
 		--// one layer above the track art, under either way a ScreenGui
 		--// sorts its layers (Sibling or Global)
 		fill.ZIndex = track.ZIndex + 1
-		local art = barArt(fill, "TimerFill", "SkinFill")
-		art.ImageColor3 = fillColor or Color3.new(1, 1, 1)
 		fill.BackgroundTransparency = 1
+		fill.ClipsDescendants = true --// the window
+
+		local art = artLabel("TimerFill", "SkinFill")
+		art.ScaleType = Enum.ScaleType.Fit
+		art.ImageColor3 = fillColor or Color3.new(1, 1, 1)
+		art.ZIndex = fill.ZIndex
+		art.Parent = fill
+		--// sized to the whole TRACK, not the shrinking window, and pinned to
+		--// the window's left edge - so it lines up with the track art exactly
+		local function fit()
+			art.Size = UDim2.fromOffset(track.AbsoluteSize.X, track.AbsoluteSize.Y)
+		end
+		track:GetPropertyChangedSignal("AbsoluteSize"):Connect(fit)
+		fit()
 		skinned = true
 	end
 	return skinned
