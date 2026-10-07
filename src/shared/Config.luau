@@ -1722,6 +1722,26 @@ Config.MinigameArt = {
 	--// burst is a code-drawn ring; with no Rays the Perfect verdict skips them.
 	SparkleBurst = { Id = "132160840576767" }, -- pops on a right answer, and on a Perfect verdict
 	Rays = { Id = "126022175679712" },         -- spins behind "MASTER COOK!"
+
+	--// THE EMERGENCY + CLEANING MINIGAMES (Oct 2026). Each piece swaps in
+	--// for its code-drawn stand-in once its id is filled in.
+	FloorTile = {        -- spill + vacuum: the floor, REPEATED as tiles
+		Id = "82066772789085",
+		TilesAcross = 2, -- copies of the image down the floor's height
+	},
+	Puddle = { Id = "91237097839353" },      -- spill: replaces the blue droplets
+	Mop = { Id = "99725349607869" },         -- spill: replaces the broom emoji you drag
+	Dust = { Id = "136249881673295" },        -- vacuum: replaces the grey dust dots
+	VacuumHead = { Id = "82582590417495" },  -- vacuum: replaces the swirl emoji nozzle
+	Plunger = {                -- plunge: bobs on every tap (the panel grows to fit it)
+		Id = "135584726148903",
+		RestY = 0.78,          -- how far down the panel the cup rests (0 top - 1 bottom);
+		                       -- raise it to sink the plunger deeper into the bowl
+	},
+	Toilet = { Id = "89038104309005" },      -- plunge: optional, the plunger sits in it
+	BreakerPlate = { Id = "117868469177664" },-- wires: the metal panel the wires cross
+	WirePlug = { Id = "89675417422735" },    -- wires: left ends - LIGHT GREY art, tinted per wire
+	WireSocket = { Id = "82771231440429" },  -- wires: right sockets - LIGHT GREY art, tinted per wire
 }
 
 ----------------------------------------------------------------

@@ -21,6 +21,8 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UiPop = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiPop"))
+local MinigameSkin = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MinigameSkin"))
+local MinigameJuice = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MinigameJuice"))
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
@@ -125,6 +127,29 @@ lineLayer.Size = UDim2.fromScale(1, 1)
 lineLayer.BackgroundTransparency = 1
 lineLayer.Parent = plate
 
+--// THE ART KIT (Config.MinigameArt), each piece only once its id is in:
+--// the border, the title plaque, the breaker panel behind the wires
+MinigameSkin.Frame(panel)
+MinigameSkin.Plaque(title)
+
+--// Layers, bottom to top, set explicitly so the breaker art can never
+--// cover the wires whichever way this screen sorts its layers
+local LAYER_LINES, LAYER_ENDS = 1, 1
+local plateArt = MinigameSkin.Picture("BreakerPlate", "PlateArt")
+if plateArt then
+	plateArt.Size = UDim2.fromScale(1, 1)
+	plateArt.ZIndex = 2
+	plateArt.Parent = plate
+	plate.BackgroundTransparency = 1
+	plateStroke.Enabled = false
+	LAYER_LINES, LAYER_ENDS = 3, 4
+	lineLayer.ZIndex = LAYER_LINES
+end
+
+--// Plug and socket art, both LIGHT GREY so one image is tinted per wire.
+--// Only with both: a mix of pictures and squares would read as broken.
+local SKINNED_WIRES = MinigameSkin.Has("WirePlug") and MinigameSkin.Has("WireSocket")
+
 ----------------------------------------------------------------
 -- State
 ----------------------------------------------------------------
@@ -188,6 +213,7 @@ local function makeLine(colorIndex)
 	line.AnchorPoint = Vector2.new(0.5, 0.5)
 	line.BackgroundColor3 = WIREFIX.Colors[colorIndex] or CREAM
 	line.BorderSizePixel = 0
+	line.ZIndex = LAYER_LINES
 	line.Parent = lineLayer
 
 	local corner = Instance.new("UICorner")
@@ -234,11 +260,15 @@ local function setSelected(leftIndex)
 	if selectedLeft and leftStubs[selectedLeft] then
 		leftStubs[selectedLeft].Stroke.Color = CHOC
 		leftStubs[selectedLeft].Stroke.Thickness = 2.5
+		if SKINNED_WIRES then
+			leftStubs[selectedLeft].Stroke.Transparency = 1
+		end
 	end
 	selectedLeft = leftIndex
 	if leftIndex and leftStubs[leftIndex] then
 		leftStubs[leftIndex].Stroke.Color = Color3.new(1, 1, 1)
 		leftStubs[leftIndex].Stroke.Thickness = 4
+		leftStubs[leftIndex].Stroke.Transparency = 0 --// the picked-up wire glows
 	end
 end
 
@@ -369,6 +399,7 @@ local function makeStub(colorIndex, x, index)
 	stub.Size = UDim2.fromScale(0.16, 0.7 / current.Wires)
 	stub.BackgroundColor3 = WIREFIX.Colors[colorIndex] or CREAM
 	stub.Text = ""
+	stub.ZIndex = LAYER_ENDS
 	stub.Parent = plate
 
 	local corner = Instance.new("UICorner")
@@ -379,6 +410,18 @@ local function makeStub(colorIndex, x, index)
 	stroke.Thickness = 2.5
 	stroke.Color = CHOC
 	stroke.Parent = stub
+
+	--// THE ART KIT: a plug (left) or socket (right), tinted this wire's
+	--// colour; the outline then only appears on the picked-up wire
+	if SKINNED_WIRES then
+		local art = MinigameSkin.Picture(x > 0.5 and "WireSocket" or "WirePlug", "Art")
+		art.Size = UDim2.fromScale(1, 1)
+		art.ImageColor3 = WIREFIX.Colors[colorIndex] or CREAM
+		art.ZIndex = LAYER_ENDS + 1
+		art.Parent = stub
+		stub.BackgroundTransparency = 1
+		stroke.Transparency = 1
+	end
 
 	return stub, stroke
 end

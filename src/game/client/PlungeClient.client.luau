@@ -15,6 +15,8 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UiPop = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UiPop"))
+local MinigameSkin = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MinigameSkin"))
+local MinigameJuice = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("MinigameJuice"))
 local RunService = game:GetService("RunService")
 local ContextActionService = game:GetService("ContextActionService")
 local TweenService = game:GetService("TweenService")
@@ -118,6 +120,53 @@ local fillCorner = Instance.new("UICorner")
 fillCorner.CornerRadius = UDim.new(0, 8)
 fillCorner.Parent = fillBar
 
+--// THE ART KIT (Config.MinigameArt), each piece only once its id is in.
+--// No title plaque here: the caption turns green on "FIXED!", which
+--// would vanish on a green sign.
+MinigameSkin.Frame(panel)
+if MinigameSkin.Has("TimerTrack") then
+	barStroke.Enabled = false --// the track art is the bar's edge
+end
+MinigameSkin.Bar(barBack, fillBar, MUSTARD)
+
+--// THE TOILET + PLUNGER: with plunger art the panel grows taller, the
+--// pictures take the left, the caption and bar move right - and the
+--// plunger bobs down on every tap
+local plunger = MinigameSkin.Picture("Plunger", "Plunger")
+local plungerX = 0.18
+--// down in the bowl - the first version hovered above it (owner playtest)
+local plungerRestY = (Config.MinigameArt and Config.MinigameArt.Plunger
+	and Config.MinigameArt.Plunger.RestY) or 0.78
+if plunger then
+	panel.Size = UDim2.fromScale(0.42, 0.3)
+	caption.Position = UDim2.fromScale(0.64, 0.12)
+	caption.Size = UDim2.fromScale(0.62, 0.3)
+	barBack.Position = UDim2.fromScale(0.64, 0.64)
+	barBack.Size = UDim2.fromScale(0.62, 0.24)
+
+	local toilet = MinigameSkin.Picture("Toilet", "Toilet")
+	if toilet then
+		toilet.AnchorPoint = Vector2.new(0.5, 1)
+		toilet.Position = UDim2.fromScale(plungerX, 0.95)
+		toilet.Size = UDim2.fromScale(0.3, 0.7)
+		toilet.ZIndex = 1
+		local square = Instance.new("UIAspectRatioConstraint")
+		square.Parent = toilet
+		toilet.Parent = panel
+	else
+		plungerRestY = 0.92 --// no toilet: the plunger stands on the panel floor
+	end
+
+	plunger.AnchorPoint = Vector2.new(0.5, 1)
+	plunger.Position = UDim2.fromScale(plungerX, plungerRestY)
+	plunger.Size = UDim2.fromScale(0.12, 0.6)
+	plunger.ZIndex = 2
+	local tall = Instance.new("UIAspectRatioConstraint")
+	tall.AspectRatio = 0.5 --// the art is twice as tall as it is wide
+	tall.Parent = plunger
+	plunger.Parent = panel
+end
+
 ----------------------------------------------------------------
 -- State
 ----------------------------------------------------------------
@@ -164,6 +213,14 @@ local function tap()
 	knownFill = math.clamp(predictedFill() + current.FillPerTap, 0, 1)
 	knownAt = os.clock()
 	plungeRemote:FireServer("Tap", current.Token)
+
+	--// The plunger plunges: down a notch, then springs back up
+	if plunger then
+		plunger.Position = UDim2.fromScale(plungerX, plungerRestY + 0.07)
+		TweenService:Create(plunger,
+			TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+			{ Position = UDim2.fromScale(plungerX, plungerRestY) }):Play()
+	end
 
 	--// A little jolt per tap - the panel is being plunged too
 	panelScale.Scale = 1.06
@@ -239,6 +296,7 @@ plungeRemote.OnClientEvent:Connect(function(action, a, b)
 		if b then
 			finished = true
 			caption.Text = "FIXED!"
+			MinigameJuice.Verdict(caption, "Perfect")
 			caption.TextColor3 = BASIL
 			local token = a
 			task.delay(0.7, function()
