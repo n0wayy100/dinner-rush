@@ -167,17 +167,17 @@ Config.Ingredients = {
 	--// "" ships ugly-but-working. Veggies come off the DRY SHELF so the
 	--// three pickups are not all crowding one fridge.
 	RawCroissant = {
-		Display = "Croissant Dough", Icon = "107902100919898", -- raw_croissant
+		Display = "Croissant Dough", Icon = "rbxassetid://107902100919898", -- raw_croissant
 		Source = "Fridge", Color = Color3.fromRGB(240, 222, 190),
 		Stock = 18,
 	},
 	RawVeggies = {
-		Display = "Chopped Veggies", Icon = "135801382230619", -- raw_ratatouille
+		Display = "Chopped Veggies", Icon = "rbxassetid://135801382230619", -- raw_ratatouille
 		Source = "DryShelf", Color = Color3.fromRGB(150, 170, 80),
 		Stock = 15,
 	},
 	RawSeafood = {
-		Display = "Seafood", Icon = "115031377832379", -- raw_bouillabaisse
+		Display = "Seafood", Icon = "rbxassetid://115031377832379", -- raw_bouillabaisse
 		Source = "Fridge", Color = Color3.fromRGB(232, 196, 186),
 		Stock = 15,
 	},
@@ -252,17 +252,17 @@ Config.Recipes = {
 	--// THE PARIS MENU. Croissant and ratatouille share the ovens;
 	--// bouillabaisse simmers in the pot. Staple, mid, signature.
 	Croissant = {
-		Display = "Croissant", Short = "Croissant", Icon = "137909655636183", -- cooked_croissant
+		Display = "Croissant", Short = "Croissant", Icon = "rbxassetid://137909655636183", -- cooked_croissant
 		Ingredient = "RawCroissant", Method = "Oven", Timing = "Grilling",
 		Color = Color3.fromRGB(214, 150, 70), PriceMult = 0.8,
 	},
 	Ratatouille = {
-		Display = "Ratatouille", Short = "Ratatouille", Icon = "85799491544288", -- cooked_ratatouille
+		Display = "Ratatouille", Short = "Ratatouille", Icon = "rbxassetid://85799491544288", -- cooked_ratatouille
 		Ingredient = "RawVeggies", Method = "Oven", Timing = "Grilling",
 		Color = Color3.fromRGB(196, 74, 52), PriceMult = 1.0,
 	},
 	Bouillabaisse = {
-		Display = "Bouillabaisse", Short = "Fish Stew", Icon = "84851490348206", -- cooked_bouillabaisse
+		Display = "Bouillabaisse", Short = "Fish Stew", Icon = "rbxassetid://84851490348206", -- cooked_bouillabaisse
 		Ingredient = "RawSeafood", Method = "Pot", Timing = "Boiling",
 		Color = Color3.fromRGB(226, 140, 60), PriceMult = 1.4,
 	},
