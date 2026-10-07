@@ -527,7 +527,12 @@ end
 workspace:GetAttributeChangedSignal("MatchMapId"):Connect(function()
 	for part, sourceTag in pairs(sourceParts) do
 		if part.Parent then
-			buildSourceIcons(part, sourceTag, ingredientsFor(sourceTag))
+			local offered = ingredientsFor(sourceTag)
+			buildSourceIcons(part, sourceTag, offered)
+			--// say it again: the setup line above can predate the map id
+			--// and name the Diner fallback, which reads as a broken kitchen
+			print(("[Kitchen] %s now offers %s (map %s)"):format(part:GetFullName(),
+				table.concat(offered, ", "), tostring(workspace:GetAttribute("MatchMapId"))))
 		end
 	end
 end)
@@ -1833,6 +1838,13 @@ local function startCook(station, player, tool, dishName, recipe)
 	--// flat MinigameCookSeconds, and E at the READY station opens the
 	--// drawn game - arrow, recipe math, or cards (see beginCookSession).
 	local cookGame = gated and rollCookGame(player) or nil
+	--// Memory Match and Whack It are DEALT from the map's food icons. A map
+	--// whose icons are not uploaded yet (the Paris bistro, Oct 2026) would
+	--// deal blank cards and empty pots, so those two fall back to the
+	--// timing game until there are icons to deal.
+	if (cookGame == GAME_CARDS or cookGame == GAME_WHACK) and #cardIconPool() < 2 then
+		cookGame = GAME_ARROW
+	end
 
 	station.State = "COOKING"
 	station.Dish = dishName

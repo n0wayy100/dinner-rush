@@ -374,6 +374,11 @@ local PLATE_SINK = {
 	AdoboPork = 0.2,
 	SteamedRice = 0.2,
 	Lumpia = 0.2,
+
+	--// THE PARIS BISTRO (Oct 2026): all three hovered over their plates
+	Croissant = 0.3,
+	Ratatouille = 0.3,
+	Bouillabaisse = 0.3,
 }
 
 --// Placing a dish ON A PLATE: how far down from the plate's surface the
@@ -423,6 +428,16 @@ local GRIP_MIN_LIFT = 0.45
 --// If a nudge sends a dish the wrong way, flip the sign.
 local GRIP_NUDGE = {
 	RawPork = Vector3.new(0.35, 0, -0.35), --// the board is wide; hold it nearer one end
+
+	--// THE PARIS BISTRO (Oct 2026): every French model is 1.1-1.3 studs
+	--// across, as wide as the pork board, and half of each sat in the
+	--// hand - the same push out and forward, plus a touch more lift
+	RawCroissant = Vector3.new(0.3, 0.1, -0.3),
+	Croissant = Vector3.new(0.3, 0.1, -0.3),
+	RawVeggies = Vector3.new(0.3, 0.1, -0.3),
+	Ratatouille = Vector3.new(0.3, 0.1, -0.3),
+	RawSeafood = Vector3.new(0.3, 0.1, -0.3),
+	Bouillabaisse = Vector3.new(0.3, 0.1, -0.3),
 }
 
 --// THE MESH SWAP PATH (Sep 2026): the team's OWN generated meshes -
