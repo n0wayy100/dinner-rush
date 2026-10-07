@@ -273,8 +273,8 @@ backdrop.Parent = gui
 local root = Instance.new("Frame")
 root.Name = "MainPanel" --// lobby close convention
 root.AnchorPoint = Vector2.new(0.5, 0.5)
-root.Position = UDim2.fromScale(0.5, 0.55)
-root.Size = UDim2.fromScale(0.74, 0.76)
+root.Position = UDim2.fromScale(0.54, 0.56) --// nudged right: clear of the lobby button column
+root.Size = UDim2.fromScale(0.7, 0.72)
 root.BackgroundTransparency = 1
 root.Parent = gui
 aspect(root, 1.55)
@@ -364,17 +364,18 @@ end
 local steam = nil
 do
 	local DOODLES = {
-		{ "CornerDoodleBurger", 0.0, 0.34, -12 },
-		{ "CornerDoodleDonut", 0.02, 0.97, 10 },
-		{ "CornerDoodleTomato", 0.98, 0.97, -8 },
-		{ "CornerDoodleCoffee", 1.0, 0.52, 9 },
+		--// tucked onto the frame (smaller, never over the lobby buttons)
+		{ "CornerDoodleBurger", 0.015, 0.6, -12 },
+		{ "CornerDoodleDonut", 0.04, 0.955, 10 },
+		{ "CornerDoodleTomato", 0.96, 0.955, -8 },
+		{ "CornerDoodleCoffee", 0.985, 0.44, 9 },
 	}
 	for i, d in ipairs(DOODLES) do
 		local doodle = fxImage(root, d[1])
 		if doodle then
 			doodle.AnchorPoint = Vector2.new(0.5, 0.5)
 			doodle.Position = UDim2.fromScale(d[2], d[3])
-			doodle.Size = UDim2.fromScale(0.11, 0.17)
+			doodle.Size = UDim2.fromScale(0.08, 0.12)
 			doodle.Rotation = d[4]
 			doodle.ZIndex = 7
 			aspect(doodle, 1)
@@ -385,7 +386,7 @@ do
 				if steam then
 					steam.AnchorPoint = Vector2.new(0.5, 1)
 					steam.Position = UDim2.fromScale(d[2] - 0.005, d[3] - 0.07)
-					steam.Size = UDim2.fromScale(0.05, 0.16)
+					steam.Size = UDim2.fromScale(0.04, 0.12)
 					steam.ZIndex = 7
 				end
 			end
@@ -548,12 +549,12 @@ aspect(plus, 1)
 bouncy(plus)
 
 --// CONTENT: one page per tab, under the tab row
-local CONTENT_HOME = UDim2.fromScale(0.5, 0.275)
+local CONTENT_HOME = UDim2.fromScale(0.5, 0.29)
 local content = Instance.new("Frame")
 content.Name = "Content"
 content.AnchorPoint = Vector2.new(0.5, 0)
 content.Position = CONTENT_HOME
-content.Size = UDim2.fromScale(0.9, 0.67)
+content.Size = UDim2.fromScale(0.88, 0.635)
 content.BackgroundTransparency = 1
 content.ZIndex = 2
 content.Parent = root
@@ -808,8 +809,8 @@ local function smallCard(parent, kind, key, def, order)
 
 	local art = itemArt(card, def)
 	art.AnchorPoint = Vector2.new(0.5, 0.5)
-	art.Position = UDim2.fromScale(0.5, 0.31)
-	art.Size = UDim2.fromScale(0.62, 0.4)
+	art.Position = UDim2.fromScale(0.5, 0.28)
+	art.Size = UDim2.fromScale(0.58, 0.36)
 	art.ZIndex = 2
 	floatArt(art, order * 0.25)
 
@@ -820,21 +821,21 @@ local function smallCard(parent, kind, key, def, order)
 	end
 
 	local nameText = label(card, "ItemName", Enum.Font.FredokaOne, CHOC, 28)
-	nameText.Position = UDim2.fromScale(0.08, 0.53)
+	nameText.Position = UDim2.fromScale(0.08, 0.48)
 	nameText.Size = UDim2.fromScale(0.84, 0.12)
 	nameText.Text = def.Display
 	nameText.ZIndex = 2
 
 	local detail = label(card, "Detail", Enum.Font.GothamBold, WOOD_DARK, 20)
-	detail.Position = UDim2.fromScale(0.1, 0.65)
-	detail.Size = UDim2.fromScale(0.8, 0.12)
+	detail.Position = UDim2.fromScale(0.1, 0.6)
+	detail.Size = UDim2.fromScale(0.8, 0.1)
 	detail.Text = def.Coins and (commas(def.Coins) .. " coins") or (def.Description or "")
 	detail.ZIndex = 2
 
 	local price = priceButton(card, kind, key, def)
 	price.AnchorPoint = Vector2.new(0.5, 1)
-	price.Position = UDim2.fromScale(0.5, 0.93)
-	price.Size = UDim2.fromScale(0.74, 0.13)
+	price.Position = UDim2.fromScale(0.5, 0.94)
+	price.Size = UDim2.fromScale(0.82, 0.2) --// was squashed
 	price.ZIndex = 2
 
 	--// EFFECT: an owned pass gets the OWNED stamp slammed across its art
@@ -919,15 +920,15 @@ if featuredEntry then
 	local card, glow = cardFrame(coinsPage, featuredEntry.Key)
 	card.Size = UDim2.fromScale(1, 0.5)
 	card.ClipsDescendants = true
-	glow.Position = UDim2.fromScale(0.42, 0.5)
-	glow.Size = UDim2.fromScale(0.4, 1.1)
+	glow.Position = UDim2.fromScale(0.36, 0.5)
+	glow.Size = UDim2.fromScale(0.38, 1.05)
 
 	--// EFFECT: a slow sunburst behind the pack (the art kit's, else code rays)
 	rays = fxImage(card, "Sunburst", "Sunburst") or Instance.new("Frame")
 	rays.Name = "Sunburst"
 	rays.AnchorPoint = Vector2.new(0.5, 0.5)
-	rays.Position = UDim2.fromScale(0.42, 0.5)
-	rays.Size = UDim2.fromScale(0.6, 1.9)
+	rays.Position = UDim2.fromScale(0.36, 0.5)
+	rays.Size = UDim2.fromScale(0.56, 1.8)
 	rays.BackgroundTransparency = 1
 	rays.ZIndex = 1
 	rays.Parent = card
@@ -955,8 +956,8 @@ if featuredEntry then
 	--// the ribbon hanging on the left
 	local ribbon = Instance.new("Frame")
 	ribbon.Name = "Ribbon"
-	ribbon.Position = UDim2.fromScale(0.04, -0.02)
-	ribbon.Size = UDim2.fromScale(0.17, 0.92)
+	ribbon.Position = UDim2.fromScale(0.025, -0.02)
+	ribbon.Size = UDim2.fromScale(0.14, 0.86)
 	ribbon.BackgroundColor3 = TOMATO
 	ribbon.ZIndex = 3
 	ribbon.Parent = card
@@ -977,13 +978,13 @@ if featuredEntry then
 
 	local art = itemArt(card, def)
 	art.AnchorPoint = Vector2.new(0.5, 0.5)
-	art.Position = UDim2.fromScale(0.42, 0.5)
-	art.Size = UDim2.fromScale(0.3, 0.86)
+	art.Position = UDim2.fromScale(0.36, 0.5)
+	art.Size = UDim2.fromScale(0.26, 0.8)
 	art.ZIndex = 2
 	floatArt(art, 0)
 
 	--// EFFECT: twinkling sparkles around the pack
-	local spots = { { 0.3, 0.2 }, { 0.55, 0.15 }, { 0.27, 0.78 }, { 0.57, 0.8 }, { 0.5, 0.5 } }
+	local spots = { { 0.25, 0.2 }, { 0.48, 0.15 }, { 0.23, 0.78 }, { 0.5, 0.8 }, { 0.46, 0.5 } }
 	for i, spot in ipairs(spots) do
 		local star = fxImage(card, "Sparkle", "Twinkle" .. i)
 		if star then
@@ -1005,20 +1006,20 @@ if featuredEntry then
 	end
 
 	local nameText = label(card, "ItemName", Enum.Font.FredokaOne, CHOC, 42)
-	nameText.Position = UDim2.fromScale(0.6, 0.17)
-	nameText.Size = UDim2.fromScale(0.34, 0.2)
+	nameText.Position = UDim2.fromScale(0.54, 0.14)
+	nameText.Size = UDim2.fromScale(0.42, 0.22)
 	nameText.Text = def.Display
 	nameText.ZIndex = 2
 
 	local detail = label(card, "Detail", Enum.Font.FredokaOne, WOOD_DARK, 32)
-	detail.Position = UDim2.fromScale(0.6, 0.38)
-	detail.Size = UDim2.fromScale(0.36, 0.18)
+	detail.Position = UDim2.fromScale(0.56, 0.37)
+	detail.Size = UDim2.fromScale(0.38, 0.16)
 	detail.Text = commas(def.Coins or 0) .. " coins"
 	detail.ZIndex = 2
 
 	local price = priceButton(card, "product", featuredEntry.Key, def)
-	price.Position = UDim2.fromScale(0.62, 0.58)
-	price.Size = UDim2.fromScale(0.32, 0.24)
+	price.Position = UDim2.fromScale(0.57, 0.58)
+	price.Size = UDim2.fromScale(0.36, 0.25)
 	price.ZIndex = 2
 	--// EFFECT: the best-value button breathes
 	featuredPriceScale = Instance.new("UIScale")
@@ -1059,8 +1060,8 @@ end
 
 local row = Instance.new("Frame")
 row.Name = "Row"
-row.Position = UDim2.fromScale(0, featuredEntry and 0.54 or 0)
-row.Size = UDim2.fromScale(1, featuredEntry and 0.46 or 1)
+row.Position = UDim2.fromScale(0, featuredEntry and 0.55 or 0)
+row.Size = UDim2.fromScale(1, featuredEntry and 0.43 or 1) --// a margin above the frame bottom
 row.BackgroundTransparency = 1
 row.Parent = coinsPage
 local rowLayout = Instance.new("UIListLayout")
@@ -1110,8 +1111,8 @@ local TABS = {
 
 local tabRow = Instance.new("Frame")
 tabRow.Name = "Tabs"
-tabRow.Position = UDim2.fromScale(0.05, 0.17)
-tabRow.Size = UDim2.fromScale(0.6, 0.095)
+tabRow.Position = UDim2.fromScale(0.06, 0.16)
+tabRow.Size = UDim2.fromScale(0.6, 0.12) --// bigger, easier-to-hit tabs
 tabRow.BackgroundTransparency = 1
 tabRow.ZIndex = 4
 tabRow.Parent = root
@@ -1156,7 +1157,7 @@ for i, def in ipairs(TABS) do
 	local tab = Instance.new("TextButton")
 	tab.Name = def.Key .. "Tab"
 	tab.LayoutOrder = i
-	tab.Size = UDim2.fromScale(0.3, 1)
+	tab.Size = UDim2.fromScale(0.36, 1)
 	tab.BackgroundColor3 = CREAM
 	tab.AutoButtonColor = false
 	tab.Text = ""

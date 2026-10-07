@@ -333,8 +333,8 @@ for i, spot in ipairs({ { 0.05, 0.42 }, { 0.36, 0.5 }, { 0.07, 0.92 } }) do
 end
 
 local nameText = label(badge, "PlayerName", Enum.Font.FredokaOne, C.White, 34)
-nameText.Position = UDim2.fromScale(0.07, 0.17)
-nameText.Size = UDim2.fromScale(0.62, 0.15)
+nameText.Position = UDim2.fromScale(0.08, 0.215) -- down onto the red band
+nameText.Size = UDim2.fromScale(0.6, 0.12)
 nameText.TextXAlignment = Enum.TextXAlignment.Left
 nameText.Text = player.DisplayName
 nameText.ZIndex = 5
@@ -1327,50 +1327,21 @@ statsRemote.OnClientEvent:Connect(function(action, payload)
 end)
 
 ----------------------------------------------------------------
--- Openers. The sticker appears IMMEDIATELY (hunting for a dock button
--- first left the lobby with no visible opener for ten seconds - owner
--- feedback). If a Studio dock button named OpenStatsButton exists or
--- appears, it takes over and the sticker retires.
+-- Opener: the owner's STATS! dock button, OpenStatsButton (Oct 2026).
+-- The old code-built yellow STATS sticker is gone for good - nothing is
+-- built at load any more, so nothing can flash on screen while assets
+-- stream in. Every copy of the button that ever appears is bound
+-- (Studio-built ScreenGuis can be re-cloned on respawn).
 ----------------------------------------------------------------
-local stickerGui = Instance.new("ScreenGui")
-stickerGui.Name = "StatsButton_UI"
-stickerGui.ResetOnSpawn = false
-stickerGui.DisplayOrder = 10
-stickerGui.Parent = playerGui
-
-local sticker = Instance.new("TextButton")
-sticker.Name = "StatsSticker"
-sticker.AnchorPoint = Vector2.new(0, 0.5)
-sticker.Position = UDim2.fromScale(0.025, 0.925) --// under the PASSIVE (crates) button, which sits below SHOP!
-sticker.Size = UDim2.fromScale(0.085, 0.075)
-sticker.BackgroundColor3 = C.Mustard
-sticker.Rotation = 2
-sticker.Font = Enum.Font.FredokaOne
-sticker.TextScaled = true
-sticker.Text = "STATS"
-stickerText(sticker)
-sticker.Parent = stickerGui
-corner(sticker, UDim.new(0, 10))
-stroke(sticker, 2.5, C.Choc)
-
-sticker.Activated:Connect(function()
-	setOpen(not isOpen)
-end)
-
-task.spawn(function()
-	local waited = 0
-	while waited < 10 do
-		local dockButton = playerGui:FindFirstChild("OpenStatsButton", true)
-		if dockButton and dockButton:IsA("GuiButton") then
-			dockButton.Activated:Connect(function()
-				setOpen(not isOpen)
-			end)
-			stickerGui:Destroy()
-			print("[StatsClient] dock button found - sticker retired, opens from "
-				.. dockButton:GetFullName())
-			return
-		end
-		task.wait(0.5)
-		waited += 0.5
-	end
-end)
+local bound = {}
+local function bindOpenButton(inst)
+	if inst.Name ~= "OpenStatsButton" or not inst:IsA("GuiButton") or bound[inst] then return end
+	bound[inst] = true
+	inst.Activated:Connect(function()
+		setOpen(not isOpen)
+	end)
+end
+for _, inst in ipairs(playerGui:GetDescendants()) do
+	bindOpenButton(inst)
+end
+playerGui.DescendantAdded:Connect(bindOpenButton)
