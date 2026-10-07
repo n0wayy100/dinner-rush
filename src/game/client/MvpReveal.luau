@@ -101,7 +101,11 @@ local function avatarViewport(rig, parent)
 
 	local root = copy:FindFirstChild("HumanoidRootPart") or copy.PrimaryPart
 	local boxCF, boxSize = copy:GetBoundingBox()
-	local front = root and root.CFrame.LookVector or boxCF.LookVector
+	--// face the BODY, not the root: animations can spin the torso round
+	--// while the root stays put, which put the camera behind the MVP
+	local torso = copy:FindFirstChild("UpperTorso") or copy:FindFirstChild("Torso")
+	local front = (torso and torso.CFrame.LookVector)
+		or (root and root.CFrame.LookVector) or boxCF.LookVector
 	front = Vector3.new(front.X, 0, front.Z)
 	front = front.Magnitude > 0.01 and front.Unit or Vector3.new(0, 0, -1)
 	local fov = 32

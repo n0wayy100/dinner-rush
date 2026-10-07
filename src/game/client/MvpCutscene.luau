@@ -131,6 +131,9 @@ local function resolveAnimationId(entry)
 	end
 	if RunService:IsStudio() and type(entry.Keyframes) == "string" and entry.Keyframes ~= "" then
 		local sequence = ReplicatedStorage:FindFirstChild(entry.Keyframes, true)
+			--// the server copies it in from ServerStorage at shift end - give
+			--// that copy a moment to arrive before giving up
+			or ReplicatedStorage:WaitForChild(entry.Keyframes, 3)
 		if sequence and sequence:IsA("KeyframeSequence") then
 			local ok, temp = pcall(function()
 				return game:GetService("KeyframeSequenceProvider"):RegisterKeyframeSequence(sequence)
@@ -138,6 +141,9 @@ local function resolveAnimationId(entry)
 			if ok then
 				return temp
 			end
+			warn(("[MvpCutscene] could not load keyframes '%s': %s"):format(entry.Keyframes, tostring(temp)))
+		elseif sequence then
+			warn(("[MvpCutscene] '%s' is a %s, not a KeyframeSequence"):format(entry.Keyframes, sequence.ClassName))
 		end
 	end
 	return nil
@@ -478,10 +484,33 @@ function MvpCutscene.Run(payload, options)
 		local aimPart = rig:FindFirstChild("UpperTorso") or rig:FindFirstChild("Torso") or root
 
 		if settings.Light ~= false then
+			--// a soft KEY light in front of and above the MVP (inside the chest
+			--// it lit white outfits from point-blank and blew them out)
+			local holder = Instance.new("Attachment")
+			holder.Name = "MvpKeyLight"
+			holder.Position = Vector3.new(0, settings.LightHeight or 2.5, -(settings.LightForward or 6))
+			holder.Parent = aimPart --// goes when the rig goes
 			local light = Instance.new("PointLight")
-			light.Brightness = settings.LightBrightness or 1.5
-			light.Range = settings.LightRange or 16
-			light.Parent = aimPart --// goes when the rig goes
+			light.Brightness = settings.LightBrightness or 0.7
+			light.Range = settings.LightRange or 14
+			light.Color = settings.LightColor or Color3.fromRGB(255, 236, 214)
+			light.Shadows = false
+			light.Parent = holder
+		end
+
+		--// soften the map's BLOOM for the shot (bright outfits glowed white
+		--// under it); restored when the cutscene ends
+		local bloomScale = settings.BloomScale or 0.35
+		if bloomScale < 1 then
+			for _, effect in ipairs(Lighting:GetChildren()) do
+				if effect:IsA("BloomEffect") and effect.Enabled then
+					local before = effect.Intensity
+					effect.Intensity = before * bloomScale
+					table.insert(cleanups, function()
+						if effect.Parent then effect.Intensity = before end
+					end)
+				end
+			end
 		end
 
 		local animation = Instance.new("Animation")
@@ -573,6 +602,37 @@ function MvpCutscene.Run(payload, options)
 			return view.Rotation + (aimPart.Position + toCamera.Unit * reach)
 		end
 
+		--// THE HERO SHOT (owner, Oct 2026): once the pose FREEZES, the camera
+		--// eases from the animation's last frame round to a flattering
+		--// 3/4-front, slightly-low angle (Config.MvpCutscene.FinalShot, or the
+		--// animation's own FinalShot). heroBlend runs 0 -> 1 after the freeze.
+		local heroShot = entry.FinalShot or settings.FinalShot
+		local heroBlend, heroFrom = nil, nil
+		local function heroView()
+			--// the way the BODY faces (animations like Siu spin the torso round
+			--// while the root stays put) - so the shot is always from the front
+			local look = aimPart.CFrame.LookVector * Vector3.new(1, 0, 1)
+			if look.Magnitude < 0.01 then look = Vector3.new(0, 0, -1) end
+			look = look.Unit
+			local yaw = math.rad(heroShot.Yaw or 30)
+			local front = CFrame.fromAxisAngle(Vector3.yAxis, yaw):VectorToWorldSpace(look)
+			local target = aimPart.Position + Vector3.new(0, heroShot.LookHeight or 0.3, 0)
+			local eye = aimPart.Position + front * (heroShot.Distance or 9)
+				+ Vector3.new(0, heroShot.Height or -0.6, 0)
+			--// never into a wall: stop short along the line, like pushBack
+			local ignore = { rig }
+			for _, other in ipairs(Players:GetPlayers()) do
+				if other.Character then table.insert(ignore, other.Character) end
+			end
+			pushParams.FilterDescendantsInstances = ignore
+			local toEye = eye - target
+			local hit = workspace:Raycast(target, toEye, pushParams)
+			if hit then
+				eye = target + toEye.Unit * math.max(3, (hit.Position - target).Magnitude - 0.6)
+			end
+			return CFrame.lookAt(eye, target)
+		end
+
 		RunService:BindToRenderStep(RENDER_NAME, Enum.RenderPriority.Camera.Value + 1, function()
 			if not bone.Parent then return end
 			local view
@@ -583,6 +643,12 @@ function MvpCutscene.Run(payload, options)
 				view = CFrame.lookAt(bone.Position, aimPart.Position)
 			end
 			view = pushBack(view)
+			if heroBlend then
+				heroFrom = heroFrom or view
+				local t = heroBlend.Value
+				local eased = 1 - (1 - t) ^ 3 --// ease out
+				view = heroFrom:Lerp(heroView(), eased)
+			end
 			camera.CFrame = view
 			if blur then
 				blur.FocusDistance = (view.Position - aimPart.Position).Magnitude
@@ -641,8 +707,20 @@ function MvpCutscene.Run(payload, options)
 		--// Run to the last frame and FREEZE there - the pose (and the
 		--// camera, which rides the same animation) holds behind the report
 		local stopAt = math.max(math.min(track.Length, settings.MaxSeconds or 10) - FREEZE_EARLY, 0)
+		--// the hero glide can begin BEFORE the freeze (FinalShot.StartEarlySeconds)
+		local function startHero()
+			if heroBlend or not heroShot or heroShot.Enabled == false then return end
+			heroBlend = Instance.new("NumberValue")
+			heroBlend.Value = 0
+			table.insert(cleanups, function() heroBlend:Destroy() end)
+			tween(heroBlend, heroShot.EaseSeconds or 1.2, { Value = 1 })
+		end
+		local heroEarly = heroShot and (heroShot.StartEarlySeconds or 0) or 0
 		while track.IsPlaying and track.TimePosition < stopAt
 			and os.clock() - started < stopAt + 1 do
+			if heroEarly > 0 and track.TimePosition >= stopAt - heroEarly then
+				startHero()
+			end
 			RunService.RenderStepped:Wait()
 		end
 		track:AdjustSpeed(0)
@@ -652,6 +730,9 @@ function MvpCutscene.Run(payload, options)
 			track:Play(0, 1, 0)
 			track.TimePosition = stopAt
 		end
+
+		--// the hero shot: ease to the better final angle over the frozen pose
+		startHero() --// (no-op if it already began before the freeze)
 
 		--// Film bars slide away so the report gets the whole screen
 		tween(barTop, 0.4, { Size = UDim2.fromScale(1, 0) })

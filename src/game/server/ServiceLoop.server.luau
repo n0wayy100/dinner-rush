@@ -116,7 +116,7 @@ local function tutorialGateAllows(action)
 end
 
 -- DEBUG knobs (set to nil to use real Config values)
-local DEBUG_PREP_SECONDS = nil      -- real: Config.Shift.PrepTimeSeconds (20)
+local DEBUG_PREP_SECONDS = 0        -- TEMP (owner testing): no countdown, start at once. nil = Config.Shift.PrepTimeSeconds (20)
 local DEBUG_SHIFT_SECONDS = nil     -- e.g. 180 for a 3-minute test shift
 local DEBUG_FORCE_FIRST_DASH = false -- first party to finish eating ALWAYS dashes,
                                      -- once per server - set false for real play
@@ -4519,6 +4519,62 @@ local function endShift(success, reason)
 			local ok, awards = pcall(function() return awardsBridge:Invoke() end)
 			if ok and type(awards) == "table" then
 				payload.Awards = awards
+			end
+		end
+		--// STUDIO: a slot's test KeyframeSequence may live in ServerStorage,
+		--// which clients cannot see - copy it into ReplicatedStorage so the
+		--// cutscene (client-side) can find and play it. Live servers use AnimId.
+		if game:GetService("RunService"):IsStudio() then
+			local ReplicatedStorage = game:GetService("ReplicatedStorage")
+			for _, slot in ipairs((Config.MvpCutscene and Config.MvpCutscene.Animations) or {}) do
+				local name = slot.Keyframes
+				if type(name) == "string" and name ~= ""
+					and not ReplicatedStorage:FindFirstChild(name, true) then
+					--// find it by name (case-insensitive, anywhere in ServerStorage)
+					local source = nil
+					for _, item in ipairs(game:GetService("ServerStorage"):GetDescendants()) do
+						if item.Name:lower() == name:lower() then
+							if item:IsA("KeyframeSequence") then
+								source = item
+								break
+							end
+							source = source or item:FindFirstChildWhichIsA("KeyframeSequence", true)
+						end
+					end
+					if source then
+						local copy = source:Clone()
+						copy.Name = name
+						copy.Parent = ReplicatedStorage
+						print(("[Service] STUDIO: copied MVP keyframes '%s' (from %s) for the cutscene")
+							:format(name, source:GetFullName()))
+					else
+						warn(("[Service] STUDIO: no KeyframeSequence named '%s' anywhere in ServerStorage - "
+							.. "check its exact name, or paste the published AnimId into that slot"):format(name))
+					end
+				end
+			end
+		end
+		--// THE MVP ANIMATION: the server picks ONE slot from
+		--// Config.MvpCutscene.Animations so every screen plays the same one.
+		--// Only slots with an AnimId (or Studio keyframes) are eligible;
+		--// Config.MvpCutscene.StudioForce (a slot Name) pins one in Studio.
+		do
+			local mvp = Config.MvpCutscene
+			local slots = (mvp and mvp.Animations) or {}
+			local studio = game:GetService("RunService"):IsStudio()
+			local eligible = {}
+			for index, slot in ipairs(slots) do
+				local ready = (slot.AnimId or "") ~= "" or (studio and (slot.Keyframes or "") ~= "")
+				if ready and slot.Enabled ~= false then
+					if studio and mvp.StudioForce and mvp.StudioForce ~= "" and slot.Name == mvp.StudioForce then
+						eligible = { index }
+						break
+					end
+					table.insert(eligible, index)
+				end
+			end
+			if #eligible > 0 then
+				payload.MvpAnim = eligible[math.random(1, #eligible)]
 			end
 		end
 		local cardByUser = {}

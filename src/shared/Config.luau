@@ -1481,6 +1481,21 @@ Config.Interaction = {
 -- SPRINT / STAMINA (client-side movement feel - see SprintClient)
 -- Difficulty NEVER touches these: hands feel the same everywhere.
 ----------------------------------------------------------------
+--// FOOTSTEPS (FootstepsClient, Oct 2026 placeholder): running / jump /
+--// land sounds using Roblox's BUILT-IN sound files (rbxasset://, shipped
+--// with the client - no uploads, no ids). Swap in uploaded ids any time.
+Config.Footsteps = {
+	Enabled = true,
+	RunSound = "rbxasset://sounds/action_footsteps_plastic.mp3",
+	JumpSound = "rbxasset://sounds/action_jump.mp3",
+	LandSound = "rbxasset://sounds/action_jump_land.mp3",
+	RunVolume = 0.5,
+	JumpVolume = 0.45,
+	LandVolume = 0.45,
+	RunRateAtWalk = 1.0,      -- playback speed at walking pace...
+	RunRatePerSpeed = 1 / 16, -- ...scaled by WalkSpeed / 16 (sprinting = faster steps)
+}
+
 Config.Sprint = {
 	--// Double-tap W to sprint, then keep W held. LeftShift is Roblox's own
 	--// shift-lock toggle, so binding sprint to it fought the camera.
@@ -1834,12 +1849,31 @@ Config.MvpCutscene = {
 	--// of sight to this many times its animated distance from the MVP, so the
 	--// whole body is in frame. 1 = the animation as authored. It stops short of
 	--// walls on its way back, so a tight corner cannot put it inside one.
-	CameraDistanceMult = 1.6,
+	CameraDistanceMult = 1.3, --// was 1.6 - a little closer (owner, Oct 2026)
+
+	--// THE HERO SHOT (owner, Oct 2026): when the pose freezes, the camera
+	--// eases from the animation's last frame to this flattering angle and
+	--// holds there under the reveal + report. An animation slot may carry its
+	--// own FinalShot table to override this; Enabled = false keeps the
+	--// animation's own last frame.
+	FinalShot = {
+		Enabled = true,
+		Yaw = 20,           -- degrees round from straight-on (+ = the MVP's left side; try -30 for the other side)
+		Distance = 12,      -- studs from the MVP's chest (far enough for the whole body)
+		Height = 3,         -- camera height vs the chest: ABOVE, looking down (owner, Oct 2026)
+		LookHeight = 0.5,   -- aim a little above the chest, so the face is well in frame
+		EaseSeconds = 1.2,  -- how long the glide to the hero angle takes
+		StartEarlySeconds = 1.5, -- begin the glide this long BEFORE the freeze (0 = at the freeze)
+	},
 	Blur = true,             -- soft background so the MVP pops
 	BlurIntensity = 0.5,
-	Light = true,            -- a temporary light on the MVP for the shot
-	LightBrightness = 1.5,
-	LightRange = 16,
+	Light = false,           -- off (owner, Oct 2026: looked ugly) - true brings the soft key light back
+	LightBrightness = 0.7,   -- was 1.5 inside the chest: blew white outfits out (owner, Oct 2026)
+	LightForward = 6,        -- studs in front of the MVP
+	LightHeight = 2.5,       -- studs above the chest
+	LightColor = Color3.fromRGB(255, 236, 214), -- warm, not pure white
+	BloomScale = 0.35,       -- the map's bloom is cut to this during the shot (1 = untouched)
+	LightRange = 14,
 
 	--// One entry per MVP animation; the server picks one at random each
 	--// shift and every screen plays the same one.
@@ -1857,7 +1891,25 @@ Config.MvpCutscene = {
 	--//               this-many seconds instead of stopping dead (0 = no fade)
 	--// The sound plays out in full, carrying on over the report if it is
 	--// longer than the animation.
+	--// STUDIO ONLY (live-ignored): the Name of one slot below to play EVERY
+	--// time while testing (e.g. "MVP Siu"). "" = random, like live servers.
+	StudioForce = "MVP Siu",
+
+	--// HOW TO ADD AN ANIMATION: copy a { ... } block below, give it a Name,
+	--// and paste the published animation's id into AnimId. A slot with an
+	--// empty AnimId is skipped on live servers (Enabled = false hides one).
 	Animations = {
+		{
+			Name = "MVP Siu",
+			AnimId = "91179497532835",  --// MVP_Siu, published under the group
+			Keyframes = "MVP_Siu",      --// Studio fallback: a KeyframeSequence named
+			                            --// MVP_Siu (ServerStorage is fine)
+			FieldOfView = 50,
+			SoundId = "139638022608077", --// the same almighty theme as Victory Fist
+			SoundVolume = 1,
+			SoundDelay = 0,
+			SoundFadeOutSeconds = 3,
+		},
 		{
 			Name = "Victory Fist",
 			AnimId = "137252127254351",
@@ -3291,7 +3343,7 @@ Config.PhaseBanner = {
 --// ingredients - without the lobby handoff or a per-test command line.
 --// "" falls back to DefaultMapId. Live servers ignore this completely:
 --// the lobby's teleport data always wins there.
-Config.StudioMapId = "Sushi" --// playtesting Yamasaki Ramen, the Japanese map (Oct 2026; was "French")
+Config.StudioMapId = "Filipino" --// playtesting Manila Kitchen, the Filipino map (Oct 2026)
 
 --// STUDIO-ONLY spawn burst: this many parties march in the moment the
 --// shift goes RUNNING, so route/seating tests need no command bar.
