@@ -3487,6 +3487,9 @@ local function serveDishToParty(party, tableId, dishName, quality, plateSlot, se
 		end
 		if server then
 			creditStat(server, "CustomersServed", party.Size)
+			if party.IsVIP then
+				scoreOnly(server, "VIPServed", 1) --// the daily "serve VIPs" mission
+			end
 		end
 		removeBar(party)
 		setPartyState(party, STATE.SERVED)
