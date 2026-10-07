@@ -49,7 +49,8 @@ local current = nil        --// the Sound playing right now, if any
 local currentStage = false --// the phase last decided on; false = nothing yet
 local generation = 0       --// bumped on every decision, so a stale fade-out
                            --// timer cannot touch a newer track
-local muted = false
+--// STUDIO: starts muted when Config.Music.StudioMuted is on (M still toggles)
+local muted = game:GetService("RunService"):IsStudio() and Config.Music.StudioMuted == true
 
 ----------------------------------------------------------------
 -- HELPERS

@@ -46,7 +46,8 @@ local SETTINGS = Config.Music
 ----------------------------------------------------------------
 
 local started = false
-local muted = false
+--// STUDIO: starts muted when Config.Music.StudioMuted is on (M still toggles)
+local muted = game:GetService("RunService"):IsStudio() and Config.Music.StudioMuted == true
 
 local current = nil       --// the live Sound
 local currentList = nil   --// playlist name currently running
