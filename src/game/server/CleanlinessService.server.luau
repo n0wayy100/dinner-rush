@@ -36,6 +36,9 @@ local Debris = game:GetService("Debris")
 
 local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
 local MinigameIntro = require(ServerStorage:WaitForChild("Shared"):WaitForChild("MinigameIntro"))
+local ToolModels = require(ServerStorage:WaitForChild("Shared"):WaitForChild("ToolModels"))
+--// the prop placed at the vacuum mount hides while a vacuum is out
+local vacuumShelf = ToolModels.MountTracker("VacuumMount", true) --// returnable: "Put back"
 local TID = Config.Tidiness
 
 local ShiftState = ReplicatedStorage:WaitForChild("ShiftState")
@@ -183,9 +186,12 @@ local function giveVacuumTo(player)
 	local character = player.Character
 	if not character then return end
 	if holdingVacuum(player) then return end
+	if vacuumShelf.IsOut() then return end --// one of each: someone has it
 	returnVacuumFor(player)
 	local tool = buildVacuumTool()
+	ToolModels.Dress(tool, "Vacuum") --// the team's model, when it is in
 	tool.Parent = character
+	vacuumShelf.Add(tool, player) --// off the wall until it comes back
 	vacuumTools[player] = tool
 	print(("[Tidiness] %s grabbed the vacuum"):format(player.Name))
 end
@@ -212,7 +218,15 @@ local function setupVacuumMount()
 	prompt.MaxActivationDistance = (Config.Interaction and Config.Interaction.PromptRangeStuds) or 10
 	prompt.RequiresLineOfSight = (Config.Interaction and Config.Interaction.PromptRequiresLineOfSight) or false
 	prompt.Parent = mount
+	ToolModels.ShowAtMount(mount, "Vacuum") --// everyone gets their own: always on show
 	prompt.Triggered:Connect(function(player)
+		--// the holder brings it back to its spot: "Put back"
+		local held = vacuumTools[player]
+		if held and held.Parent then
+			returnVacuumFor(player)
+			print(("[Tidiness] %s put the vacuum back"):format(player.Name))
+			return
+		end
 		giveVacuumTo(player)
 	end)
 	print(("[Tidiness] vacuum mount ready at %s"):format(mount:GetFullName()))
@@ -531,6 +545,7 @@ local function clearAllGrime()
 	end
 	grimeSpots = {}
 	if poopMess then poopMess:Destroy() poopMess = nil end
+	ServerStorage:SetAttribute("PoopMessActive", false)
 	poopDeferred = false
 	refreshDirty()
 end
@@ -588,6 +603,7 @@ end
 --// take away one the Janitor happens to be carrying for a toilet emergency
 local function cleanPoop(player, keepPlunger)
 	if poopMess then poopMess:Destroy() poopMess = nil end
+	ServerStorage:SetAttribute("PoopMessActive", false)
 	if not keepPlunger then
 		removePlunger(player) --// the plunger is spent once the poop is cleared
 	end
@@ -764,6 +780,7 @@ local function spawnPoop()
 
 	model.Parent = workspace
 	poopMess = model
+	ServerStorage:SetAttribute("PoopMessActive", true) --// the plunger mount opens up
 	adjust(-(TID.PoopDropOnSpawn or 6), "poop appeared")
 end
 
@@ -796,17 +813,40 @@ local function buildGuardCone(floorPos, radius)
 	local model = Instance.new("Model")
 	model.Name = "GuardedZoneCone"
 	local up = CFrame.Angles(0, 0, math.rad(90)) --// cylinders lie on X; stand them up
-	local base = conePart(model, "Base", Vector3.new(2.2, 0.25, 2.2),
-		CFrame.new(floorPos + Vector3.new(0, 0.125, 0)), CONE_ORANGE)
-	model.PrimaryPart = base
-	conePart(model, "Low", Vector3.new(1, 1.5, 1.5),
-		CFrame.new(floorPos + Vector3.new(0, 0.75, 0)) * up, CONE_ORANGE, Enum.PartType.Cylinder)
-	conePart(model, "Stripe", Vector3.new(0.6, 1.2, 1.2),
-		CFrame.new(floorPos + Vector3.new(0, 1.55, 0)) * up, CONE_WHITE, Enum.PartType.Cylinder)
-	conePart(model, "High", Vector3.new(0.8, 0.85, 0.85),
-		CFrame.new(floorPos + Vector3.new(0, 2.25, 0)) * up, CONE_ORANGE, Enum.PartType.Cylinder)
-	conePart(model, "Tip", Vector3.new(0.6, 0.6, 0.6),
-		CFrame.new(floorPos + Vector3.new(0, 2.7, 0)), CONE_ORANGE, Enum.PartType.Ball)
+	--// THE TEAM'S CONE (ServerStorage.ToolModels.CautionCone) when it is
+	--// in: its foot set on the floor spot, whatever pivot the import came
+	--// with. The ring and timer below still come from code.
+	local base
+	local copy, coneParts = ToolModels.Copy("CautionCone")
+	if copy then
+		for _, part in ipairs(coneParts) do
+			part.Anchored = true
+			part.CanCollide = false
+			part.CanQuery = false
+			part.CanTouch = false
+		end
+		local boxCF, boxSize = copy:GetBoundingBox()
+		local foot = boxCF.Position - Vector3.new(0, boxSize.Y / 2, 0)
+		copy:PivotTo(copy:GetPivot() + (floorPos - foot))
+		for _, part in ipairs(coneParts) do
+			part.Parent = model
+		end
+		copy:Destroy()
+		model.WorldPivot = CFrame.new(floorPos) --// so it tips over from its foot
+		base = coneParts[1]
+	else
+		base = conePart(model, "Base", Vector3.new(2.2, 0.25, 2.2),
+			CFrame.new(floorPos + Vector3.new(0, 0.125, 0)), CONE_ORANGE)
+		model.PrimaryPart = base
+		conePart(model, "Low", Vector3.new(1, 1.5, 1.5),
+			CFrame.new(floorPos + Vector3.new(0, 0.75, 0)) * up, CONE_ORANGE, Enum.PartType.Cylinder)
+		conePart(model, "Stripe", Vector3.new(0.6, 1.2, 1.2),
+			CFrame.new(floorPos + Vector3.new(0, 1.55, 0)) * up, CONE_WHITE, Enum.PartType.Cylinder)
+		conePart(model, "High", Vector3.new(0.8, 0.85, 0.85),
+			CFrame.new(floorPos + Vector3.new(0, 2.25, 0)) * up, CONE_ORANGE, Enum.PartType.Cylinder)
+		conePart(model, "Tip", Vector3.new(0.6, 0.6, 0.6),
+			CFrame.new(floorPos + Vector3.new(0, 2.7, 0)), CONE_ORANGE, Enum.PartType.Ball)
+	end
 
 	local ring = conePart(model, "Ring", Vector3.new(0.08, radius * 2, radius * 2),
 		CFrame.new(floorPos + Vector3.new(0, 0.06, 0)) * up, BASIL, Enum.PartType.Cylinder)

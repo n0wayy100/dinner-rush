@@ -32,6 +32,11 @@ local ServerStorage = game:GetService("ServerStorage")
 
 local Sfx = require(ServerStorage:WaitForChild("Shared"):WaitForChild("Sfx"))
 local MinigameIntro = require(ServerStorage:WaitForChild("Shared"):WaitForChild("MinigameIntro"))
+local ToolModels = require(ServerStorage:WaitForChild("Shared"):WaitForChild("ToolModels"))
+--// the props placed at the mounts hide while their tool is out
+local plungerShelf = ToolModels.MountTracker("PlungerMount")
+local broomShelf = ToolModels.MountTracker("BroomMount")
+local extinguisherShelf = ToolModels.MountTracker("ExtinguisherMount")
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
 
@@ -162,17 +167,56 @@ local function resolvePart(instance)
 	return nil
 end
 
+--// Is this inside a RESTAURANT MAP (a Workspace model named after a map in
+--// Config.Maps)? A stray copy loose in Workspace is not.
+local function insideAMap(instance)
+	local top = instance
+	while top.Parent and top.Parent ~= workspace do
+		top = top.Parent
+	end
+	if top.Parent ~= workspace then return false end
+	local active = workspace:GetAttribute("MatchMapId")
+	if active and top.Name == active then return true end
+	return Config.MapById and Config.MapById(top.Name) ~= nil
+end
+
+--// The ONE spot for a tag (the extinguisher's mount, the toilet...). With
+--// several tagged, the one inside the restaurant map wins - a stray copy
+--// loose in Workspace once stole the extinguisher's prompt, 708 studs from
+--// the real one (owner playtest, Oct 2026) - and the extras are named in a
+--// warning so they can be cleaned up.
 local function firstTaggedPart(tag)
+	local candidates = {}
 	for _, instance in ipairs(CollectionService:GetTagged(tag)) do
 		if instance:IsDescendantOf(workspace) then
 			local part = resolvePart(instance)
 			if part then
-				return part
+				table.insert(candidates, { Instance = instance, Part = part })
+			else
+				warn(("[Events] %s is tagged %s but has no BasePart"):format(instance:GetFullName(), tag))
 			end
-			warn(("[Events] %s is tagged %s but has no BasePart"):format(instance:GetFullName(), tag))
 		end
 	end
-	return nil
+	if #candidates == 0 then return nil end
+
+	local chosen = candidates[1]
+	for _, candidate in ipairs(candidates) do
+		if insideAMap(candidate.Instance) then
+			chosen = candidate
+			break
+		end
+	end
+	if #candidates > 1 then
+		local others = {}
+		for _, candidate in ipairs(candidates) do
+			if candidate ~= chosen then
+				table.insert(others, candidate.Instance:GetFullName())
+			end
+		end
+		warn(("[Events] %d things are tagged %s - using %s. Remove the tag from: %s")
+			:format(#candidates, tag, chosen.Instance:GetFullName(), table.concat(others, ", ")))
+	end
+	return chosen.Part
 end
 
 local function difficultyBlock()
@@ -195,6 +239,10 @@ end
 -- filters on the Ingredient and Dish attributes, and this tool has neither.
 ----------------------------------------------------------------
 local plungerTools = {} --// player -> their plunger Tool
+--// Filled in once the toilet and fire tables exist (further down); the
+--// mount prompts ask them whether there is anything to fight right now
+local toiletIsActive = nil
+local fireIsActive = nil
 local mountPrompt = nil
 
 --// Send one player's plunger home (they left, died, or dropped it)
@@ -237,6 +285,9 @@ local function givePlungerTo(player)
 	if plungerTools[player] and plungerTools[player].Parent then
 		return true
 	end
+	if plungerShelf.IsOut() then
+		return false, "Someone already has the plunger!" --// one of each
+	end
 	returnPlungerFor(player) --// clear a stale record just in case
 
 	local tool = Instance.new("Tool")
@@ -268,8 +319,10 @@ local function givePlungerTo(player)
 	weld.Parent = cup
 	cup.CFrame = handle.CFrame * CFrame.new(0, -2, 0) * CFrame.Angles(0, 0, math.rad(90))
 
+	ToolModels.Dress(tool, "Plunger") --// the team's model, when it is in
 	tool.Parent = character
 	plungerTools[player] = tool
+	plungerShelf.Add(tool) --// off the wall until it comes back
 	print(("[Events] %s took a plunger"):format(player.Name))
 	return true
 end
@@ -289,8 +342,23 @@ local function setupPlungerMount()
 	mountPrompt.MaxActivationDistance = Config.Interaction.PromptRangeStuds
 	mountPrompt.RequiresLineOfSight = Config.Interaction.PromptRequiresLineOfSight
 	mountPrompt.Parent = mount
+	ToolModels.ShowAtMount(mount, "Plunger") --// everyone gets their own: always on show
 
 	mountPrompt.Triggered:Connect(function(player)
+		--// only while there is something to plunge: the toilet emergency,
+		--// or a poop mess (CleanlinessService publishes that one). The
+		--// plunger goes home again when either is done.
+		local needed = (toiletIsActive and toiletIsActive())
+			or ServerStorage:GetAttribute("PoopMessActive") == true
+		if not needed then
+			mountPrompt.ObjectText = "Nothing to plunge!"
+			task.delay(1.5, function()
+				if mountPrompt then
+					mountPrompt.ObjectText = "Plunger"
+				end
+			end)
+			return
+		end
 		givePlungerTo(player)
 	end)
 
@@ -356,6 +424,9 @@ local function giveBroomTo(player)
 	if broomTools[player] and broomTools[player].Parent then
 		return true
 	end
+	if broomShelf.IsOut() then
+		return false, "Someone already has the broom!" --// one of each
+	end
 	returnBroomFor(player)
 
 	local tool = Instance.new("Tool")
@@ -386,8 +457,10 @@ local function giveBroomTo(player)
 	weld.Parent = brush
 	brush.CFrame = handle.CFrame * CFrame.new(0, -2.8, 0)
 
+	ToolModels.Dress(tool, "Broom") --// the team's model, when it is in
 	tool.Parent = character
 	broomTools[player] = tool
+	broomShelf.Add(tool) --// off the wall until it comes back
 	print(("[Events] %s took a broom"):format(player.Name))
 	return true
 end
@@ -407,6 +480,7 @@ local function setupBroomMount()
 	broomMountPrompt.MaxActivationDistance = Config.Interaction.PromptRangeStuds
 	broomMountPrompt.RequiresLineOfSight = Config.Interaction.PromptRequiresLineOfSight
 	broomMountPrompt.Parent = mount
+	ToolModels.ShowAtMount(mount, "Broom") --// everyone gets their own: always on show
 
 	broomMountPrompt.Triggered:Connect(function(player)
 		--// The broom only leaves the wall while there is a spill to sweep
@@ -811,6 +885,9 @@ local toilet = {
 	Label = nil,
 	Prompt = nil,
 }
+toiletIsActive = function()
+	return toilet.Active == true
+end
 
 local function buildToiletUi()
 	local gui = Instance.new("BillboardGui")
@@ -1245,6 +1322,7 @@ end
 local extinguisherHolder = nil
 local extinguisherTool = nil
 local extinguisherMountPrompt = nil
+local extinguisherDisplay = nil --// the model on the wall (ToolModels), hidden while carried
 local onExtinguisherActivated --// assigned in the grease-fire section below;
                               --// the tool connects its click to this
 
@@ -1254,6 +1332,9 @@ local function returnExtinguisher()
 		extinguisherTool = nil
 	end
 	extinguisherHolder = nil
+	if extinguisherDisplay then
+		extinguisherDisplay.Show() --// back on the wall
+	end
 
 	if extinguisherMountPrompt then
 		extinguisherMountPrompt.ActionText = "Take"
@@ -1296,8 +1377,13 @@ local function giveExtinguisherTo(player)
 	weld.Parent = nozzle
 	nozzle.CFrame = handle.CFrame * CFrame.new(0.4, 1.3, 0) * CFrame.Angles(0, 0, math.rad(-35))
 
+	ToolModels.Dress(tool, "Extinguisher") --// the team's model, when it is in
+	if extinguisherDisplay then
+		extinguisherDisplay.Hide() --// there is only one: off the wall, into the hand
+	end
 	tool.Parent = character
 	extinguisherTool = tool
+	extinguisherShelf.Add(tool) --// off the wall until it comes back
 	extinguisherHolder = player
 	tool.Activated:Connect(function()
 		if onExtinguisherActivated then
@@ -1323,8 +1409,19 @@ local function setupExtinguisherMount()
 	extinguisherMountPrompt.MaxActivationDistance = Config.Interaction.PromptRangeStuds
 	extinguisherMountPrompt.RequiresLineOfSight = Config.Interaction.PromptRequiresLineOfSight
 	extinguisherMountPrompt.Parent = mount
+	extinguisherDisplay = ToolModels.ShowAtMount(mount, "Extinguisher")
 
 	extinguisherMountPrompt.Triggered:Connect(function(player)
+		--// only while something is burning; it goes home when the fire is out
+		if not (fireIsActive and fireIsActive()) then
+			extinguisherMountPrompt.ObjectText = "No fire right now!"
+			task.delay(1.5, function()
+				if extinguisherMountPrompt and not extinguisherTool then
+					extinguisherMountPrompt.ObjectText = "Extinguisher"
+				end
+			end)
+			return
+		end
 		if extinguisherTool then
 			extinguisherMountPrompt.ObjectText = "Extinguisher taken!"
 			task.delay(1.5, function()
@@ -1382,6 +1479,9 @@ local fire = {
 	AlertOverride = nil, -- "<player> threw water..." wins the banner briefly
 	AlertUntil = 0,
 }
+fireIsActive = function()
+	return fire.Active == true
+end
 
 local function kitchenStations(...)
 	local bridge = ServerStorage:FindFirstChild("KitchenStationControl")

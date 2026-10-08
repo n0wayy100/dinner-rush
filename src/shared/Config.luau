@@ -1687,6 +1687,37 @@ Config.Payment = {
 -- The server computes every number and the verdict; the client renders.
 ----------------------------------------------------------------
 ----------------------------------------------------------------
+-- THE TOOL MODELS (ToolModels). The team's own 3D tools, used BOTH on the
+-- wall mount and in the hand. Drop each imported model into
+-- ServerStorage.ToolModels named exactly: Extinguisher, Plunger, Broom,
+-- Vacuum, CautionCone. No ids - models live in the place, like the dish
+-- models. A missing one keeps the old code-built look.
+--
+-- MOUNTS: the model stands with its FOOT on the mount part's centre, facing
+-- the way the mount's front face points - so make each mount a small
+-- invisible marker where the tool should stand, and take any old prop off
+-- the wall (or it shows twice).
+----------------------------------------------------------------
+Config.ToolModels = {
+	--// GripTurn: how it sits IN THE HAND, degrees around X, Y, Z. If a tool
+	--// points backwards, flip the 180 to 0 (or 0 to 180).
+	--// MountTurn: the same for the copy on the wall.
+	--// ShowOnMount = false: leave that mount alone.
+	--// ShowOnMount is OFF: the props already placed and tagged at the mounts
+	--// ARE the display, hidden while their tool is out. true would stand an
+	--// extra copy on top - only for a mount that is a bare invisible marker.
+	--// GripOffset: nudges a tool in the hand, in studs (X sideways, Y up, Z
+	--// forward/back - negative Z pushes it AWAY from the body; flip the sign
+	--// if it moves the wrong way)
+	Extinguisher = { GripTurn = { 0, 180, 0 }, --// imported facing the other way from the rest
+		GripOffset = { 0, 0, -0.6 }, --// clear of the fist
+		MountTurn = { 0, 0, 0 }, ShowOnMount = false },
+	Plunger = { GripTurn = { 0, 0, 0 }, MountTurn = { 0, 0, 0 }, ShowOnMount = false },
+	Broom = { GripTurn = { 0, 0, 0 }, MountTurn = { 0, 0, 0 }, ShowOnMount = false },
+	Vacuum = { GripTurn = { 0, 0, 0 }, MountTurn = { 0, 0, 0 }, ShowOnMount = false },
+}
+
+----------------------------------------------------------------
 -- THE MINIGAME ART KIT (MinigameSkin). Paste each image's id into its Id.
 -- Every piece is optional: an empty Id keeps that part of the screen's old
 -- code-drawn look, so ids can go in one at a time. Upload under the GROUP.
@@ -2896,6 +2927,37 @@ Config.Ultimates = {
 	BufferSeconds = 10,
 	BufferCleanRadiusStuds = 5,
 	JanitorBufferAnim = "", -- a hired "pushing" animation slots in here later ("" = none)
+
+	--// THE VACUUM CHARGE (owner, Oct 2026): the Janitor's ultimate redone
+	--// with the team's own vacuum - it yanks the Janitor off their feet and
+	--// drags them along; they cannot stop, only steer (with the normal
+	--// movement controls). Takes over from the floor buffer once LoopAnim is
+	--// filled in AND ServerStorage.ToolModels.Vacuum exists - until then the
+	--// buffer stays. Same length, speed and clean radius as the buffer
+	--// (BufferSeconds / BufferSpeedMult / BufferCleanRadiusStuds above).
+	--// Publish the animations under the GROUP.
+	VacuumCharge = {
+		StartAnim = "77283068024434",  -- the yank: plays ONCE at the start
+		LoopAnim = "84173827058045",   -- being dragged along: loops until the move ends
+		--// FOLLOW THE ANIMATION: true = the vacuum rides the animation's
+		--// VacuumBone and moves EXACTLY as animated in Blender. Needs the
+		--// re-export with the bone resting AT the HumanoidRootPart, then
+		--// BoneFix found with game.ServerStorage.DebugVacuumCharge:Invoke(n),
+		--// n = 1-6. false = the drawn-in-code movement below.
+		FollowAnimation = false, -- needs the re-export with the bone resting at the root
+		BoneFix = 1,
+		HeightOffset = -0.6, -- studs, BONE VERSION ONLY (FollowAnimation = true):
+		                     -- lowers (negative) or raises its whole path
+		FlipFacing = false, -- true if the vacuum's bag faces the Janitor instead of away
+		                    -- (test without the ultimate: DebugVacuumCharge:Invoke())
+		TurnDegreesPerSecond = 200, -- how fast steering turns the charge
+
+		--// HOW THE VACUUM MOVES (FollowAnimation = false): the handle stays in
+		--// the hands and the floor head stays ON the floor every frame, so it
+		--// leans out as far as the animation pushes the hands. On top, only a
+		--// small shake:
+		WobbleDegrees = 3,     -- side-to-side wobble (0 = none)
+	},
 
 	--// IN-WORLD CAST ANIMATION per class (hired, plays on the caster - the same
 	--// PlayAnim channel the skills use, so everyone sees it). "" = no animation.
