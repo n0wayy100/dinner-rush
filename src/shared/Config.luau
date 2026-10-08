@@ -1924,12 +1924,32 @@ Config.MvpCutscene = {
 	--// longer than the animation.
 	--// STUDIO ONLY (live-ignored): the Name of one slot below to play EVERY
 	--// time while testing (e.g. "MVP Siu"). "" = random, like live servers.
-	StudioForce = "MVP Siu",
+	StudioForce = "MVP Mbappe",
 
 	--// HOW TO ADD AN ANIMATION: copy a { ... } block below, give it a Name,
 	--// and paste the published animation's id into AnimId. A slot with an
 	--// empty AnimId is skipped on live servers (Enabled = false hides one).
 	Animations = {
+		{
+			Name = "MVP Mbappe",
+			AnimId = "73826935391222",  --// MVP_Mbappe, published under the group
+			Keyframes = "MVP_Mbappe",   --// Studio fallback (ServerStorage is fine)
+			FieldOfView = 50,
+			SoundId = "139638022608077", --// the almighty theme
+			SoundVolume = 1,
+			SoundDelay = 0,
+			SoundFadeOutSeconds = 3,
+		},
+		{
+			Name = "MVP Instant Transmission",
+			AnimId = "138078331624374", --// MVP_InstantTransmission, published under the group
+			Keyframes = "MVP_InstantTransmission",
+			FieldOfView = 50,
+			SoundId = "139638022608077", --// the almighty theme
+			SoundVolume = 1,
+			SoundDelay = 0,
+			SoundFadeOutSeconds = 3,
+		},
 		{
 			Name = "MVP Siu",
 			AnimId = "91179497532835",  --// MVP_Siu, published under the group
