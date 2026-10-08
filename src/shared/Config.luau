@@ -1924,7 +1924,7 @@ Config.MvpCutscene = {
 	--// longer than the animation.
 	--// STUDIO ONLY (live-ignored): the Name of one slot below to play EVERY
 	--// time while testing (e.g. "MVP Siu"). "" = random, like live servers.
-	StudioForce = "MVP Mbappe",
+	StudioForce = "MVP Instant Transmission",
 
 	--// HOW TO ADD AN ANIMATION: copy a { ... } block below, give it a Name,
 	--// and paste the published animation's id into AnimId. A slot with an
