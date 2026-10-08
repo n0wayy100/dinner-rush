@@ -41,6 +41,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
 
 local Sfx = require(ServerStorage:WaitForChild("Shared"):WaitForChild("Sfx"))
+local ToolModels = require(ServerStorage:WaitForChild("Shared"):WaitForChild("ToolModels"))
 
 local sharedFolder = ReplicatedStorage:WaitForChild("Shared", 10)
 assert(sharedFolder, "[Charge] ReplicatedStorage.Shared not found")
@@ -579,6 +580,148 @@ local function attachRootProp(character, seconds, prop, aheadStuds)
 	game:GetService("Debris"):AddItem(prop, seconds)
 end
 
+--// THE VACUUM CHARGE (owner, Oct 2026): the Janitor's ultimate with the
+--// team's own vacuum (ServerStorage.ToolModels.Vacuum) and two animations.
+--// The server puts the vacuum in the caster's character so EVERY player
+--// has it; each player's client then places it every frame with its handle
+--// in the caster's HANDS and its floor head on the floor ahead
+--// (VacuumChargeClient), so it follows the push animation and can never end
+--// up inside the body. (A first version rode a bone the animation moved;
+--// the animation stores that bone RELATIVE to its Blender start, which did
+--// not survive the trip, and the vacuum sat inside the Janitor.)
+--// Takes over from the floor buffer only once the loop animation and the
+--// model are both in (Config.Ultimates.VacuumCharge).
+
+local function vacuumChargeReady()
+	local settings = ULT.VacuumCharge
+	return settings ~= nil and type(settings.LoopAnim) == "string" and settings.LoopAnim ~= ""
+		and ToolModels.Get("Vacuum") ~= nil
+end
+
+--// Blender and Roblox disagree about which way a bone faces - the same six
+--// candidates as the MVP camera test. BoneFix picks one (FollowAnimation).
+local VACUUM_BONE_FIXES = {
+	CFrame.identity,
+	CFrame.Angles(math.rad(-90), 0, 0),
+	CFrame.Angles(math.rad(90), 0, 0),
+	CFrame.Angles(0, math.pi, 0),
+	CFrame.Angles(math.rad(-90), math.pi, 0),
+	CFrame.Angles(math.rad(90), math.pi, 0),
+}
+
+--// FOLLOW THE ANIMATION: the vacuum welded to a VacuumBone the animation
+--// moves. Only right with an animation whose bone RESTS at the
+--// HumanoidRootPart (the MVP camera's setup) - the joint here is left at
+--// its defaults to match that rest.
+local function attachToBone(character, root, model, parts, grip, seconds, fixIndex)
+	if grip then grip:Destroy() end
+	local old = character:FindFirstChild("VacuumBone")
+	if old then old:Destroy() end
+
+	local bone = Instance.new("Part")
+	bone.Name = "VacuumBone"
+	bone.Size = Vector3.new(0.2, 0.2, 0.2)
+	bone.Transparency = 1
+	bone.CanCollide = false
+	bone.CanQuery = false
+	bone.CanTouch = false
+	bone.Massless = true
+	bone.CFrame = root.CFrame
+	bone.Parent = character
+	local settings = ULT.VacuumCharge or {}
+	local joint = Instance.new("Motor6D")
+	joint.Name = "VacuumBone"
+	joint.Part0 = root
+	joint.Part1 = bone
+	--// HeightOffset shifts the bone's whole animated path up or down in the
+	--// character's own frame (C0 comes before the animation's movement)
+	joint.C0 = CFrame.new(0, settings.HeightOffset or 0, 0)
+	joint.Parent = bone
+
+	--// the vacuum's CENTRE rides the bone; BoneFix turns it to the bone's axes
+	local fix = VACUUM_BONE_FIXES[fixIndex or settings.BoneFix or 1] or CFrame.identity
+	local boxCF = model:GetBoundingBox()
+	local centre = CFrame.new(boxCF.Position) * model:GetPivot().Rotation
+	for _, part in ipairs(parts) do
+		part.CFrame = bone.CFrame * fix * centre:ToObjectSpace(part.CFrame)
+		part.Anchored = false
+		part.CanCollide = false
+		part.CanQuery = false
+		part.CanTouch = false
+		part.Massless = true
+		local weld = Instance.new("WeldConstraint")
+		weld.Part0 = bone
+		weld.Part1 = part
+		weld.Parent = part
+	end
+	model:SetAttribute("OnBone", true) --// clients: hands off, the bone has it
+	game:GetService("Debris"):AddItem(bone, seconds + 0.3)
+end
+
+local function attachChargeVacuum(character, seconds, fixIndex)
+	local root = character:FindFirstChild("HumanoidRootPart")
+	if not root then return false end
+	local model, parts, grip = ToolModels.Copy("Vacuum")
+	if not model then return false end
+
+	local settings = ULT.VacuumCharge or {}
+	if settings.FollowAnimation then
+		attachToBone(character, root, model, parts, grip, seconds, fixIndex)
+		model.Name = "ChargeVacuum"
+		model:SetAttribute("StartedAt", workspace:GetServerTimeNow())
+		model.Parent = character
+		local shine = Instance.new("ParticleEmitter")
+		shine.Color = ColorSequence.new(Color3.fromRGB(255, 246, 233))
+		shine.LightEmission = 0.5
+		shine.Size = NumberSequence.new(0.35, 0)
+		shine.Lifetime = NumberRange.new(0.3, 0.6)
+		shine.Rate = 30
+		shine.Speed = NumberRange.new(2, 4)
+		shine.SpreadAngle = Vector2.new(70, 70)
+		shine.Parent = parts[1]
+		game:GetService("Debris"):AddItem(model, seconds + 0.3)
+		return true
+	end
+
+	--// Anchored and placed by every client each frame - nothing here is
+	--// welded to the character, so it can never push, drag or fling it
+	for _, part in ipairs(parts) do
+		part.Anchored = true
+		part.CanCollide = false
+		part.CanQuery = false
+		part.CanTouch = false
+	end
+	if grip then
+		--// kept (invisible): the clients line the hands up on it
+		grip.Anchored = true
+		grip.CanCollide = false
+		grip.CanQuery = false
+		grip.CanTouch = false
+		grip.Transparency = 1
+	end
+
+	--// a rough spot in front until the clients take over on the next frame
+	model:PivotTo(root.CFrame * CFrame.new(0, -1, -2.5))
+	model.Name = "ChargeVacuum"
+	--// one clock for every screen, so the yank and the wobble line up for all
+	model:SetAttribute("StartedAt", workspace:GetServerTimeNow())
+	model.Parent = character
+
+	--// a sparkle trail off the vacuum while it charges
+	local shine = Instance.new("ParticleEmitter")
+	shine.Color = ColorSequence.new(Color3.fromRGB(255, 246, 233))
+	shine.LightEmission = 0.5
+	shine.Size = NumberSequence.new(0.35, 0)
+	shine.Lifetime = NumberRange.new(0.3, 0.6)
+	shine.Rate = 30
+	shine.Speed = NumberRange.new(2, 4)
+	shine.SpreadAngle = Vector2.new(70, 70)
+	shine.Parent = parts[1]
+
+	game:GetService("Debris"):AddItem(model, seconds + 0.3)
+	return true
+end
+
 --// FLOOR BUFFER (Janitor ultimate, Sep 30 2026): ride the polisher for
 --// BufferSeconds - a speed boost (kept under DOUBLE TIME's) while
 --// CleanlinessService cleans any floor grime the rider passes over.
@@ -598,9 +741,53 @@ local function floorBuffer(player)
 		return false, reason or "No floor to buff!"
 	end
 	applySpeedBoost(player, ULT.BufferSpeedMult or 1.4, seconds)
+
+	--// THE VACUUM CHARGE, once its art is in; the floor buffer until then
+	if vacuumChargeReady() then
+		local humanoid = character:FindFirstChildOfClass("Humanoid")
+		if humanoid then
+			humanoid:UnequipTools() --// both hands are on the big vacuum now
+		end
+		if attachChargeVacuum(character, seconds) then
+			local settings = ULT.VacuumCharge
+			ultimateRemote:FireClient(player, "VacuumCharge", seconds,
+				settings.StartAnim or "", settings.LoopAnim)
+			print(("[Charge] VACUUM CHARGE! %s is dragged off for %ds"):format(player.Name, seconds))
+			return true
+		end
+	end
 	attachRootProp(character, seconds, makeProp("FloorBuffer", buildCodeBuffer))
 	print(("[Charge] FLOOR BUFFER! %s buffs the floor for %ds"):format(player.Name, seconds))
 	return true
+end
+
+--// STUDIO-ONLY: try the vacuum charge without spending a charge or being the
+--// Janitor. Command bar, SERVER view, in a playtest:
+--//   print(game.ServerStorage.DebugVacuumCharge:Invoke())
+if game:GetService("RunService"):IsStudio() then
+	local debugCharge = Instance.new("BindableFunction")
+	debugCharge.Name = "DebugVacuumCharge"
+	debugCharge.OnInvoke = function(fixIndex)
+		local player = Players:GetPlayers()[1]
+		local character = player and player.Character
+		if not character then return "no character yet" end
+		--// exactly like the real ultimate: whatever is in hand goes away first
+		local humanoid = character:FindFirstChildOfClass("Humanoid")
+		if humanoid then
+			humanoid:UnequipTools()
+		end
+		if not attachChargeVacuum(character, 6, tonumber(fixIndex)) then
+			return "no ServerStorage.ToolModels.Vacuum yet"
+		end
+		local settings = ULT.VacuumCharge or {}
+		ultimateRemote:FireClient(player, "VacuumCharge", 6,
+			settings.StartAnim or "", settings.LoopAnim or "")
+		local s = ULT.VacuumCharge or {}
+		return s.FollowAnimation
+			and ("charging on the bone with BoneFix %d for 6 seconds"):format(tonumber(fixIndex) or s.BoneFix or 1)
+			or "charging for 6 seconds (drawn movement - FollowAnimation is off)"
+	end
+	debugCharge.Parent = ServerStorage
 end
 
 --// The cast's in-world flourish: the caster plays their ultimate animation
