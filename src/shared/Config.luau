@@ -3882,8 +3882,102 @@ Config.Music = {
 --
 -- THE LAW: nothing here touches cook times or PERFECT windows.
 ----------------------------------------------------------------
+----------------------------------------------------------------
+-- DAILY MISSIONS + FREE GIFT (Oct 2026, owner design). Three missions a
+-- day - one per tier - rolled per player at the daily reset. Progress is
+-- counted DURING SHIFTS (game place, from the AddScore bus and the shift
+-- record) and claimed in the LOBBY (DailyServer + DailyClient). Finishing
+-- all three gives a free crate KEY; days in a row grow a streak bonus.
+-- Every claim is validated server-side in ProfileAPI.
+-- Stat = the score-bus key (or a shift-end key below) that counts toward it:
+--   ShiftsDone (a completed shift), GreatShift (a completed shift graded
+--   "good"), MVP (shift MVP), CoinsEarned (your shift payout), VIPServed.
+----------------------------------------------------------------
+Config.Daily = {
+	ResetOffsetHours = 0,                  -- 0 = the day flips at midnight UTC
+	MissionsPerDay = { "Easy", "Medium", "Hard" },
+	--// a tier listed here ALWAYS gets this mission instead of a random one
+	--// (owner, Oct 2026: one daily is always "play a shift")
+	Fixed = { Easy = "PlayEasy" },
+	Rewards = { Easy = 60, Medium = 120, Hard = 200 },  -- coins per mission
+	BonusCrateKeys = 1,                    -- free crates for finishing all three
+	StreakBonusCoins = 20,                 -- extra coins per streak day on the bonus...
+	StreakBonusCap = 7,                    -- ...counting up to this many days
+
+	Pool = {
+		Easy = {
+			{ Key = "PlayEasy",    Stat = "ShiftsPlayed",      Goal = 1,  Text = "Play a shift" },
+			{ Key = "ServeEasy",   Stat = "DishesServed",      Goal = 10, Text = "Serve %d dishes" },
+			{ Key = "SeatEasy",    Stat = "Seats",             Goal = 8,  Text = "Seat %d parties" },
+			{ Key = "PayEasy",     Stat = "PaymentsCollected", Goal = 6,  Text = "Collect %d payments" },
+			{ Key = "ShiftEasy",   Stat = "ShiftsDone",        Goal = 1,  Text = "Finish %d shift" },
+			{ Key = "OrderEasy",   Stat = "OrdersTaken",       Goal = 8,  Text = "Take %d orders" },
+		},
+		Medium = {
+			{ Key = "PerfectMed",  Stat = "PerfectCooks",      Goal = 8,  Text = "Cook %d Perfect dishes" },
+			{ Key = "FixMed",      Stat = "EventChannels",     Goal = 2,  Text = "Fix %d emergencies" },
+			{ Key = "CleanMed",    Stat = "MessesCleaned",     Goal = 10, Text = "Clean %d messes" },
+			{ Key = "VipMed",      Stat = "VIPServed",         Goal = 2,  Text = "Serve %d VIP parties" },
+			{ Key = "ShiftMed",    Stat = "ShiftsDone",        Goal = 2,  Text = "Finish %d shifts" },
+		},
+		Hard = {
+			{ Key = "GreatHard",   Stat = "GreatShift",        Goal = 1,  Text = "Get a GREAT SHIFT grade" },
+			{ Key = "DashHard",    Stat = "DashesCaught",      Goal = 1,  Text = "Catch a dine and dasher" },
+			{ Key = "ServeHard",   Stat = "DishesServed",      Goal = 40, Text = "Serve %d dishes" },
+			{ Key = "CoinsHard",   Stat = "CoinsEarned",       Goal = 300, Text = "Earn %d coins from shifts" },
+			{ Key = "MvpHard",     Stat = "MVP",               Goal = 1,  Text = "Be the shift MVP" },
+		},
+	},
+
+	--// THE FREE GIFT: once a day; claiming on consecutive days walks this
+	--// ladder (day 7 is the big one), a missed day starts it over
+	GiftCoins = { 50, 60, 70, 80, 90, 100, 200 },
+
+	--// CODES live SERVER-ONLY in ServerStorage.Shared.CodeList (never here:
+	--// this module replicates to every client, so codes would leak)
+	RedeemCooldownSeconds = 2,
+
+	--// THE GROUP REWARD (FREE! screen, GROUP tab): join the group, then pick
+	--// ONE class to get at MAX LEVEL, free. Once per player, ever. Membership
+	--// is checked by the server against Roblox, never trusted from the client.
+	Group = {
+		GroupId = 0,                      -- <- the group's ID (0 = tab shows "coming soon")
+		GroupName = "Magistrate Studios", -- shown on the tab
+		Choices = { "Chef", "Waiter" },   -- the classes offered (owner pick)
+	},
+
+	--// THE ART KIT (Claude Design, Prompt E + extras)
+	Art = {
+		Daily_Panel        = { Image = "rbxassetid://116048007052439", Size = { 1024, 768 }, Slice = { 150, 150, 874, 618 } },
+		Mission_Card       = { Image = "rbxassetid://83723261683832", Size = { 1024, 256 }, Slice = { 170, 70, 854, 186 } },
+		Mission_Card_Done  = { Image = "rbxassetid://123217491828378", Size = { 1024, 256 }, Slice = { 170, 70, 854, 186 } },
+		Tier_Easy          = { Image = "rbxassetid://127104104913188" },
+		Tier_Medium        = { Image = "rbxassetid://134894328571106" },
+		Tier_Hard          = { Image = "rbxassetid://132215354866562" },
+		Progress_Track     = { Image = "rbxassetid://100569758577328" },
+		Claim_Button       = { Image = "rbxassetid://78176534820985", Size = { 1024, 320 }, Slice = { 150, 70, 874, 250 } },
+		Reward_Chest_Closed = { Image = "rbxassetid://128192986211547" },
+		Reward_Chest_Open  = { Image = "rbxassetid://118742232576659" },
+		Crate_Key          = { Image = "rbxassetid://126203063168650" },
+		Streak_Flame       = { Image = "rbxassetid://76917973626026" },
+		Flame_Sheet        = { Image = "rbxassetid://83246464493417" },   -- 4x4 flipbook
+		Calendar_Clock     = { Image = "rbxassetid://127264563137378" },
+		Check_Stamp        = { Image = "rbxassetid://128072082393030" },
+		Gift_Panel         = { Image = "rbxassetid://130470858928991", Size = { 1024, 768 }, Slice = { 150, 150, 874, 618 } },
+		Gift_Box_Closed    = { Image = "rbxassetid://129832155067473" },
+		Gift_Box_Base      = { Image = "rbxassetid://109773904541188" },
+		Gift_Box_Lid       = { Image = "rbxassetid://129273121119212" },
+		Lock_Badge         = { Image = "rbxassetid://106334757120086" },
+		Tab_Active         = { Image = "rbxassetid://116353301872302" },
+		Tab_Inactive       = { Image = "rbxassetid://117563417750281" },
+		Code_InputBox      = { Image = "rbxassetid://119922909479809" },
+	},
+}
+
 Config.Passives = {
-	SlotCount = 1,
+	SlotCount = 1,       -- passives EQUIPPED at once
+	SlotsMax = 5,        -- passives HELD at once (owner, Oct 2026): a full set
+	                     -- means a new roll replaces an unlocked slot, or is discarded
 
 	--// STUDIO ONLY (live-ignored): force this passive on every Studio
 	--// player for testing, whatever the save says. "" = off.
@@ -4088,6 +4182,9 @@ Config.Profile = {
 		--// PASSIVES (Oct 2026): owned set + the one equipped (Config.Passives)
 		OwnedPassives = {},           -- ["LightFeet"] = true
 		EquippedPassive = "",         -- "" = none
+		PassiveSlots = { "", "", "", "", "" },          -- the 5 held passives ("" = empty)
+		PassiveLocks = { false, false, false, false, false }, -- locked = a roll can't replace it
+		PendingPassive = "",          -- a roll waiting for a slot (all 5 were full)
 		CratePityEpic = 0,            -- crates opened since the last Epic-or-better
 		CratePityLegendary = 0,       -- crates opened since the last Legendary
 		CratesOpened = 0,             -- lifetime count
@@ -4128,7 +4225,12 @@ Config.Profile = {
 		--// per feature. Neither system is built yet; the keys are here so the
 		--// schema does not need a migration when they are.
 		RedeemedCodes = {},           -- ["CODE"] = true
-		DailyGift = { LastClaim = 0, Streak = 0 },
+		DailyGift = { LastClaim = 0, Streak = 0 },  -- LastClaim = the day index claimed
+		--// DAILY MISSIONS (Oct 2026, Config.Daily): today's three, rolled on
+		--// first look each day; Streak counts days in a row with all three done
+		Daily = { Day = 0, Missions = {}, BonusClaimed = false, Streak = 0, LastBonusDay = 0 },
+		CrateKeys = 0,                -- free crate opens (the all-three daily bonus)
+		GroupRewardClass = "",        -- the class taken for joining the group ("" = not yet)
 
 		--// ROBUX RECEIPTS (Oct 2026): the PurchaseId of every developer-product
 		--// receipt already granted, newest last, capped at

@@ -44,7 +44,8 @@ pcall(function()
 end)
 
 local C = UIKit.Colors
-local kit = UIKit.artKit(P.Art, Config.Monetization and Config.Monetization.ShopArt)
+local kit = UIKit.artKit(P.Art, Config.Monetization and Config.Monetization.ShopArt,
+	Config.Daily and Config.Daily.Art) --// Daily art: the Lock_Badge padlock
 local corner, stroke, label, stickerText, aspect = UIKit.corner, UIKit.stroke,
 	UIKit.label, UIKit.stickerText, UIKit.aspect
 
@@ -490,18 +491,12 @@ backButton.Size = UDim2.fromScale(0.13, 0.08)
 ----------------------------------------------------------------
 -- RIGHT: odds bars, the inside list, pity, skip, coins
 ----------------------------------------------------------------
-local oddsHeader = label(screen, "OddsHeader", nil, C.White, 26)
-oddsHeader.AnchorPoint = Vector2.new(1, 0)
-oddsHeader.Position = UDim2.fromScale(0.975, 0.05)
-oddsHeader.Size = UDim2.fromScale(0.245, 0.035)
-oddsHeader.Text = "Tap a rarity to see what's inside!"
-stickerText(oddsHeader)
 
 local insideBox = Instance.new("Frame")
 insideBox.Name = "Inside"
-insideBox.AnchorPoint = Vector2.new(1, 0)
-insideBox.Position = UDim2.fromScale(0.975, 0.445) --// a popup over the pity bars
-insideBox.Size = UDim2.fromScale(0.245, 0.27)
+insideBox.AnchorPoint = Vector2.new(0.5, 0) --// centred inside the right board
+insideBox.Position = UDim2.fromScale(0.8575, 0.435) --// a popup over the pity bars
+insideBox.Size = UDim2.fromScale(0.21, 0.27)
 insideBox.BackgroundColor3 = NIGHT_DEEP
 insideBox.BackgroundTransparency = 0.04
 insideBox.ZIndex = 10
@@ -527,9 +522,9 @@ for index, rarity in ipairs(RARITY_ORDER) do
 
 	local row = Instance.new("TextButton")
 	row.Name = "Odds" .. rarity
-	row.AnchorPoint = Vector2.new(1, 0)
-	row.Position = UDim2.fromScale(0.975, 0.095 + (index - 1) * 0.085)
-	row.Size = UDim2.fromScale(0.245, 0.07)
+	row.AnchorPoint = Vector2.new(0.5, 0) --// centred inside the board's frame
+	row.Position = UDim2.fromScale(0.8575, 0.06 + (index - 1) * 0.09)
+	row.Size = UDim2.fromScale(0.205, 0.068)
 	row.BackgroundColor3 = color
 	row.AutoButtonColor = false
 	row.Text = ""
@@ -585,10 +580,10 @@ end
 local function pityBar(order, captionText, gemSlot, fillColor)
 	local row = Instance.new("Frame")
 	row.BackgroundTransparency = 1
-	row.AnchorPoint = Vector2.new(1, 0)
+	row.AnchorPoint = Vector2.new(0.5, 0)
 	--// bigger and spaced out, still inside the right board (ends ~0.765)
-	row.Position = UDim2.fromScale(0.97, 0.46 + (order - 1) * 0.145)
-	row.Size = UDim2.fromScale(0.235, 0.105)
+	row.Position = UDim2.fromScale(0.8575, 0.45 + (order - 1) * 0.15)
+	row.Size = UDim2.fromScale(0.21, 0.105)
 	row.Parent = screen
 
 	local gem = sprite(row, gemSlot)
@@ -826,41 +821,29 @@ end
 
 local equip -- defined below
 
-local function buildRow(key, index)
-	local passive = P.List[key]
-	local owned = state.Owned[key] == true
-	local equipped = state.Equipped == key
-	local color = rarityColor(passive.Rarity)
+--// THE 5 SLOTS (owner design, Oct 2026). Every row is one slot: the
+--// passive's mini card, its name, (i), EQUIP, and a LOCK toggle - a locked
+--// slot can never be replaced by a new roll. When all 5 are full a new roll
+--// WAITS at the top of the list: tap REPLACE on an unlocked slot to swap it
+--// in (that passive is lost) or DISCARD the new one. The server checks all.
+local slotRequest -- set below
 
-	local row = Instance.new("TextButton")
-	row.Name = key
-	row.LayoutOrder = index
-	--// PIXEL height from the list width (a 0-height row + aspect constraint
-	--// resolved to 0x0 - every row was invisible)
+local function rowHeight()
 	local rowWidth = math.max(60, list.AbsoluteSize.X - 18)
-	row.Size = UDim2.new(1, 0, 0, math.floor(rowWidth / 2.5))
-	row.BackgroundColor3 = owned and NIGHT or NIGHT_DEEP
-	row.BackgroundTransparency = owned and 0.1 or 0.4
-	row.AutoButtonColor = false
-	row.Text = ""
-	row.Parent = list
-	corner(row, UDim.new(0, 12))
-	stroke(row, 3, owned and color or Color3.fromRGB(80, 70, 62))
-	--// the wood tile art; missing passives sit dimmer, owned ones wear
-	--// their rarity gem in the corner
-	if kit.skin(row, "List_Row") then
-		row.Art.ImageTransparency = owned and 0 or 0.35
-	end
+	return math.floor(rowWidth / 2.5)
+end
 
+local function miniCard(parent, key)
+	local passive = P.List[key]
 	local thumb = Instance.new("ImageLabel")
 	thumb.BackgroundTransparency = 1
 	thumb.AnchorPoint = Vector2.new(0, 0.5)
 	thumb.Position = UDim2.fromScale(0.03, 0.5)
 	thumb.Size = UDim2.fromScale(0.3, 0.86)
 	thumb.ScaleType = Enum.ScaleType.Stretch
-	thumb.Image = kit.id(owned and ("Card_" .. passive.Rarity) or "Card_Locked") or ""
-	thumb.Parent = row
-	if owned then
+	thumb.Image = kit.id(passive and ("Card_" .. passive.Rarity) or "Card_Locked") or ""
+	thumb.Parent = parent
+	if passive then
 		local icon = Instance.new("ImageLabel")
 		icon.BackgroundTransparency = 1
 		icon.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -869,62 +852,175 @@ local function buildRow(key, index)
 		icon.ScaleType = Enum.ScaleType.Fit
 		icon.Image = passive.Icon or ""
 		icon.Parent = thumb
-		--// the rarity gem pinned to the mini card's corner
 		local gem = sprite(thumb, "Gem_" .. passive.Rarity)
 		gem.Position = UDim2.fromScale(0.88, 0.1)
 		gem.Size = UDim2.fromScale(0.4, 0.22)
 		gem.ZIndex = 3
 	end
+	return thumb
+end
 
-	local name = label(row, "Name", nil, owned and C.White or Color3.fromRGB(150, 140, 130), 26)
-	name.Position = UDim2.fromScale(0.37, 0.1)
-	name.Size = UDim2.fromScale(owned and 0.46 or 0.6, 0.38)
+--// the waiting roll, pinned above the slots while all 5 are full
+local function buildPending(key)
+	local passive = P.List[key]
+	local color = rarityColor(passive.Rarity)
+	local row = Instance.new("Frame")
+	row.Name = "Pending"
+	row.LayoutOrder = 0
+	row.Size = UDim2.new(1, 0, 0, math.floor(rowHeight() * 1.15))
+	row.BackgroundColor3 = NIGHT
+	row.Parent = list
+	corner(row, UDim.new(0, 12))
+	local rowStroke = stroke(row, 4, color)
+	miniCard(row, key)
+	local tag = label(row, "New", nil, C.Mustard, 20)
+	tag.Position = UDim2.fromScale(0.37, 0.05)
+	tag.Size = UDim2.fromScale(0.6, 0.24)
+	tag.TextXAlignment = Enum.TextXAlignment.Left
+	tag.Text = "NEW! SLOTS FULL"
+	tag.TextStrokeColor3 = C.Choc
+	tag.TextStrokeTransparency = 0
+	local name = label(row, "Name", nil, C.White, 26)
+	name.Position = UDim2.fromScale(0.37, 0.29)
+	name.Size = UDim2.fromScale(0.6, 0.27)
 	name.TextXAlignment = Enum.TextXAlignment.Left
-	name.Text = owned and passive.Display or "???"
-	if owned then stickerText(name) end
+	name.Text = passive.Display
+	stickerText(name)
+	local discard, discardText = stickerButton(row, "Discard", "DISCARD", C.Tomato)
+	discard.Position = UDim2.fromScale(0.37, 0.62)
+	discard.Size = UDim2.fromScale(0.58, 0.3)
+	discardText.Size = UDim2.fromScale(0.9, 0.7)
+	discard.Activated:Connect(function() slotRequest("Discard") end)
+	--// it pulses so the choice is obvious
+	task.spawn(function()
+		while row.Parent do
+			tween(rowStroke, 0.5, { Thickness = 6 }, Enum.EasingStyle.Sine)
+			task.wait(0.5)
+			if not row.Parent then break end
+			tween(rowStroke, 0.5, { Thickness = 3 }, Enum.EasingStyle.Sine)
+			task.wait(0.5)
+		end
+	end)
+end
 
-	--// THE READ-IT ICON: tap the (i) to pop this passive's card out
-	if owned then
-		local infoButton = Instance.new("ImageButton")
-		infoButton.Name = "Info"
-		infoButton.BackgroundTransparency = 1
-		infoButton.AnchorPoint = Vector2.new(0.5, 0.5)
-		infoButton.Position = UDim2.fromScale(0.9, 0.29)
-		infoButton.Size = UDim2.fromScale(0.15, 0.4)
-		infoButton.ScaleType = Enum.ScaleType.Fit
-		infoButton.Image = kit.id("Odds_Button") or ""
-		infoButton.ZIndex = 4
-		infoButton.Parent = row
-		aspect(infoButton, 1)
-		UIKit.bouncy(infoButton)
-		infoButton.Activated:Connect(function()
-			sfx("ShopClick")
-			selectPassive(key)
-		end)
+local function buildSlot(index)
+	local key = state.Slots and state.Slots[index] or ""
+	local passive = key ~= "" and P.List[key] or nil
+	local locked = state.Locks and state.Locks[index] == true
+	local equipped = passive ~= nil and state.Equipped == key
+	local pendingMode = (state.Pending or "") ~= ""
+	local color = passive and rarityColor(passive.Rarity) or Color3.fromRGB(80, 70, 62)
+
+	local row = Instance.new("TextButton")
+	row.Name = "Slot" .. index
+	row.LayoutOrder = index
+	row.Size = UDim2.new(1, 0, 0, rowHeight())
+	row.BackgroundColor3 = passive and NIGHT or NIGHT_DEEP
+	row.BackgroundTransparency = passive and 0.1 or 0.4
+	row.AutoButtonColor = false
+	row.Text = ""
+	row.Parent = list
+	corner(row, UDim.new(0, 12))
+	stroke(row, locked and 4 or 3, locked and rarityColor("Legendary") or color)
+	if kit.skin(row, "List_Row") then
+		row.Art.ImageTransparency = passive and 0 or 0.4
 	end
 
-	if owned then
-		local button, text = stickerButton(row, "Equip", equipped and "EQUIPPED" or "EQUIP",
-			equipped and C.Basil or BLUE)
-		button.Position = UDim2.fromScale(0.37, 0.52)
-		button.Size = UDim2.fromScale(0.58, 0.36)
-		text.Size = UDim2.fromScale(0.9, 0.7)
-		button.Activated:Connect(function()
-			if equipped then
-				selectPassive(key)
-			else
-				equip(key)
-			end
-		end)
+	if not passive then
+		local thumb = miniCard(row, nil)
+		thumb.ImageTransparency = 0.5
+		local empty = label(row, "Empty", nil, Color3.fromRGB(170, 160, 150), 24)
+		empty.Position = UDim2.fromScale(0.37, 0.2)
+		empty.Size = UDim2.fromScale(0.6, 0.3)
+		empty.TextXAlignment = Enum.TextXAlignment.Left
+		empty.Text = ("SLOT %d"):format(index)
+		local hint = label(row, "Hint", nil, Color3.fromRGB(150, 140, 130), 18)
+		hint.Position = UDim2.fromScale(0.37, 0.52)
+		hint.Size = UDim2.fromScale(0.6, 0.28)
+		hint.TextXAlignment = Enum.TextXAlignment.Left
+		hint.Text = "Empty, open a crate!"
+		return
+	end
+
+	local thumb = miniCard(row, key)
+	if locked then
+		local padlock = sprite(thumb, "Lock_Badge")
+		padlock.Position = UDim2.fromScale(0.2, 0.86)
+		padlock.Size = UDim2.fromScale(0.5, 0.36)
+		padlock.ZIndex = 4
+	end
+
+	local name = label(row, "Name", nil, C.White, 26)
+	name.Position = UDim2.fromScale(0.37, 0.1)
+	name.Size = UDim2.fromScale(0.46, 0.38)
+	name.TextXAlignment = Enum.TextXAlignment.Left
+	name.Text = passive.Display
+	stickerText(name)
+
+	local infoButton = Instance.new("ImageButton")
+	infoButton.Name = "Info"
+	infoButton.BackgroundTransparency = 1
+	infoButton.AnchorPoint = Vector2.new(0.5, 0.5)
+	infoButton.Position = UDim2.fromScale(0.9, 0.29)
+	infoButton.Size = UDim2.fromScale(0.15, 0.4)
+	infoButton.ScaleType = Enum.ScaleType.Fit
+	infoButton.Image = kit.id("Odds_Button") or ""
+	infoButton.ZIndex = 4
+	infoButton.Parent = row
+	aspect(infoButton, 1)
+	UIKit.bouncy(infoButton)
+	infoButton.Activated:Connect(function()
+		sfx("ShopClick")
+		selectPassive(key)
+	end)
+
+	--// the main button: REPLACE while a roll waits, else EQUIP / EQUIPPED
+	local mainText, mainColor
+	if pendingMode then
+		mainText = locked and "LOCKED" or "REPLACE"
+		mainColor = locked and Color3.fromRGB(150, 140, 130) or C.Tomato
 	else
-		local tag = label(row, "Rarity", nil, color, 20)
-		tag.Position = UDim2.fromScale(0.37, 0.55)
-		tag.Size = UDim2.fromScale(0.6, 0.3)
-		tag.TextXAlignment = Enum.TextXAlignment.Left
-		tag.Text = string.upper(passive.Rarity)
-		tag.TextStrokeColor3 = C.Choc
-		tag.TextStrokeTransparency = 0
+		mainText = equipped and "EQUIPPED" or "EQUIP"
+		mainColor = equipped and C.Basil or BLUE
 	end
+	local button, text = stickerButton(row, "Main", mainText, mainColor)
+	button.Position = UDim2.fromScale(0.37, 0.52)
+	button.Size = UDim2.fromScale(0.4, 0.36)
+	text.Size = UDim2.fromScale(0.9, 0.7)
+	button.Activated:Connect(function()
+		if pendingMode then
+			if locked then
+				flashNotice("Unlock it first to replace it")
+			else
+				slotRequest("Place", index)
+			end
+		elseif equipped then
+			selectPassive(key)
+		else
+			equip(key)
+		end
+	end)
+
+	--// the LOCK toggle: a padlock button, gold while locked
+	local lockButton = Instance.new("ImageButton")
+	lockButton.Name = "Lock"
+	lockButton.AnchorPoint = Vector2.new(0.5, 0.5)
+	lockButton.Position = UDim2.fromScale(0.88, 0.7)
+	lockButton.Size = UDim2.fromScale(0.15, 0.38)
+	lockButton.BackgroundColor3 = locked and rarityColor("Legendary") or Color3.fromRGB(70, 62, 56)
+	lockButton.Image = kit.id("Lock_Badge") or ""
+	lockButton.ImageTransparency = locked and 0 or 0.45
+	lockButton.ScaleType = Enum.ScaleType.Fit
+	lockButton.AutoButtonColor = false
+	lockButton.ZIndex = 4
+	lockButton.Parent = row
+	aspect(lockButton, 1)
+	corner(lockButton, UDim.new(0.3, 0))
+	stroke(lockButton, 2.5, C.Choc)
+	UIKit.bouncy(lockButton)
+	lockButton.Activated:Connect(function()
+		slotRequest(locked and "Unlock" or "Lock", index)
+	end)
 
 	row.Activated:Connect(function()
 		sfx("ShopClick")
@@ -936,29 +1032,20 @@ local function renderList()
 	for _, child in ipairs(list:GetChildren()) do
 		if child:IsA("GuiObject") then child:Destroy() end
 	end
-	--// owned first (by rarity, best on top), then the ones still to find
-	local ordered, ownedCount = {}, 0
-	for index, key in ipairs(P.Order) do
-		if P.List[key] then
-			local owned = state.Owned[key] == true
-			if owned then ownedCount += 1 end
-			table.insert(ordered, {
-				Key = key,
-				Owned = owned,
-				Rank = P.Rarities[P.List[key].Rarity].Order,
-				Index = index,
-			})
-		end
+	local max = P.SlotsMax or 5
+	local filled = 0
+	for i = 1, max do
+		if state.Slots and (state.Slots[i] or "") ~= "" then filled += 1 end
 	end
-	table.sort(ordered, function(a, b)
-		if a.Owned ~= b.Owned then return a.Owned end
-		if a.Owned and a.Rank ~= b.Rank then return a.Rank > b.Rank end
-		return a.Index < b.Index
-	end)
-	for position, entry in ipairs(ordered) do
-		buildRow(entry.Key, position)
+	if (state.Pending or "") ~= "" and P.List[state.Pending] then
+		buildPending(state.Pending)
+		listTitle.Text = "PICK A SLOT TO REPLACE"
+	else
+		listTitle.Text = ("YOUR PASSIVES  %d/%d"):format(filled, max)
 	end
-	listTitle.Text = ("YOUR PASSIVES  %d/%d"):format(ownedCount, #ordered)
+	for i = 1, max do
+		buildSlot(i)
+	end
 end
 
 renderListLater = function()
@@ -968,9 +1055,21 @@ end
 local function renderBottom()
 	local have = coins()
 	coinText.Text = UIKit.commas(have)
-	local canAfford = have >= state.Price
+	local keys = state.Keys or 0
+	local canAfford = keys > 0 or have >= state.Price
 	openText.TextTransparency = canAfford and 0 or 0.35
-	priceText.TextColor3 = canAfford and C.White or Color3.fromRGB(255, 190, 190)
+	--// with a crate KEY the button reads FREE and shows the key instead of a coin
+	if keys > 0 then
+		openText.Text = "FREE"
+		priceText.Text = ("x%d"):format(keys)
+		priceText.TextColor3 = C.White
+		openCoin.Image = kit.id("Crate_Closed") or openCoin.Image
+	else
+		openText.Text = "OPEN"
+		priceText.Text = tostring(state.Price)
+		priceText.TextColor3 = canAfford and C.White or Color3.fromRGB(255, 190, 190)
+		openCoin.Image = kit.id("FlyingCoin") or ""
+	end
 	openedLine.Text = ("CRATES OPENED: %s"):format(UIKit.commas(state.Opened or 0))
 
 	openButton.Visible = not state.Restricted
@@ -1011,6 +1110,27 @@ equip = function(key)
 		refresh()
 	else
 		flashNotice(type(reason) == "string" and reason or "Could not equip that")
+	end
+end
+
+--// THE 5 SLOTS: Place / Discard / Lock / Unlock, all checked by the server
+slotRequest = function(action, index)
+	if busy then return end
+	local ok, success, reason = pcall(function()
+		return crateRemote:InvokeServer(action, index)
+	end)
+	if ok and success then
+		sfx("ShopClick")
+		if action == "Place" then
+			flashNotice("Swapped in!", C.Basil)
+		elseif action == "Discard" then
+			flashNotice("Discarded", C.Cream)
+		elseif action == "Lock" then
+			flashNotice("Slot locked, rolls can't replace it", C.Basil)
+		end
+		refresh()
+	else
+		flashNotice(type(reason) == "string" and reason or "Try again!")
 	end
 end
 
@@ -1370,6 +1490,9 @@ local function playOpening(result, quick)
 	extra.TextStrokeTransparency = 0
 	if result.Duplicate then
 		extra.Text = ("DUPLICATE!  +%d coins back"):format(result.Refund or 0)
+	elseif result.NeedsSlot then
+		extra.Text = "SLOTS FULL!  Pick one to replace, or discard it"
+		extra.TextColor3 = C.Mustard
 	elseif result.AutoEquipped then
 		extra.Text = "NEW!  Equipped and ready for your next shift"
 		extra.TextColor3 = C.Basil
@@ -1442,14 +1565,16 @@ end
 ----------------------------------------------------------------
 openButton.Activated:Connect(function()
 	if busy or state.Restricted then return end
+	--// a crate KEY (daily bonus / codes) opens for free, keys first
+	local useKey = (state.Keys or 0) > 0
 	local have = coins()
-	if have < state.Price then
+	if not useKey and have < state.Price then
 		flashNotice(("Need %d more coins!"):format(state.Price - have))
 		return
 	end
 	busy = true
 	local ok, success, result = pcall(function()
-		return crateRemote:InvokeServer("Open")
+		return crateRemote:InvokeServer("Open", useKey)
 	end)
 	if not ok or not success then
 		flashNotice(type(result) == "string" and result or "Try again in a moment!")
@@ -1577,56 +1702,10 @@ if shoutRemote then
 end
 
 ----------------------------------------------------------------
--- Openers: a Studio dock button named OpenCratesButton, else the sticker
+-- Opener: the owner's PASSIVE! dock button, OpenCratesButton (Oct 2026).
+-- The temporary code-built CRATES sticker is gone - nothing is built at
+-- load, so nothing flashes while assets stream in.
 ----------------------------------------------------------------
-local stickerGui = Instance.new("ScreenGui")
-stickerGui.Name = "CratesButton_UI"
-stickerGui.ResetOnSpawn = false
-stickerGui.DisplayOrder = 10
-stickerGui.Parent = playerGui
-
-local sticker = Instance.new("TextButton")
-sticker.Name = "CratesSticker"
-sticker.AnchorPoint = Vector2.new(0, 0.5)
-sticker.Position = UDim2.fromScale(0.025, 0.855) --// below the STATS sticker
-sticker.Size = UDim2.fromScale(0.085, 0.075)
-sticker.BackgroundColor3 = C.Tomato
-sticker.Rotation = -2
-sticker.Font = Enum.Font.FredokaOne
-sticker.TextScaled = true
-sticker.Text = "CRATES"
-stickerText(sticker)
-sticker.Parent = stickerGui
-corner(sticker, UDim.new(0, 10))
-stroke(sticker, 2.5, C.Choc)
---// the owner's CRATES art (Button_Crates) replaces the text sticker
-do
-	local artId = kit.id("Button_Crates")
-	if artId then
-		sticker.Text = ""
-		sticker.BackgroundTransparency = 1
-		sticker.Rotation = 0
-		for _, child in ipairs(sticker:GetChildren()) do
-			if child:IsA("UIStroke") or child:IsA("UICorner") then child:Destroy() end
-		end
-		sticker.Size = UDim2.fromScale(0.1, 0.14)
-		sticker.Position = UDim2.fromScale(0.012, 0.875)
-		aspect(sticker, 1)
-		local art = Instance.new("ImageLabel")
-		art.Name = "Art"
-		art.BackgroundTransparency = 1
-		art.Size = UDim2.fromScale(1, 1)
-		art.ScaleType = Enum.ScaleType.Fit
-		art.Image = artId
-		art.Parent = sticker
-	end
-end
-UIKit.bouncy(sticker)
-sticker.Activated:Connect(function()
-	sfx("ShopClick")
-	setOpen(not isOpen)
-end)
-
 local bound = {}
 local function bindOpenButton(inst)
 	if inst.Name ~= "OpenCratesButton" or not inst:IsA("GuiButton") or bound[inst] then return end
@@ -1635,8 +1714,6 @@ local function bindOpenButton(inst)
 		sfx("ShopClick")
 		setOpen(not isOpen)
 	end)
-	if stickerGui.Parent then stickerGui:Destroy() end
-	print(("[Crates] opens from %s"):format(inst:GetFullName()))
 end
 for _, inst in ipairs(playerGui:GetDescendants()) do
 	bindOpenButton(inst)

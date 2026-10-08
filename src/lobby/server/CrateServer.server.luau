@@ -89,8 +89,20 @@ local function stateFor(player)
 		PityEpic = snapshot.CratePityEpic or 0,
 		PityLegendary = snapshot.CratePityLegendary or 0,
 		Opened = snapshot.CratesOpened or 0,
+		Keys = snapshot.CrateKeys or 0, --// free opens (daily bonus / codes)
 		Restricted = isRestricted(player),
 	}
+end
+
+--// the 5 slots ride along with every state read
+local baseStateFor = stateFor
+stateFor = function(player)
+	local s = baseStateFor(player)
+	local slots = ProfileAPI.PassiveSlots(player)
+	s.Slots = slots and slots.Slots or {}
+	s.Locks = slots and slots.Locks or {}
+	s.Pending = slots and slots.Pending or ""
+	return s
 end
 
 crateRemote.OnServerInvoke = function(player, action, arg)
@@ -107,7 +119,9 @@ crateRemote.OnServerInvoke = function(player, action, arg)
 		end
 		lastOpen[player] = now
 
-		local ok, result = ProfileAPI.OpenCrate(player)
+		--// arg == true asks to spend a crate key instead of coins; ProfileAPI
+		--// checks the key count against the save
+		local ok, result = ProfileAPI.OpenCrate(player, arg == true)
 		if not ok then
 			return false, result
 		end
@@ -121,6 +135,14 @@ crateRemote.OnServerInvoke = function(player, action, arg)
 			return false, "Pick a passive"
 		end
 		return ProfileAPI.EquipPassive(player, arg)
+
+	--// THE 5 SLOTS: every index is validated inside ProfileAPI
+	elseif action == "Place" then
+		return ProfileAPI.PlacePassive(player, arg)
+	elseif action == "Discard" then
+		return ProfileAPI.DiscardPending(player)
+	elseif action == "Lock" or action == "Unlock" then
+		return ProfileAPI.SetSlotLock(player, arg, action == "Lock")
 	end
 
 	return false, "Unknown request"
