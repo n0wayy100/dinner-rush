@@ -202,6 +202,21 @@ local function buildStageRig(source)
 	end
 	root.Anchored = true --// the animation moves the body; the root stays put
 
+	--// NEWER AVATARS' JOINTS (Roblox's joint upgrade) are AnimationConstraints,
+	--// not Motor6Ds: the animation only PULLS each limb toward its pose with
+	--// limited strength, under gravity. On this frozen stage copy a big
+	--// reach (the "you're next" point) fell short. Make every one of them
+	--// rigid, so the body lands exactly on the animated pose like a Motor6D.
+	for _, joint in ipairs(rig:GetDescendants()) do
+		if joint:IsA("AnimationConstraint") then
+			pcall(function()
+				joint.IsKinematic = true
+				joint.MaxForce = math.huge
+				joint.MaxTorque = math.huge
+			end)
+		end
+	end
+
 	rig.Name = "MvpStageRig"
 	return rig, humanoid, root
 end
@@ -607,6 +622,9 @@ function MvpCutscene.Run(payload, options)
 		--// 3/4-front, slightly-low angle (Config.MvpCutscene.FinalShot, or the
 		--// animation's own FinalShot). heroBlend runs 0 -> 1 after the freeze.
 		local heroShot = entry.FinalShot or settings.FinalShot
+		local holdCamera = type(entry.HoldCamera) == "table" and entry.HoldCamera.From
+			and entry.HoldCamera.To and entry.HoldCamera or nil
+		local heldBone = nil
 		local heroBlend, heroFrom = nil, nil
 		local function heroView()
 			--// the way the BODY faces (animations like Siu spin the torso round
@@ -635,12 +653,25 @@ function MvpCutscene.Run(payload, options)
 
 		RunService:BindToRenderStep(RENDER_NAME, Enum.RenderPriority.Camera.Value + 1, function()
 			if not bone.Parent then return end
+			--// HOLD A SHOT LONGER (Config: HoldCamera = { From, To } on the
+			--// entry): between From and To the camera stays where it was at
+			--// From, so the shot animated there is never seen. The body keeps
+			--// animating; only the camera waits for the next shot.
+			local boneCF = bone.CFrame
+			if holdCamera then
+				local t = track.TimePosition
+				if t < holdCamera.From then
+					heldBone = root.CFrame:ToObjectSpace(boneCF)
+				elseif t < holdCamera.To and heldBone then
+					boneCF = root.CFrame * heldBone
+				end
+			end
 			local view
 			if mode == "Bone" then
-				view = bone.CFrame * fix
+				view = boneCF * fix
 			else
-				if (bone.Position - aimPart.Position).Magnitude < 0.05 then return end
-				view = CFrame.lookAt(bone.Position, aimPart.Position)
+				if (boneCF.Position - aimPart.Position).Magnitude < 0.05 then return end
+				view = CFrame.lookAt(boneCF.Position, aimPart.Position)
 			end
 			view = pushBack(view)
 			if heroBlend then
@@ -674,18 +705,40 @@ function MvpCutscene.Run(payload, options)
 		--// Action
 		barTop.Visible = true
 		barBottom.Visible = true
-		track:Play(0)
-		local started = os.clock()
+		--// SKIP THE OPENING (Config: StartAtSeconds on the entry) - e.g. a
+		--// camera shot the owner did not want. The sound skips the same
+		--// stretch so it stays on the beat.
+		local startAt = math.clamp(entry.StartAtSeconds or 0, 0, math.max(track.Length - 0.1, 0))
+		if startAt > 0 then
+			--// Started PAUSED, moved, and only let go once the move has
+			--// really landed (owner playtest: a jump made the same instant
+			--// as Play was ignored, so the skipped shot still showed for a
+			--// second). All of this happens behind the black.
+			track:Play(0, 1, 0)
+			local jumpDeadline = os.clock() + 1
+			repeat
+				track.TimePosition = startAt
+				RunService.RenderStepped:Wait()
+			until track.TimePosition >= startAt - 0.05 or os.clock() > jumpDeadline
+			RunService.RenderStepped:Wait() --// pose + camera drawn at the new spot
+			track:AdjustSpeed(1)
+		else
+			track:Play(0)
+		end
+		local started = os.clock() - startAt
 		if sound then
 			local function startSound()
 				if not sound.Parent then return end
+				if startAt > 0 and startAt < sound.TimeLength then
+					sound.TimePosition = startAt
+				end
 				sound:Play()
 				--// Ease down over the clip's LAST few seconds instead of
 				--// stopping dead. TimeLength is real by now - the sound was
 				--// loaded behind the black.
 				local fadeOut = entry.SoundFadeOutSeconds or 0
 				if fadeOut > 0 and sound.TimeLength > 0 then
-					task.delay(math.max(sound.TimeLength - fadeOut, 0), function()
+					task.delay(math.max(sound.TimeLength - sound.TimePosition - fadeOut, 0), function()
 						if sound.Parent and sound.IsPlaying then
 							fadeSound(sound, math.min(fadeOut, sound.TimeLength))
 						end
@@ -716,19 +769,78 @@ function MvpCutscene.Run(payload, options)
 			tween(heroBlend, heroShot.EaseSeconds or 1.2, { Value = 1 })
 		end
 		local heroEarly = heroShot and (heroShot.StartEarlySeconds or 0) or 0
+		--// STUDIO CHECK: where each wrist is (studs from the root: right, up,
+		--// forward) as the animation runs, to compare with the Blender file
+		local studioLog = RunService:IsStudio() and {} or nil
+		local nextSample = 0
+		local function wristAt(jointName)
+			local joint = rig:FindFirstChild(jointName, true)
+			local at = nil
+			if joint and joint:IsA("Motor6D") and joint.Part1 then
+				at = (joint.Part1.CFrame * joint.C1).Position
+			elseif joint and joint:IsA("AnimationConstraint") and joint.Attachment1 then
+				at = joint.Attachment1.WorldPosition
+			else
+				--// no joint by that name: the hand part itself
+				local hand = rig:FindFirstChild(jointName == "LeftWrist" and "LeftHand" or "RightHand")
+				at = hand and hand:IsA("BasePart") and hand.Position or nil
+			end
+			if not at then return "?" end
+			local p = root.CFrame:PointToObjectSpace(at)
+			return ("(%.2f, %.2f, %.2f)"):format(p.X, p.Y, -p.Z)
+		end
+		if studioLog then
+			local kinds = {}
+			for _, joint in ipairs(rig:GetDescendants()) do
+				if joint:IsA("Motor6D") or joint:IsA("AnimationConstraint") then
+					kinds[joint.ClassName] = (kinds[joint.ClassName] or 0) + 1
+				end
+			end
+			local parts = {}
+			for class, count in pairs(kinds) do
+				table.insert(parts, ("%d %s"):format(count, class))
+			end
+			print(("[MvpCutscene] stage copy joints: %s | rig type %s")
+				:format(table.concat(parts, ", "), humanoid.RigType.Name))
+		end
+		local function sample()
+			if not studioLog then return end
+			table.insert(studioLog, ("   %.2fs  left wrist %s  right wrist %s")
+				:format(track.TimePosition, wristAt("LeftWrist"), wristAt("RightWrist")))
+		end
 		while track.IsPlaying and track.TimePosition < stopAt
 			and os.clock() - started < stopAt + 1 do
 			if heroEarly > 0 and track.TimePosition >= stopAt - heroEarly then
 				startHero()
 			end
+			if studioLog and track.TimePosition >= nextSample then
+				sample()
+				nextSample += 0.4
+			end
 			RunService.RenderStepped:Wait()
 		end
 		track:AdjustSpeed(0)
+		print(("[MvpCutscene] froze '%s' at %.2fs of %.2fs")
+			:format(tostring(entry.Name), track.TimePosition, track.Length))
+		if studioLog then
+			sample()
+			print("[MvpCutscene] hand check (studs from the body's centre: right, up, forward)\n"
+				.. table.concat(studioLog, "\n"))
+		end
 		if not track.IsPlaying then
 			--// it slipped past the end on a slow frame: put it back on the
 			--// final pose, paused
 			track:Play(0, 1, 0)
 			track.TimePosition = stopAt
+		end
+
+		--// HOLD ON THE FINAL POSE (owner playtest, Oct 2026): the last frame
+		--// is the payoff ("you're next"), and the reveal used to cover the
+		--// screen the instant it landed - so it was never seen. Everything
+		--// after (hero glide, reveal, awards, report) waits this long.
+		local finalHold = entry.FinalHoldSeconds or settings.FinalHoldSeconds or 1.5
+		if finalHold > 0 then
+			task.wait(finalHold)
 		end
 
 		--// the hero shot: ease to the better final angle over the frozen pose

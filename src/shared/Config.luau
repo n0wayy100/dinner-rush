@@ -50,7 +50,7 @@ Config.Shift = {
 	--// seen everything". Raised 35 -> 42 for the cutscene (Oct 2026); a
 	--// LONGER MVP animation needs this raised to match, or a full lobby
 	--// gets sent home mid-report.
-	ReturnToLobbySeconds = 42,
+	ReturnToLobbySeconds = 50, --// raised from 42 for longer MVP animations (up to the 20s cap)
 
 	Phases = {                        -- shift-time boundaries (seconds)
 		CalmEndsAt = 120,             -- 0:00-2:00 tutorial-in-motion
@@ -1865,7 +1865,10 @@ Config.MvpCutscene = {
 	FadeSeconds = 0.6,       -- each fade to and from black
 	HoldBlackSeconds = 0.3,  -- a beat of black before the scene appears
 	LetterboxScale = 0.1,    -- film bars, as a fraction of screen height
-	MaxSeconds = 10,         -- cap, whatever the animation's length
+	MaxSeconds = 20,         -- SAFETY cap only: every animation plays to its real end
+	FinalHoldSeconds = 1.5,  -- the final pose stays on screen this long BEFORE the
+	                         -- reveal covers it (an entry can set its own)
+	                         -- (raised from 10, which cut the longer MVP animations short)
 
 	--// "Aim": position from CameraBone, always looking at the MVP's chest -
 	--//        can never face the wrong way (the Studio test's mode 0).
@@ -1894,7 +1897,8 @@ Config.MvpCutscene = {
 		Height = 3,         -- camera height vs the chest: ABOVE, looking down (owner, Oct 2026)
 		LookHeight = 0.5,   -- aim a little above the chest, so the face is well in frame
 		EaseSeconds = 1.2,  -- how long the glide to the hero angle takes
-		StartEarlySeconds = 1.5, -- begin the glide this long BEFORE the freeze (0 = at the freeze)
+		StartEarlySeconds = 0, -- 0 = the glide waits for the animation to FINISH (owner,
+		                       -- Oct 2026: 1.5 cut the last 1.5s off every MVP animation)
 	},
 	Blur = true,             -- soft background so the MVP pops
 	BlurIntensity = 0.5,
@@ -1924,7 +1928,7 @@ Config.MvpCutscene = {
 	--// longer than the animation.
 	--// STUDIO ONLY (live-ignored): the Name of one slot below to play EVERY
 	--// time while testing (e.g. "MVP Siu"). "" = random, like live servers.
-	StudioForce = "MVP Instant Transmission",
+	StudioForce = "Victory Fist",
 
 	--// HOW TO ADD AN ANIMATION: copy a { ... } block below, give it a Name,
 	--// and paste the published animation's id into AnimId. A slot with an
@@ -1963,9 +1967,19 @@ Config.MvpCutscene = {
 		},
 		{
 			Name = "Victory Fist",
-			AnimId = "137252127254351",
+			AnimId = "73034451171222",
 			Keyframes = "MvpTest",
-			FieldOfView = 50,
+			--// FILMED EXACTLY AS IN BLENDER (owner playtest, Oct 2026): the
+			--// ending is a point straight at the lens ("you're next"). Zoomed
+			--// out, on a wider lens, then swung round by the hero glide, that
+			--// reach toward the camera barely read on screen.
+			FieldOfView = 45,         --// the Blender camera's own lens (vertical 45)
+			CameraDistanceMult = 1.2, --// a little zoomed out on EVERY shot (owner, Oct 2026; 1 = as animated)
+			FinalShot = { Enabled = false }, --// hold the animation's own last frame
+			StartAtSeconds = 0,       --// seconds of the opening to skip (0 = play it all)
+			--// the chest close-up just before the final camera (4.70-5.37s) is
+			--// never shown: the shot before it stays on until the final one
+			HoldCamera = { From = 4.667, To = 5.367 },
 			SoundId = "139638022608077",
 			SoundVolume = 1,
 			SoundDelay = 0,
