@@ -1735,6 +1735,82 @@ Config.ToolModels = {
 -- Editor, drag the four lines just inside the decorated edges, and copy
 -- the four numbers here.
 ----------------------------------------------------------------
+--// THE ART HUD (owner, Oct 2026 - Claude Design art): the shift timer,
+--// REP + TIDY bars and money, drawn with these images (HudSkin.luau).
+--// PASTE EACH IMAGE'S ID BETWEEN THE QUOTES (just the number is fine).
+--// The new HUD switches on once the FOUR bar pieces (SideFrame, SideFill,
+--// TimerFrame, TimerFill) have ids - until then the old bars stay.
+--// Every other piece is optional: leave it "" and that bit is skipped.
+--// Upload under the GROUP (Magistrate Studios) or it will not load live.
+Config.HudArt = {
+	--// REP + TIDY bars (640 x 128 pictures)
+	SideFrame = {
+		Id = "87800987658058",
+		Size = { 640, 128 },
+		--// where the dark track starts / ends, as a share of the picture's
+		--// width (0.164 = 105 px of 640). The fill grows between these.
+		FillStart = 0.164,
+		FillEnd = 0.958,
+		--// LINE-UP NUDGE for the fill: { right, down } as a share of the
+		--// picture (0.005 = about 3 px). Use it if the fill sits a bit off.
+		FillNudge = { 0, 0 },
+		BadgeX = 0.098,   -- centre of the round socket (share of the width)
+		BadgeSize = 1.05, -- badge size vs the bar's height
+	},
+	SideFill = { Id = "105209730709581" },
+
+	--// THE SHIFT TIMER (1600 x 144 pictures)
+	TimerFrame = {
+		Id = "82827550019708",
+		Size = { 1600, 144 },
+		FillStart = 0.072,
+		FillEnd = 0.978,
+		FillNudge = { 0, 0 },
+		BadgeX = 0.044,
+		BadgeSize = 1.05,
+	},
+	TimerFill = { Id = "76208438897796" },
+
+	BadgeRing   = { Id = "117011653929619" }, -- the empty round badge (every badge uses it)
+	StarIcon    = { Id = "86242917931043" }, -- REP
+	BubblesIcon = { Id = "120807149857193" }, -- TIDY
+	CoinIcon    = { Id = "94536744345043" }, -- money
+	PhasePlaque = { Id = "106523998341428" }, -- hangs under the timer: OPENING / BUSY / RUSH
+	NowPointer  = { Id = "72783623709850" }, -- slides along the timer
+	PhaseNotch  = { Id = "75645679067424" }, -- marks where each phase starts
+	SoftGlow    = { Id = "136729183446025" }, -- behind badges when they flash / pulse
+	ShineStreak = { Id = "108290930210079" }, -- sweeps across a bar when it goes up
+	SteamPuff   = { Id = "" }, -- optional: curls off the timer's food
+	Fly         = { Id = "" }, -- optional: buzzes round TIDY when it is dirty
+
+	--// The food in the timer's badge, per map (by map Id). These are the
+	--// dish icons already in the game; "" = the map's emoji instead.
+	TimerIcons = {
+		Sushi    = "111083951169268", -- Ramen (Japanese map)
+		Filipino = "87007459314481",  -- cooked rice
+		French   = "137909655636183", -- croissant
+		Diner    = "",
+	},
+
+	--// LAYOUT (shares of the screen's height unless noted)
+	TimerHeight = 0.07,   -- how tall the timer is
+	TimerY = 0.02,        -- gap from the top of the screen
+	SideHeight = 0.055,   -- how tall REP / TIDY are
+	PointerY = 0.12,      -- pointer height on the timer (0 = top edge, 1 = bottom)
+	PointerSize = 0.5,    -- vs the timer's height
+	NotchHeight = 0.55,   -- vs the timer's height
+	PlaqueY = 0.82,       -- where the plaque hangs (1 = the timer's bottom edge)
+	PlaqueHeight = 0.8,   -- vs the timer's height
+	PlaqueTextY = 0.6,    -- the words' height on the plaque (below its hooks)
+	CriticY = 0.16,       -- the critic's stars, under the plaque
+	BadgeIconSize = 0.62, -- icon size inside the badge ring
+	MoneyBadgeSize = 1.15,
+	TimerElapsedDarkness = 0.45, -- how dark the time already gone gets (0-1)
+	TimerBlend = 0.06,    -- green -> yellow -> red blend width (0 = hard lines, 0.07 = softest)
+	TidyWarnBelow = 0.3,  -- TIDY pulses red under this
+	SteamEverySeconds = 1.4,
+}
+
 Config.MinigameArt = {
 	--// THE FRAME PIECES (custom-made to stretch, Oct 2026)
 	Frame = {            -- the CUSTOM panel border (512x512, made to stretch)

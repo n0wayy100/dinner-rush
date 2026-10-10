@@ -346,6 +346,24 @@ if not ui.till then
 	print("[HudClient] no TillLabel in the HUD - built a placeholder money readout")
 end
 
+--// THE ART HUD (Oct 2026, Config.HudArt): once the four bar pieces have
+--// ids, HudSkin draws the timer, REP, TIDY and money with the team's art
+--// and the code-drawn bars below stay hidden. No ids = the old bars.
+local HudSkin = require(script.Parent:WaitForChild("HudSkin"))
+local skin = nil
+if HudSkin.Ready() then
+	local okSkin, built = pcall(HudSkin.new, playerGui)
+	if okSkin then
+		skin = built
+		if moneyReadout and ui.till then
+			skin.DressMoney(ui.till)
+		end
+		print("[HudClient] art HUD on (Config.HudArt)")
+	else
+		warn("[HudClient] art HUD failed, keeping the plain bars: " .. tostring(built))
+	end
+end
+
 local function setText(label, text)
 	if label then
 		label.Text = text
@@ -492,7 +510,23 @@ local lastPaintedLength = nil
 
 local function updateShiftBar(state)
 	local onDuty = state == "RUNNING" or state == "CLOSING"
-	shiftBarGui.Enabled = onDuty and not focusHidden()
+	shiftBarGui.Enabled = onDuty and not focusHidden() and skin == nil
+	if skin then
+		if not onDuty then
+			skin.Timer(false)
+			return
+		end
+		local length = attr("Length", 0)
+		if length <= 0 then length = 480 end
+		local calmAt = math.clamp(Config.Shift.Phases.CalmEndsAt / length, 0.08, 0.8)
+		local buildAt = math.clamp(Config.Shift.Phases.BuildingEndsAt / length, calmAt + 0.08, 0.92)
+		local fraction = state == "CLOSING" and 1
+			or 1 - math.clamp(attr("TimeRemaining", 0) / length, 0, 1)
+		local phase = attr("Phase", "")
+		skin.Timer(not focusHidden(), fraction, PHASE_LABELS[phase] or phase,
+			calmAt, buildAt, { BASIL, MUSTARD, TOMATO })
+		return
+	end
 	if not onDuty then return end
 
 	local length = attr("Length", 0)
@@ -605,14 +639,19 @@ end
 
 local function updateRepMeter(state, rep, repMax)
 	local onDuty = state == "RUNNING" or state == "CLOSING"
-	repMeterGui.Enabled = onDuty and not focusHidden()
-	if not onDuty then return end
-
+	repMeterGui.Enabled = onDuty and not focusHidden() and skin == nil
 	local fraction = math.clamp(rep / math.max(repMax, 1), 0, 1)
-	repFill.Size = UDim2.fromScale(fraction, 1)
-	repFill.BackgroundColor3 = fraction > 0.5 and BASIL
+	local color = fraction > 0.5 and BASIL
 		or fraction > 0.25 and MUSTARD
 		or TOMATO
+	if skin then
+		skin.Rep(onDuty and not focusHidden(), fraction, color)
+		return
+	end
+	if not onDuty then return end
+
+	repFill.Size = UDim2.fromScale(fraction, 1)
+	repFill.BackgroundColor3 = color
 end
 
 ----------------------------------------------------------------
@@ -695,14 +734,19 @@ local function updateTidinessMeter(state, tidy, tidyMax, active)
 	--// the bar shows during play UNTIL the inspection ends the tidiness
 	--// challenge for the shift (CleanlinessService clears TidinessActive)
 	local onDuty = (state == "RUNNING" or state == "CLOSING") and active ~= false
-	tidyMeterGui.Enabled = onDuty and not focusHidden()
-	if not onDuty then return end
-
+	tidyMeterGui.Enabled = onDuty and not focusHidden() and skin == nil
 	local fraction = math.clamp(tidy / math.max(tidyMax, 1), 0, 1)
-	tidyFill.Size = UDim2.fromScale(fraction, 1)
-	tidyFill.BackgroundColor3 = fraction >= 0.6 and BASIL
+	local color = fraction >= 0.6 and BASIL
 		or fraction >= 0.3 and MUSTARD
 		or TOMATO
+	if skin then
+		skin.Tidy(onDuty and not focusHidden(), fraction, color)
+		return
+	end
+	if not onDuty then return end
+
+	tidyFill.Size = UDim2.fromScale(fraction, 1)
+	tidyFill.BackgroundColor3 = color
 end
 
 ----------------------------------------------------------------
@@ -722,7 +766,8 @@ do
 
 	local row = Instance.new("Frame")
 	row.AnchorPoint = Vector2.new(0.5, 0)
-	row.Position = UDim2.fromScale(0.5, 0.118) --// tucked under the bar's chip
+	--// tucked under the bar's chip (the art HUD's hanging plaque sits lower)
+	row.Position = UDim2.fromScale(0.5, skin and ((Config.HudArt or {}).CriticY or 0.16) or 0.118)
 	row.Size = UDim2.fromScale(0.24, 0.055)
 	row.BackgroundTransparency = 1
 	row.Parent = gui
@@ -899,7 +944,11 @@ local function refresh()
 		attr("TidinessActive", true))
 
 	--// The shared shift till, not anyone's personal balance
-	setText(ui.till, ("Money: $%d"):format(attr("Till", 0)))
+	if skin and moneyReadout then
+		skin.Money(attr("Till", 0))
+	else
+		setText(ui.till, ("Money: $%d"):format(attr("Till", 0)))
+	end
 end
 
 refresh()
