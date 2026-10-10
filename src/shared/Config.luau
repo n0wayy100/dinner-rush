@@ -2004,7 +2004,7 @@ Config.MvpCutscene = {
 	--// longer than the animation.
 	--// STUDIO ONLY (live-ignored): the Name of one slot below to play EVERY
 	--// time while testing (e.g. "MVP Siu"). "" = random, like live servers.
-	StudioForce = "Victory Fist",
+	StudioForce = "MVP Bow",
 
 	--// HOW TO ADD AN ANIMATION: copy a { ... } block below, give it a Name,
 	--// and paste the published animation's id into AnimId. A slot with an
@@ -2060,6 +2060,35 @@ Config.MvpCutscene = {
 			SoundVolume = 1,
 			SoundDelay = 0,
 			SoundFadeOutSeconds = 3,
+		},
+		{
+			--// THE CAMERA THAT WON'T SIT STILL (owner, Oct 2026): it boings
+			--// away every time the MVP turns to pose, gets bonked out of the
+			--// air, lands tilted on the floor - and the MVP takes a magician's
+			--// bow to it. 9 s (270 frames).
+			Name = "MVP Bow",
+			AnimId = "120267158434493",              --// <- paste the PUBLISHED id here (published under the group)
+			Keyframes = "MVP_Bow",    --// Studio test before publishing: put the MVP_Bow
+			                          --// KeyframeSequence in ServerStorage
+			--// the camera's OWN rotation is used (the tumble and the tilted
+			--// floor shot) - checked against the export: no correction needed
+			CameraMode = "Bone",
+			BoneFix = 1,
+			FieldOfView = 53,         --// zoomed out a bit on every shot (owner, Oct 2026; 45 = the Blender lens)
+			CameraDistanceMult = 1,   --// exactly where it was animated (the floor shot must stay put)
+			FinalShot = { Enabled = false }, --// hold the bow, no glide away
+			--// the final floor shot sat inside the bow on a bulky avatar: while
+			--// the bonked camera falls (4.53s) it slides back, fully by the
+			--// landing (5.5s). Studs = how far back (bigger = further away).
+			--// Reframe: once it has landed (5.5s) the camera tips over 0.4s to aim
+			--// at the MVP's chest again (keeps the tilt). AimHeight: + aims
+			--// higher on the body (the MVP sits lower in the shot), - lower.
+			PullBack = { From = 4.53, Full = 5.5, Studs = 3,
+				Reframe = { From = 5.5, Full = 5.9, AimHeight = 0 } },
+			SoundId = "",             --// <- paste a sound id (bonk + applause) if you want one
+			SoundVolume = 1,
+			SoundDelay = 0,
+			SoundFadeOutSeconds = 2,
 		},
 	},
 

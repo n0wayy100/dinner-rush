@@ -625,6 +625,8 @@ function MvpCutscene.Run(payload, options)
 		local holdCamera = type(entry.HoldCamera) == "table" and entry.HoldCamera.From
 			and entry.HoldCamera.To and entry.HoldCamera or nil
 		local heldBone = nil
+		local pullBack = type(entry.PullBack) == "table" and entry.PullBack.From
+			and entry.PullBack.Full and entry.PullBack or nil
 		local heroBlend, heroFrom = nil, nil
 		local function heroView()
 			--// the way the BODY faces (animations like Siu spin the torso round
@@ -673,7 +675,60 @@ function MvpCutscene.Run(payload, options)
 				if (boneCF.Position - aimPart.Position).Magnitude < 0.05 then return end
 				view = CFrame.lookAt(boneCF.Position, aimPart.Position)
 			end
+			--// PULL A SHOT BACK (Config: PullBack = { From, Full, Studs } on the
+			--// entry): from From to Full the camera eases back that many studs,
+			--// level with the floor and keeping its angle, then stays back
+			--// (owner playtest: "MVP Bow"'s floor shot sat inside a bulky
+			--// avatar's bow). Never through a wall.
+			if pullBack then
+				local t = track.TimePosition
+				local k = math.clamp((t - pullBack.From) / math.max(pullBack.Full - pullBack.From, 0.01), 0, 1)
+				if k > 0 then
+					k = 1 - (1 - k) ^ 2 --// ease out
+					local away = Vector3.new(-view.LookVector.X, 0, -view.LookVector.Z)
+					if away.Magnitude > 0.05 then
+						local reach = (pullBack.Studs or 3) * k
+						local ignore = { rig }
+						for _, other in ipairs(Players:GetPlayers()) do
+							if other.Character then table.insert(ignore, other.Character) end
+						end
+						pushParams.FilterDescendantsInstances = ignore
+						local hit = workspace:Raycast(view.Position, away.Unit * reach, pushParams)
+						if hit then
+							reach = math.max((hit.Position - view.Position).Magnitude - 0.5, 0)
+						end
+						view = view + away.Unit * reach
+					end
+				end
+				--// RE-AIM after the slide (PullBack.Reframe = { From, Full }):
+				--// backed off at the same steep angle, the shot filmed the
+				--// ceiling with the MVP at the bottom edge (owner playtest). The
+				--// camera tips to aim at the body again, KEEPING its side tilt -
+				--// it reads as the camera settling after it lands.
+				local reframe = pullBack.Reframe
+				if type(reframe) == "table" and reframe.From and reframe.Full then
+					local r = math.clamp((t - reframe.From) / math.max(reframe.Full - reframe.From, 0.01), 0, 1)
+					if r > 0 then
+						r = r * r * (3 - 2 * r) --// smooth in and out
+						local look = view.LookVector
+						local level = CFrame.lookAt(view.Position, view.Position + look)
+						local roll = math.atan2(level.UpVector:Cross(view.UpVector):Dot(look),
+							level.UpVector:Dot(view.UpVector))
+						local target = aimPart.Position + Vector3.new(0, reframe.AimHeight or 0, 0)
+						if (target - view.Position).Magnitude > 0.5 then
+							local aimed = CFrame.lookAt(view.Position, target) * CFrame.Angles(0, 0, roll)
+							view = view:Lerp(aimed, r)
+						end
+					end
+				end
+			end
 			view = pushBack(view)
+			--// never under the floor: shots animated at floor level (the
+			--// fallen camera in "MVP Bow") would sink on a shorter avatar
+			local floorY = spot.Position.Y + spot.Size.Y / 2 + 0.3
+			if view.Position.Y < floorY then
+				view = view.Rotation + Vector3.new(view.Position.X, floorY, view.Position.Z)
+			end
 			if heroBlend then
 				heroFrom = heroFrom or view
 				local t = heroBlend.Value
