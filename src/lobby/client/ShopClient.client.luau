@@ -37,7 +37,10 @@ local Lighting = game:GetService("Lighting")
 local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
 local MON = Config.Monetization
 if not MON then return end
-local ART = MON.ShopArt or {}
+--// the shop art plus the MVP tab's art (Config.Monetization.MvpArt)
+local ART = {}
+for slot, entry in pairs(MON.ShopArt or {}) do ART[slot] = entry end
+for slot, entry in pairs(MON.MvpArt or {}) do ART[slot] = entry end
 
 local SfxLocal = nil
 pcall(function()
@@ -831,6 +834,63 @@ local function smallCard(parent, kind, key, def, order)
 	detail.Size = UDim2.fromScale(0.8, 0.1)
 	detail.Text = def.Coins and (commas(def.Coins) .. " coins") or (def.Description or "")
 	detail.ZIndex = 2
+	--// passes with Bullets list their perks: one row each, a drawn dot +
+	--// the line (the font has no bullet glyph). The art and name move up to
+	--// give the list room above the price button, inside the card's frame.
+	if type(def.Bullets) == "table" and #def.Bullets > 0 then
+		detail.Visible = false
+		art.Position = UDim2.fromScale(0.5, 0.22)
+		art.Size = UDim2.fromScale(0.5, 0.28)
+		nameText.Position = UDim2.fromScale(0.08, 0.37)
+		nameText.Size = UDim2.fromScale(0.84, 0.11)
+		local list = Instance.new("Frame")
+		list.Name = "Perks"
+		list.BackgroundTransparency = 1
+		list.Position = UDim2.fromScale(0.1, 0.49)
+		list.Size = UDim2.fromScale(0.8, 0.245) --// ends just above the button (0.74)
+		list.ZIndex = 2
+		list.Parent = card
+		local rows = #def.Bullets
+		for i, perk in ipairs(def.Bullets) do
+			local row = Instance.new("Frame")
+			row.BackgroundTransparency = 1
+			row.Position = UDim2.fromScale(0, (i - 1) / rows)
+			row.Size = UDim2.fromScale(1, 1 / rows)
+			row.ZIndex = 2
+			row.Parent = list
+			local dot = Instance.new("Frame")
+			dot.AnchorPoint = Vector2.new(0, 0.5)
+			dot.Position = UDim2.fromScale(0, 0.5)
+			dot.Size = UDim2.fromScale(0.08, 0.36)
+			dot.BackgroundColor3 = MUSTARD
+			dot.ZIndex = 3
+			dot.Parent = row
+			aspect(dot, 1)
+			corner(dot, UDim.new(1, 0))
+			stroke(dot, 1.5, CHOC)
+			--// FredokaOne + a size floor: big and readable (the old Gotham line
+			--// shrank to a few pixels to fit the narrow card)
+			local text = label(row, "Text", Enum.Font.FredokaOne, CHOC)
+			text.Position = UDim2.fromScale(0.12, 0)
+			text.Size = UDim2.fromScale(0.88, 1)
+			text.TextXAlignment = Enum.TextXAlignment.Left
+			text.TextYAlignment = Enum.TextYAlignment.Center
+			text.TextWrapped = false
+			--// NO auto-scaling (it kept shrinking these to a few pixels): an
+			--// explicit size from the card's real height, re-done on resize
+			text.TextScaled = false
+			local function fit()
+				local h = card.AbsoluteSize.Y
+				if h > 0 then
+					text.TextSize = math.clamp(math.floor(h * 0.06), 12, 22)
+				end
+			end
+			card:GetPropertyChangedSignal("AbsoluteSize"):Connect(fit)
+			fit()
+			text.Text = perk
+			text.ZIndex = 3
+		end
+	end
 
 	local price = priceButton(card, kind, key, def)
 	price.AnchorPoint = Vector2.new(0.5, 1)
@@ -1102,11 +1162,414 @@ for i, entry in ipairs(passList) do
 end
 
 ----------------------------------------------------------------
+-- MVP page (Oct 2026): MVP celebrations bought with coins. Each card is a
+-- tiny theatre stage with YOUR avatar on it; PLAY runs that dance on your
+-- avatar in the card (a ViewportFrame WorldModel - UI preview only). BUY
+-- spends coins, EQUIP picks the one that plays when you win MVP. All
+-- checks happen server-side (MvpShopRemote -> ProfileAPI).
+----------------------------------------------------------------
+local mvpPage = Instance.new("Frame")
+mvpPage.Name = "MvpPage"
+mvpPage.Size = UDim2.fromScale(1, 1)
+mvpPage.BackgroundTransparency = 1
+mvpPage.Visible = false
+mvpPage.Parent = content
+pages.Mvp = mvpPage
+
+local mvpRemote = nil
+task.spawn(function()
+	local remotes = ReplicatedStorage:WaitForChild("Remotes", 30)
+	mvpRemote = remotes and remotes:WaitForChild("MvpShopRemote", 30)
+end)
+
+local mvpSlots = {}
+for index, slot in ipairs((Config.MvpCutscene and Config.MvpCutscene.Animations) or {}) do
+	if slot.ShopName and (slot.AnimId or "") ~= "" then
+		table.insert(mvpSlots, { Index = index, Slot = slot })
+	end
+end
+table.sort(mvpSlots, function(a, b) return (a.Slot.ShopOrder or 99) < (b.Slot.ShopOrder or 99) end)
+
+--// the gold banner across the top
+local mvpBanner = Instance.new("Frame")
+mvpBanner.Name = "Banner"
+mvpBanner.AnchorPoint = Vector2.new(0.5, 0)
+mvpBanner.Position = UDim2.fromScale(0.5, 0)
+mvpBanner.Size = UDim2.fromScale(0.86, 0.22) --// bigger (owner)
+aspect(mvpBanner, 4) --// the art is 1024x256: lock the box to it so text and art line up
+mvpBanner.BackgroundColor3 = MUSTARD
+mvpBanner.ZIndex = 3
+mvpBanner.Parent = mvpPage
+corner(mvpBanner, UDim.new(0.3, 0))
+stroke(mvpBanner, 3, CHOC)
+skin(mvpBanner, "Mvp_Banner")
+local mvpBannerText = label(mvpBanner, "Text", Enum.Font.FredokaOne, WHITE, 40)
+mvpBannerText.AnchorPoint = Vector2.new(0.5, 0.5)
+mvpBannerText.Position = UDim2.fromScale(0.5, 0.55)
+mvpBannerText.Size = UDim2.fromScale(0.5, 0.4) --// inside the banner's flat middle
+mvpBannerText.Text = "MVP CELEBRATIONS"
+mvpBannerText.ZIndex = 4
+stickerText(mvpBannerText)
+
+local mvpScroll = Instance.new("ScrollingFrame")
+mvpScroll.Name = "Cards"
+mvpScroll.BackgroundTransparency = 1
+mvpScroll.BorderSizePixel = 0
+mvpScroll.Position = UDim2.fromScale(0, 0.23)
+mvpScroll.Size = UDim2.fromScale(1, 0.77)
+mvpScroll.ScrollingDirection = Enum.ScrollingDirection.X
+mvpScroll.AutomaticCanvasSize = Enum.AutomaticSize.X
+mvpScroll.CanvasSize = UDim2.new()
+mvpScroll.ScrollBarThickness = 20 --// a chunky DRAG BAR under the cards
+mvpScroll.ScrollBarImageColor3 = TOMATO --// bold red: stands out on the cream page
+mvpScroll.ScrollBarImageTransparency = 0
+mvpScroll.HorizontalScrollBarInset = Enum.ScrollBarInset.ScrollBar
+mvpScroll.ElasticBehavior = Enum.ElasticBehavior.Always
+mvpScroll.Parent = mvpPage
+--// a dark track behind the drag bar so it reads as a slider
+local mvpTrack = Instance.new("Frame")
+mvpTrack.Name = "DragTrack"
+mvpTrack.AnchorPoint = Vector2.new(0, 1)
+mvpTrack.Position = UDim2.fromScale(0, 1)
+mvpTrack.Size = UDim2.new(1, 0, 0, 20)
+mvpTrack.BackgroundColor3 = CHOC
+mvpTrack.BackgroundTransparency = 0.55
+mvpTrack.ZIndex = 1
+mvpTrack.Parent = mvpPage
+corner(mvpTrack, UDim.new(1, 0))
+mvpScroll.ZIndex = 2
+local mvpLayout = Instance.new("UIListLayout")
+mvpLayout.FillDirection = Enum.FillDirection.Horizontal
+mvpLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+mvpLayout.Padding = UDim.new(0, 10)
+mvpLayout.SortOrder = Enum.SortOrder.LayoutOrder
+mvpLayout.Parent = mvpScroll
+
+local mvpState = { Owned = {}, Equipped = "" }
+local mvpCards = {}
+local mvpBusy = false
+local mvpPlaying = nil --// the card whose preview is running
+
+--// your avatar, posed on a card's little stage (built once per card, lazily)
+local function buildPreview(card)
+	if card.Rig or not player.Character then return end
+	local source = player.Character
+	local wasArchivable = source.Archivable
+	source.Archivable = true
+	local rig = source:Clone()
+	source.Archivable = wasArchivable
+	if not rig then return end
+	for _, d in ipairs(rig:GetDescendants()) do
+		if d:IsA("LuaSourceContainer") or d:IsA("Tool") or d:IsA("BillboardGui")
+			or d:IsA("Sound") or d:IsA("ParticleEmitter") or d:IsA("ForceField") then
+			d:Destroy()
+		end
+	end
+	local humanoid = rig:FindFirstChildOfClass("Humanoid")
+	local root = rig:FindFirstChild("HumanoidRootPart")
+	if not humanoid or not root then rig:Destroy() return end
+	humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+	root.Anchored = true
+	if not humanoid:FindFirstChildOfClass("Animator") then
+		Instance.new("Animator").Parent = humanoid
+	end
+	rig:PivotTo(CFrame.new(0, 3, 0)) --// faces -Z, toward the camera below
+	rig.Parent = card.World
+	local camera = Instance.new("Camera")
+	camera.FieldOfView = 42
+	camera.CFrame = CFrame.lookAt(Vector3.new(0, 3.6, -10.5), Vector3.new(0, 2.6, 0))
+	camera.Parent = card.Viewport
+	card.Viewport.CurrentCamera = camera
+	card.Rig, card.Humanoid = rig, humanoid
+end
+
+local function stopPreview(card)
+	if card.Track then
+		card.Track:Stop(0.2)
+		card.Track = nil
+	end
+	card.PlayIcon.Visible = true
+end
+
+local function playPreview(card)
+	if mvpPlaying and mvpPlaying ~= card then stopPreview(mvpPlaying) end
+	buildPreview(card)
+	if not card.Humanoid then return end
+	if card.Track then
+		stopPreview(card)
+		mvpPlaying = nil
+		return
+	end
+	local animation = Instance.new("Animation")
+	local id = card.Slot.AnimId
+	animation.AnimationId = id:match("^%d+$") and ("rbxassetid://" .. id) or id
+	local ok, track = pcall(function()
+		return card.Humanoid:FindFirstChildOfClass("Animator"):LoadAnimation(animation)
+	end)
+	if not ok or not track then return end
+	track.Looped = true
+	track.Priority = Enum.AnimationPriority.Action4
+	track:Play(0.1)
+	card.Track = track
+	card.PlayIcon.Visible = false
+	mvpPlaying = card
+end
+
+local refreshMvpCards -- defined below
+
+local function mvpRequest(action, name)
+	if mvpBusy or not mvpRemote then return end
+	mvpBusy = true
+	local ok, success, reason = pcall(function() return mvpRemote:InvokeServer(action, name) end)
+	mvpBusy = false
+	if ok and success then
+		sfx(action == "Buy" and "ShopPurchase" or "ShopClick")
+		local card = mvpCards[name]
+		if card then
+			--// EFFECT: the card pops, sparkles burst round it
+			local scale = card.Frame:FindFirstChildOfClass("UIScale")
+			if scale then
+				scale.Scale = 1.12
+				TweenService:Create(scale, TweenInfo.new(0.35, Enum.EasingStyle.Back,
+					Enum.EasingDirection.Out), { Scale = 1 }):Play()
+			end
+			for i = 1, 6 do
+				local star = fxImage(card.Frame, "Sparkle", "Burst" .. i)
+				if star then
+					star.AnchorPoint = Vector2.new(0.5, 0.5)
+					star.Position = UDim2.fromScale(0.5, 0.35)
+					star.Size = UDim2.fromScale(0.16, 0.12)
+					star.ZIndex = 9
+					aspect(star, 1)
+					local angle = (i / 6) * math.pi * 2
+					TweenService:Create(star, TweenInfo.new(0.5, Enum.EasingStyle.Quad,
+						Enum.EasingDirection.Out), {
+						Position = UDim2.fromScale(0.5 + math.cos(angle) * 0.4, 0.35 + math.sin(angle) * 0.3),
+						ImageTransparency = 1,
+					}):Play()
+					task.delay(0.52, function() star:Destroy() end)
+				end
+			end
+		end
+		refreshMvpCards()
+	else
+		local card = mvpCards[name]
+		if card then
+			card.Note.Text = type(reason) == "string" and reason or "Try again!"
+			card.Note.TextTransparency = 0
+			task.delay(2, function()
+				TweenService:Create(card.Note, TweenInfo.new(0.3), { TextTransparency = 1 }):Play()
+			end)
+		end
+	end
+end
+
+for order, entry in ipairs(mvpSlots) do
+	local slot = entry.Slot
+	local frame = Instance.new("Frame")
+	frame.Name = slot.Name
+	frame.LayoutOrder = order
+	frame.BackgroundTransparency = 1
+	frame.Size = UDim2.fromOffset(160, 220)
+	frame.Parent = mvpScroll
+	local frameScale = Instance.new("UIScale")
+	frameScale.Parent = frame
+
+	local back = Instance.new("ImageLabel")
+	back.Name = "Back"
+	back.BackgroundColor3 = CREAM
+	back.Size = UDim2.fromScale(1, 1)
+	back.ScaleType = Enum.ScaleType.Stretch
+	back.Image = artId("Mvp_Card") or ""
+	back.BackgroundTransparency = back.Image ~= "" and 1 or 0
+	back.ZIndex = 2
+	back.Parent = frame
+	if back.Image == "" then corner(back, UDim.new(0, 14)) stroke(back, 3, CHOC) end
+
+	--// the little stage: viewport over a floor, under a spotlight
+	local stageFloor = fxImage(frame, "Mvp_Stage_Floor", "StageFloor")
+	if stageFloor then
+		stageFloor.AnchorPoint = Vector2.new(0.5, 0.5)
+		stageFloor.Position = UDim2.fromScale(0.5, 0.56)
+		stageFloor.Size = UDim2.fromScale(0.74, 0.14)
+		stageFloor.ZIndex = 3
+	end
+	local viewport = Instance.new("ViewportFrame")
+	viewport.Name = "Preview"
+	viewport.BackgroundTransparency = 1
+	viewport.AnchorPoint = Vector2.new(0.5, 0)
+	viewport.Position = UDim2.fromScale(0.5, 0.1)
+	viewport.Size = UDim2.fromScale(0.78, 0.5)
+	viewport.Ambient = Color3.fromRGB(200, 190, 180)
+	viewport.LightColor = Color3.fromRGB(255, 240, 220)
+	viewport.ZIndex = 4
+	viewport.Parent = frame
+	local world = Instance.new("WorldModel")
+	world.Parent = viewport
+	local spot = fxImage(frame, "Mvp_Spotlight", "Spotlight")
+	if spot then
+		spot.AnchorPoint = Vector2.new(0.5, 0)
+		spot.Position = UDim2.fromScale(0.5, 0.06)
+		spot.Size = UDim2.fromScale(0.6, 0.55)
+		spot.ScaleType = Enum.ScaleType.Stretch
+		spot.ImageColor3 = MUSTARD
+		spot.ImageTransparency = 0.55
+		spot.ZIndex = 5
+	end
+
+	--// the PLAY button over the stage (tap anywhere on the stage too)
+	local playButton = Instance.new("ImageButton")
+	playButton.Name = "Play"
+	playButton.BackgroundTransparency = 1
+	playButton.AnchorPoint = Vector2.new(0.5, 0.5)
+	playButton.Position = UDim2.fromScale(0.5, 0.34)
+	playButton.Size = UDim2.fromScale(0.78, 0.5)
+	playButton.Image = ""
+	playButton.ZIndex = 6
+	playButton.Parent = frame
+	local playIcon = fxImage(playButton, "Play_Button", "Icon") or label(playButton, "Icon", Enum.Font.FredokaOne, WHITE)
+	if playIcon:IsA("TextLabel") then playIcon.Text = "▶" stickerText(playIcon) end
+	playIcon.AnchorPoint = Vector2.new(0.5, 0.5)
+	playIcon.Position = UDim2.fromScale(0.5, 0.5)
+	playIcon.Size = UDim2.fromScale(0.36, 0.36)
+	playIcon.ZIndex = 7
+	aspect(playIcon, 1)
+
+	local nameText = label(frame, "Name", Enum.Font.FredokaOne, WHITE, 22)
+	stickerText(nameText) --// readable over the dark stage
+	nameText.AnchorPoint = Vector2.new(0.5, 0)
+	nameText.Position = UDim2.fromScale(0.5, 0.65)
+	nameText.Size = UDim2.fromScale(0.84, 0.1)
+	nameText.Text = slot.ShopName
+	nameText.ZIndex = 5
+
+	local button = Instance.new("TextButton")
+	button.Name = "Action"
+	button.AnchorPoint = Vector2.new(0.5, 0)
+	button.Position = UDim2.fromScale(0.5, 0.77)
+	button.Size = UDim2.fromScale(0.78, 0.13)
+	button.BackgroundColor3 = BASIL
+	button.AutoButtonColor = false
+	button.Text = ""
+	button.ZIndex = 5
+	button.Parent = frame
+	corner(button, UDim.new(0.3, 0))
+	stroke(button, 3, CHOC)
+	skin(button, "PriceButtonGreen")
+	bouncy(button)
+	local buttonText = label(button, "Text", Enum.Font.FredokaOne, WHITE, 22)
+	buttonText.AnchorPoint = Vector2.new(0.5, 0.5)
+	buttonText.Position = UDim2.fromScale(0.5, 0.48)
+	buttonText.Size = UDim2.fromScale(0.86, 0.62)
+	--// the coin beside a price (shown only while it is a BUY button)
+	local priceCoin = fxImage(button, "FlyingCoin", "Coin")
+	if priceCoin then
+		priceCoin.AnchorPoint = Vector2.new(0.5, 0.5)
+		priceCoin.Position = UDim2.fromScale(0.2, 0.48)
+		priceCoin.Size = UDim2.fromScale(0.2, 0.7)
+		priceCoin.ZIndex = 7
+		aspect(priceCoin, 1)
+	end
+	buttonText.ZIndex = 7
+	stickerText(buttonText)
+
+	local ribbon = Instance.new("Frame")
+	ribbon.Name = "Equipped"
+	ribbon.AnchorPoint = Vector2.new(0.5, 0.5)
+	ribbon.Position = UDim2.fromScale(0.5, 0.06)
+	ribbon.Size = UDim2.fromScale(0.82, 0.1)
+	ribbon.BackgroundColor3 = BASIL
+	ribbon.Rotation = -4
+	ribbon.Visible = false
+	ribbon.ZIndex = 8
+	ribbon.Parent = frame
+	corner(ribbon, UDim.new(0.3, 0))
+	stroke(ribbon, 2, CHOC)
+	skin(ribbon, "Equipped_Ribbon")
+	local ribbonText = label(ribbon, "Text", Enum.Font.FredokaOne, WHITE, 20)
+	ribbonText.AnchorPoint = Vector2.new(0.5, 0.5)
+	ribbonText.Position = UDim2.fromScale(0.5, 0.5)
+	ribbonText.Size = UDim2.fromScale(0.8, 0.62)
+	ribbonText.Text = "EQUIPPED"
+	ribbonText.ZIndex = 9
+	stickerText(ribbonText)
+
+	local note = label(frame, "Note", Enum.Font.FredokaOne, TOMATO, 16)
+	note.AnchorPoint = Vector2.new(0.5, 0)
+	note.Position = UDim2.fromScale(0.5, 0.91)
+	note.Size = UDim2.fromScale(0.9, 0.07)
+	note.TextTransparency = 1
+	note.ZIndex = 6
+
+	local card = {
+		Frame = frame, Back = back, Viewport = viewport, World = world, Slot = slot,
+		Button = button, ButtonText = buttonText, PriceCoin = priceCoin, Ribbon = ribbon, Note = note,
+		PlayIcon = playIcon,
+	}
+	mvpCards[slot.Name] = card
+	playButton.Activated:Connect(function()
+		sfx("ShopClick")
+		playPreview(card)
+	end)
+	button.Activated:Connect(function()
+		local owned = mvpState.Owned[slot.Name] == true
+		if not owned then
+			mvpRequest("Buy", slot.Name)
+		elseif mvpState.Equipped ~= slot.Name then
+			mvpRequest("Equip", slot.Name)
+		end
+	end)
+end
+
+--// cards sized from the scroll's height (card-shaped, 640x880)
+local function sizeMvpCards()
+	local h = mvpScroll.AbsoluteSize.Y - 30 --// leave room for the drag bar
+	if h <= 0 then return end
+	local w = math.floor(h * 640 / 880)
+	for _, card in pairs(mvpCards) do
+		card.Frame.Size = UDim2.fromOffset(w, h)
+	end
+end
+mvpScroll:GetPropertyChangedSignal("AbsoluteSize"):Connect(sizeMvpCards)
+
+refreshMvpCards = function()
+	if mvpRemote then
+		local ok, state = pcall(function() return mvpRemote:InvokeServer("State") end)
+		if ok and type(state) == "table" then
+			mvpState = state
+			mvpState.Owned = mvpState.Owned or {}
+		end
+	end
+	for name, card in pairs(mvpCards) do
+		local owned = mvpState.Owned[name] == true
+		local equipped = mvpState.Equipped == name
+		card.Back.Image = artId(owned and "Mvp_Card_Owned" or "Mvp_Card") or card.Back.Image
+		card.Ribbon.Visible = equipped
+		if equipped then
+			card.ButtonText.Text = "EQUIPPED"
+		elseif owned then
+			card.ButtonText.Text = "EQUIP"
+		else
+			local price = card.Slot.Price or 0
+			card.ButtonText.Text = price > 0 and commas(price) or "FREE"
+		end
+		card.Button.BackgroundColor3 = equipped and BASIL_DARK or BASIL
+		--// the coin sits left of the price; text shifts right to make room
+		local buying = not owned and (card.Slot.Price or 0) > 0
+		if card.PriceCoin then card.PriceCoin.Visible = buying end
+		card.ButtonText.Position = UDim2.fromScale(buying and card.PriceCoin and 0.58 or 0.5, 0.48)
+		card.ButtonText.Size = UDim2.fromScale(buying and card.PriceCoin and 0.6 or 0.86, 0.62)
+	end
+	sizeMvpCards()
+end
+
+----------------------------------------------------------------
 -- TABS: a row of top tabs over the content (the tab art is shaped for it)
 ----------------------------------------------------------------
 local TABS = {
 	{ Key = "Coins", Label = "COINS", Emoji = "🪙", Icon = "TabIconCoins" },
 	{ Key = "Passes", Label = "PASSES", Emoji = "🎟️", Icon = "TabIconPasses" },
+	{ Key = "Mvp", Label = "MVP", Emoji = "👑", Icon = "TabIconMvp" },
 }
 
 local tabRow = Instance.new("Frame")
@@ -1151,13 +1614,19 @@ local function selectTab(key, animate)
 	for tabKey, tab in pairs(tabButtons) do
 		setTabLook(tab, tabKey == key)
 	end
+	if key == "Mvp" then
+		task.spawn(refreshMvpCards) --// owned / equipped, fresh from the server
+	elseif mvpPlaying then
+		stopPreview(mvpPlaying) --// no dancing behind another tab
+		mvpPlaying = nil
+	end
 end
 
 for i, def in ipairs(TABS) do
 	local tab = Instance.new("TextButton")
 	tab.Name = def.Key .. "Tab"
 	tab.LayoutOrder = i
-	tab.Size = UDim2.fromScale(0.36, 1)
+	tab.Size = UDim2.fromScale(0.3, 1) --// three tabs now
 	tab.BackgroundColor3 = CREAM
 	tab.AutoButtonColor = false
 	tab.Text = ""

@@ -4579,6 +4579,22 @@ local function endShift(success, reason)
 			if #eligible > 0 then
 				payload.MvpAnim = eligible[math.random(1, #eligible)]
 			end
+			--// THE MVP SHOP (Oct 2026): the MVP's OWN equipped celebration plays
+			--// (a Studio StudioForce pin still wins, for testing)
+			local forced = studio and mvp.StudioForce and mvp.StudioForce ~= ""
+			local mvpCard = payload.Awards and payload.Awards.MVP
+			local mvpPlayer = mvpCard and Players:GetPlayerByUserId(mvpCard.UserId)
+			if not forced and mvpPlayer and ProfileAPI and ProfileAPI.MvpChoice then
+				local okChoice, choice = pcall(ProfileAPI.MvpChoice, mvpPlayer)
+				if okChoice and choice then
+					for _, index in ipairs(eligible) do
+						if slots[index].Name == choice then
+							payload.MvpAnim = index
+							break
+						end
+					end
+				end
+			end
 		end
 		local cardByUser = {}
 		for _, card in ipairs((payload.Awards and payload.Awards.Players) or {}) do

@@ -1037,6 +1037,75 @@ function ProfileAPI.ClaimGroupReward(player, classKey, inGroup)
 	return true, { Class = classKey, Level = maxLevel }
 end
 
+--// MVP CELEBRATIONS (shop MVP tab, Oct 2026). Slots are Config.MvpCutscene
+--// .Animations, keyed by their Name; Price 0 = owned by everyone. Coins only,
+--// validated here against the save.
+local function mvpSlot(name)
+	for _, slot in ipairs((Config.MvpCutscene and Config.MvpCutscene.Animations) or {}) do
+		if slot.Name == name and slot.ShopName then return slot end
+	end
+	return nil
+end
+
+local function ownsMvp(data, slot)
+	return slot and ((slot.Price or 0) <= 0
+		or (type(data.OwnedMvp) == "table" and data.OwnedMvp[slot.Name] == true))
+end
+
+--// the slot this player's MVP moment plays: their equipped one if they still
+--// own it, else the free default (lowest ShopOrder with Price 0)
+function ProfileAPI.MvpChoice(player)
+	local data = profileFor(player)
+	local equipped = data and mvpSlot(data.EquippedMvp or "")
+	if equipped and ownsMvp(data, equipped) then return equipped.Name end
+	local best = nil
+	for _, slot in ipairs((Config.MvpCutscene and Config.MvpCutscene.Animations) or {}) do
+		if slot.ShopName and (slot.Price or 0) <= 0
+			and (not best or (slot.ShopOrder or 99) < (best.ShopOrder or 99)) then
+			best = slot
+		end
+	end
+	return best and best.Name or nil
+end
+
+function ProfileAPI.MvpState(player)
+	local data = profileFor(player)
+	if not data then return nil end
+	local owned = {}
+	for _, slot in ipairs((Config.MvpCutscene and Config.MvpCutscene.Animations) or {}) do
+		if slot.ShopName and ownsMvp(data, slot) then owned[slot.Name] = true end
+	end
+	return { Owned = owned, Equipped = ProfileAPI.MvpChoice(player) or "", Wallet = data.Wallet or 0 }
+end
+
+function ProfileAPI.BuyMvp(player, name)
+	local slot = type(name) == "string" and mvpSlot(name) or nil
+	if not slot then return false, "That celebration does not exist" end
+	local data = profileFor(player)
+	if not data or not Profiles then return false, NOT_READY end
+	if ownsMvp(data, slot) then return false, "Already owned!" end
+	if not Profiles.TrySpendWallet(player, slot.Price or 0) then
+		return false, ("Need %d more coins!"):format(math.max(0, (slot.Price or 0) - (data.Wallet or 0)))
+	end
+	if type(data.OwnedMvp) ~= "table" then data.OwnedMvp = {} end
+	data.OwnedMvp[slot.Name] = true
+	data.EquippedMvp = slot.Name --// a new buy goes straight on
+	changed:Fire(player)
+	print(("[ProfileAPI] %s bought MVP celebration %s for %d"):format(player.Name, slot.Name, slot.Price or 0))
+	return true
+end
+
+function ProfileAPI.EquipMvp(player, name)
+	local slot = type(name) == "string" and mvpSlot(name) or nil
+	if not slot then return false, "That celebration does not exist" end
+	local data = profileFor(player)
+	if not data then return false, NOT_READY end
+	if not ownsMvp(data, slot) then return false, "You don't own that yet!" end
+	data.EquippedMvp = slot.Name
+	changed:Fire(player)
+	return true
+end
+
 --// Codes: the list is SERVER-ONLY (ServerStorage.Shared.CodeList)
 local codeList = nil
 pcall(function()

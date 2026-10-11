@@ -2012,6 +2012,7 @@ Config.MvpCutscene = {
 	Animations = {
 		{
 			Name = "MVP Mbappe",
+			ShopName = "MVP Animation 2", ShopOrder = 2, Price = 1500, --// the MVP shop tab (Price 0 = free for everyone)
 			AnimId = "73826935391222",  --// MVP_Mbappe, published under the group
 			Keyframes = "MVP_Mbappe",   --// Studio fallback (ServerStorage is fine)
 			FieldOfView = 50,
@@ -2022,6 +2023,7 @@ Config.MvpCutscene = {
 		},
 		{
 			Name = "MVP Instant Transmission",
+			ShopName = "MVP Animation 3", ShopOrder = 3, Price = 2000, --// the MVP shop tab (Price 0 = free for everyone)
 			AnimId = "138078331624374", --// MVP_InstantTransmission, published under the group
 			Keyframes = "MVP_InstantTransmission",
 			FieldOfView = 50,
@@ -2032,6 +2034,7 @@ Config.MvpCutscene = {
 		},
 		{
 			Name = "MVP Siu",
+			ShopName = "MVP Animation 4", ShopOrder = 4, Price = 2500, --// the MVP shop tab (Price 0 = free for everyone)
 			AnimId = "91179497532835",  --// MVP_Siu, published under the group
 			Keyframes = "MVP_Siu",      --// Studio fallback: a KeyframeSequence named
 			                            --// MVP_Siu (ServerStorage is fine)
@@ -2043,6 +2046,7 @@ Config.MvpCutscene = {
 		},
 		{
 			Name = "Victory Fist",
+			ShopName = "MVP Animation 1", ShopOrder = 1, Price = 0, --// the MVP shop tab (Price 0 = free for everyone)
 			AnimId = "73034451171222",
 			Keyframes = "MvpTest",
 			--// FILMED EXACTLY AS IN BLENDER (owner playtest, Oct 2026): the
@@ -2067,6 +2071,7 @@ Config.MvpCutscene = {
 			--// air, lands tilted on the floor - and the MVP takes a magician's
 			--// bow to it. 9 s (270 frames).
 			Name = "MVP Bow",
+			ShopName = "MVP Animation 5", ShopOrder = 5, Price = 3000, --// the MVP shop tab (Price 0 = free for everyone)
 			AnimId = "120267158434493",              --// <- paste the PUBLISHED id here (published under the group)
 			Keyframes = "MVP_Bow",    --// Studio test before publishing: put the MVP_Bow
 			                          --// KeyframeSequence in ServerStorage
@@ -4432,6 +4437,10 @@ Config.Profile = {
 		Daily = { Day = 0, Missions = {}, BonusClaimed = false, Streak = 0, LastBonusDay = 0 },
 		CrateKeys = 0,                -- free crate opens (the all-three daily bonus)
 		GroupRewardClass = "",        -- the class taken for joining the group ("" = not yet)
+		--// MVP CELEBRATIONS (shop MVP tab): owned slot Names + the one that plays
+		--// when this player is MVP. Price-0 slots count as owned for everyone.
+		OwnedMvp = {},                -- ["MVP Siu"] = true
+		EquippedMvp = "",             -- "" = the free default
 
 		--// ROBUX RECEIPTS (Oct 2026): the PurchaseId of every developer-product
 		--// receipt already granted, newest last, capped at
@@ -4509,12 +4518,14 @@ Config.Monetization = {
 			Id = 0,
 			Display = "VIP",
 			Description = "Gold name tag, VIP outfit, and +25% coins from every shift",
+			Bullets = { "Gold name", "VIP beside name", "+25% coins" }, --// shown as a list on the card
 			Emoji = "👑", Image = "rbxassetid://104590028335428", Order = 1,
 		},
 		DoubleCoins = {
 			Id = 0,
 			Display = "2x Coins",
 			Description = "Double the coins you take home from every shift",
+			Bullets = { "2x shift coins", "To your wallet" },
 			Emoji = "💰", Image = "rbxassetid://116464553241999", Order = 2,
 			Badge = "2x", -- a live sticker over the art (the badge art has no text)
 		},
@@ -4577,6 +4588,20 @@ Config.Monetization = {
 		OwnedStamp         = { Image = "rbxassetid://104033637720670" },  -- slams onto owned passes
 	},
 	FeaturedRibbonText = "BEST VALUE!",
+
+	--// THE MVP CELEBRATIONS TAB (Oct 2026, Claude Design Prompt F). The
+	--// animations themselves, their prices and shop names live in
+	--// Config.MvpCutscene.Animations (ShopName / ShopOrder / Price).
+	MvpArt = {
+		TabIconMvp      = { Image = "rbxassetid://117055720352081" },
+		Mvp_Card        = { Image = "rbxassetid://90561067858082" },
+		Mvp_Card_Owned  = { Image = "rbxassetid://122009272342506" },
+		Mvp_Stage_Floor = { Image = "rbxassetid://75703892565571" },
+		Mvp_Spotlight   = { Image = "rbxassetid://77722576657868" },
+		Play_Button     = { Image = "rbxassetid://71285781924007" },
+		Equipped_Ribbon = { Image = "rbxassetid://72554149408275" },
+		Mvp_Banner      = { Image = "rbxassetid://128899434575729" },
+	},
 
 	--// how many recent receipt ids the save remembers (the double-grant guard)
 	PurchaseIdCacheSize = 100,
