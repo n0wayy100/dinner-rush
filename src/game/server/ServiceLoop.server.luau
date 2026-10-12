@@ -51,6 +51,13 @@ assert(sharedFolder, "[Service] ReplicatedStorage.Shared not found")
 local Config = require(sharedFolder:WaitForChild("Config", 10))
 WALK_ANIMATION_ID = Config.Gestures.Walk or ""
 
+--// Robux game passes (ServerStorage.Shared.Purchases): the shift-end coin
+--// perks ask it who owns what. Missing = no perks, never a crash.
+local Purchases = nil
+pcall(function()
+	Purchases = require(game:GetService("ServerStorage"):WaitForChild("Shared", 20):WaitForChild("Purchases", 20))
+end)
+
 --// Persistence contract (ServerStorage.Shared): career counters + the
 --// shift-end deposit. Degrade over dying - a missing module must never
 --// take the whole service down, it just stops progress saving (loudly).
@@ -116,7 +123,7 @@ local function tutorialGateAllows(action)
 end
 
 -- DEBUG knobs (set to nil to use real Config values)
-local DEBUG_PREP_SECONDS = 0        -- TEMP (owner testing): no countdown, start at once. nil = Config.Shift.PrepTimeSeconds (20)
+local DEBUG_PREP_SECONDS = nil      -- real: Config.Shift.PrepTimeSeconds (20). Set 0 to skip the countdown in tests
 local DEBUG_SHIFT_SECONDS = nil     -- e.g. 180 for a 3-minute test shift
 local DEBUG_FORCE_FIRST_DASH = false -- first party to finish eating ALWAYS dashes,
                                      -- once per server - set false for real play
@@ -126,7 +133,7 @@ local debugFirstVIPDone = false
 local DEBUG_FORCE_FIRST_CRITIC = false -- first party to SPAWN is the critic, once
                                        -- per server - set false for real play
 local debugFirstCriticDone = false
-local DEBUG_FORCE_FIRST_RECOMMEND = true -- TEMP: first party CAN'T DECIDE (order
+local DEBUG_FORCE_FIRST_RECOMMEND = false -- (was a TEMP test): first party CAN'T DECIDE (order
                                          -- tablet recommend test) - set false for real play
 local debugFirstRecommendDone = false
 local VIP_TIP_MULT = 2.0
@@ -525,6 +532,7 @@ end
 ----------------------------------------------------------------
 local function addToTill(amount, why)
 	amount = math.floor(tonumber(amount) or 0)
+	if amount ~= amount or amount == math.huge then return end --// SECURITY: never NaN / infinity
 	if amount <= 0 then return end
 
 	shift.Till += amount
@@ -534,6 +542,7 @@ end
 --// Returns false and spends nothing when the till cannot cover it
 local function spendFromTill(amount, why)
 	amount = math.floor(tonumber(amount) or 0)
+	if amount ~= amount or amount == math.huge then return false end --// SECURITY: refuse NaN / infinity
 	if amount <= 0 then return true end
 
 	if shift.Till < amount then
@@ -1547,7 +1556,7 @@ local function startDoorBar(party)
 	if party.IsCritic then
 		base *= CRITIC.PatienceMult --// professionals take their time
 	end
-	party.BarTotal = base * diff.Patience
+	party.BarTotal = base * diff.Patience * Config.SmallCrewFor(#Players:GetPlayers()).Patience --// solo/duo ease
 	party.BarRemaining = party.BarTotal
 	party.BarKind = "door"
 	attachBar(party)
@@ -1560,7 +1569,7 @@ local function startSeatedBar(party)
 	if party.IsCritic then
 		base *= CRITIC.PatienceMult --// professionals take their time
 	end
-	party.BarTotal = base * diff.Patience
+	party.BarTotal = base * diff.Patience * Config.SmallCrewFor(#Players:GetPlayers()).Patience --// solo/duo ease
 	party.BarRemaining = party.BarTotal
 	party.BarKind = "seated"
 	attachBar(party)
@@ -2229,7 +2238,7 @@ local function collectPayment(tableId, collector, quiet)
 		creditStat(collector, "PaymentsCollected", 1) --// the Charmer's career
 	end
 
-	--// THE PLATE RULE: a plate is only free once its table has paid up.
+	--// backstop: plates normally clear when the meal ends (no-op then)
 	returnPlates(tableId, "payment collected")
 	print(("[Service] %s banked %d coins (Table %d)"):format(
 		collector and collector.Name or "The Helper", value, tableId))
@@ -2494,7 +2503,8 @@ local function createPayment(party, tableId)
 	--// newly seated party's billboards (which hang higher, at 7 studs)
 	local gui = Instance.new("BillboardGui")
 	gui.Name = "Payment"
-	gui.Size = UDim2.fromOffset(110, 34)
+	local k = tonumber(Config.Payment.SignScale) or 1
+	gui.Size = UDim2.fromOffset(110 * k, 34 * k)
 	gui.StudsOffsetWorldSpace = Vector3.new(0, 3.5, 0)
 	gui.AlwaysOnTop = true
 	gui.Parent = tablePart
@@ -2503,12 +2513,12 @@ local function createPayment(party, tableId)
 	layout.FillDirection = Enum.FillDirection.Horizontal
 	layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 	layout.VerticalAlignment = Enum.VerticalAlignment.Center
-	layout.Padding = UDim.new(0, 4)
+	layout.Padding = UDim.new(0, 4 * k)
 	layout.Parent = gui
 
 	--// No money art in the asset registry yet, so the icon is a mustard "$"
 	local sign = Instance.new("TextLabel")
-	sign.Size = UDim2.fromOffset(26, 30)
+	sign.Size = UDim2.fromOffset(26 * k, 30 * k)
 	sign.BackgroundTransparency = 1
 	sign.Font = Enum.Font.FredokaOne
 	sign.TextScaled = true
@@ -2520,7 +2530,7 @@ local function createPayment(party, tableId)
 	sign.Parent = gui
 
 	local amount = Instance.new("TextLabel")
-	amount.Size = UDim2.fromOffset(70, 30)
+	amount.Size = UDim2.fromOffset(70 * k, 30 * k)
 	amount.BackgroundTransparency = 1
 	amount.Font = Enum.Font.FredokaOne
 	amount.TextScaled = true
@@ -2874,6 +2884,9 @@ local function onPartyFinishedEating(party, tableId)
 	end
 
 	createPayment(party, tableId)
+	--// the meal is done: food and plates clear off the table now (owner,
+	--// Oct 11 2026), leaving only the money behind
+	returnPlates(tableId, "finished eating")
 	print(("[Service] Table %d finished eating%s. Served %d/%d")
 		:format(tableId, party.IsVIP and " VIP" or "",
 			shift.Satisfied, diff.Rewards.TargetParties))
@@ -4151,7 +4164,7 @@ end
 local function tidyVIPChance()
 	local base = diff.VIPChance
 	local T = Config.Tidiness
-	if not (T and T.Enabled) then return base end
+	if not (T and T.Enabled) or not Config.TidinessOn(DIFFICULTY) then return base end
 	local val = ShiftState:GetAttribute("Tidiness")
 	local max = ShiftState:GetAttribute("TidinessMax")
 	local frac = (val and max and max > 0) and (val / max) or 1
@@ -4289,6 +4302,29 @@ if not shiftReportRemote then
 	shiftReportRemote.Parent = remotes
 end
 
+--// THE EARLY RIDE HOME (owner, Oct 11 2026): a player who has closed the
+--// report and seen the end text asks to go back. Only honoured once the
+--// shift has ENDED, once per player; the worst a fake request can do is
+--// send its own sender to the lobby. The ReturnToLobbySeconds timer in
+--// endShift stays as the backstop for everyone else.
+local rideRequested = {}
+shiftReportRemote.OnServerEvent:Connect(function(player, action)
+	if action ~= "RideHome" or shift.State ~= "ENDED" or rideRequested[player] then return end
+	rideRequested[player] = true
+	if game:GetService("RunService"):IsStudio() then
+		print(("[Service] (Studio) would teleport %s back to the lobby now"):format(player.Name))
+		return
+	end
+	local ok, err = pcall(function()
+		game:GetService("TeleportService"):TeleportAsync(Config.Places.LobbyPlaceId, { player })
+	end)
+	if not ok then
+		rideRequested[player] = nil --// the backstop timer still covers them
+		warn(("[Service] early ride home failed for %s: %s"):format(player.Name, tostring(err)))
+	end
+end)
+Players.PlayerRemoving:Connect(function(player) rideRequested[player] = nil end)
+
 --// First matching threshold wins; a FAILED shift always stamps FailGrade
 --// "good" / "mid" / "bad" for one report stat (Config.ShiftReport.StatTones)
 local function statTone(value, good, mid)
@@ -4306,7 +4342,7 @@ local function computeGrade(success)
 		return R.FailGrade.Grade, R.FailGrade.Tone
 	end
 
-	local target = diff.Rewards.TargetParties
+	local target = math.max(1, math.floor(diff.Rewards.TargetParties * Config.SmallCrewFor(#Players:GetPlayers()).Target + 0.5)) --// solo/duo grade on a smaller target
 	for _, row in ipairs(R.GradeThresholds) do
 		local servedOk = not row.ServedFraction
 			or shift.Satisfied >= math.ceil(target * row.ServedFraction)
@@ -4413,15 +4449,16 @@ local function endShift(success, reason)
 	--// spent, divided evenly. This is the only moment private balances move.
 	local everyone = Players:GetPlayers()
 	local paidBy = {} --// [player] = their coin share (the SHIFT LOG records it)
+	local perkBy = {} --// [player] = their game pass coin bonus (0.25 = +25%), for the report
 	if #everyone > 0 and shift.Till > 0 then
 		--// THE GROUP SHARE (owner, Oct 5 2026 - Config.Money.PlayerShareFraction):
 		--// every player takes home that fraction of the WHOLE till instead of
 		--// an even slice, so bigger groups earn more each (the extra coins
-		--// are minted, nobody's share shrinks). Never below the even split,
-		--// so a Studio solo test still gets the full till.
+		--// are minted, nobody's share shrinks). Owner (Oct 11 2026): solo and
+		--// duo take the same fraction too - no even-split floor.
 		local even = math.floor(shift.Till / #everyone)
 		local fraction = tonumber(Config.Money.PlayerShareFraction)
-		local share = fraction and math.max(even, math.floor(shift.Till * fraction)) or even
+		local share = fraction and math.floor(shift.Till * fraction) or even
 		local remainder = share == even and (shift.Till - (share * #everyone)) or 0
 
 		--// THE MVP BONUS (owner, Oct 5 2026 - Config.Money.MvpBonusFraction):
@@ -4456,6 +4493,28 @@ local function endShift(success, reason)
 				local extra = math.floor(paid * (walletMult - 1))
 				paid += extra
 				print(("[Service] Overtime: %s earns +%d bonus coins"):format(member.Name, extra))
+			end
+			--// GAME PASS PERKS (VIP +25%, 2x Coins +100%): bonus coins on top of
+			--// this player's own share, minted - never taken from the team.
+			--// Ownership comes from Roblox via Purchases.OwnsPass (server-side,
+			--// fails closed); the bonuses ADD together.
+			if paid > 0 and Purchases then
+				local bonus = 0
+				for passKey, pass in pairs((Config.Monetization and Config.Monetization.GamePasses) or {}) do
+					local rate = tonumber(pass.CoinBonus) or 0
+					if rate > 0 then
+						local okOwn, owns = pcall(Purchases.OwnsPass, member, passKey)
+						if okOwn and owns then
+							bonus += rate
+						end
+					end
+				end
+				if bonus > 0 then
+					perkBy[member] = bonus
+					local extra = math.floor(paid * bonus)
+					paid += extra
+					print(("[Service] Pass perks: %s earns +%d coins (+%d%%)"):format(member.Name, extra, bonus * 100))
+				end
 			end
 			paidBy[member] = paid
 			awardCoins(member, paid)
@@ -4628,6 +4687,32 @@ local function endShift(success, reason)
 				Seconds = math.floor(shift.Elapsed),
 				When = os.time(),
 			})
+		end
+
+		--// YOUR COINS: each player's own take-home (string UserId keys so the
+		--// table survives the remote), with their game pass bonus percent.
+		--// Each client reads only its own entry.
+		--// THE STAT COLOURS (Config.ShiftReport.StatTones): the server judges
+		--// each row green / yellow / red, the client only paints it
+		local T = Config.ShiftReport.StatTones
+		if T then
+			local target = math.max(1, math.floor(diff.Rewards.TargetParties
+				* Config.SmallCrewFor(#Players:GetPlayers()).Target + 0.5))
+			local moneyBench = math.max(1, target * (T.Money.PerTargetParty or 30)
+				* (diff.Rewards.CoinMult or 1))
+			payload.Tones = {
+				Served = statTone(shift.Satisfied / target, T.Served.Good, T.Served.Mid),
+				Money = statTone((payload.Earned or 0) / moneyBench, T.Money.Good, T.Money.Mid),
+				Reputation = statTone(shift.Reputation, T.Reputation.Good, T.Reputation.Mid),
+			}
+		end
+
+		payload.YourCoins = {}
+		for member, paid in pairs(paidBy) do
+			payload.YourCoins[tostring(member.UserId)] = {
+				Coins = paid,
+				Bonus = math.floor((perkBy[member] or 0) * 100 + 0.5),
+			}
 		end
 
 		shiftReportRemote:FireAllClients("Show", payload)

@@ -2789,8 +2789,10 @@ RunService.Heartbeat:Connect(function(dt)
 	--// live-ignored) shrinks every gap so emergencies keep coming for testing.
 	local rapid = RunService:IsStudio() and Config.StudioRapidEvents == true
 	local gap = rapid and (Config.StudioRapidGapSeconds or 6) or nil
-	local firstAfter = gap or SCHEDULER.FirstEventAfterSeconds
-	local minGap = gap or SCHEDULER.MinGapSeconds
+	--// SOLO / DUO (Config.SmallCrew): emergencies come far less often
+	local crewGap = Config.SmallCrewFor and Config.SmallCrewFor(#Players:GetPlayers()).EventGap or 1
+	local firstAfter = gap or SCHEDULER.FirstEventAfterSeconds * crewGap
+	local minGap = gap or SCHEDULER.MinGapSeconds * crewGap
 	local rollInterval = gap or SCHEDULER.RollIntervalSeconds
 
 	if info.Elapsed < firstAfter then return end
@@ -2883,8 +2885,11 @@ task.spawn(function()
 				IsActive = function() return inspector.Active end,
 				--// owner spec: only in the MIDDLE phase (internal "Building" =
 				--// HUD "BUSY"), and only once per shift.
+				--// HARD only with the tidiness it judges (Interactions.Tidiness)
 				Eligible = function()
+					local _, dname = difficultyBlock()
 					return not inspectorDone and shiftInfo().Phase == "Building"
+						and Config.TidinessOn(dname)
 				end,
 			})
 		else

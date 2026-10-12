@@ -196,6 +196,8 @@ local function giveVacuumTo(player)
 	print(("[Tidiness] %s grabbed the vacuum"):format(player.Name))
 end
 
+local vacuumPrompt = nil --// the Take prompt, off on difficulties without tidiness
+
 local function setupVacuumMount()
 	local mount = nil
 	for _, inst in ipairs(CollectionService:GetTagged("VacuumMount")) do
@@ -212,6 +214,7 @@ local function setupVacuumMount()
 	end
 	local prompt = Instance.new("ProximityPrompt")
 	prompt.Name = "TakeVacuum"
+	vacuumPrompt = prompt
 	prompt.ActionText = "Take"
 	prompt.ObjectText = "Vacuum"
 	prompt.HoldDuration = (Config.Kitchen and Config.Kitchen.PickupHoldSeconds) or 0
@@ -1152,6 +1155,16 @@ local function startShift()
 
 	--// the tutorial freezes the shift to teach one loop - never dirty it there
 	if tutorialMode() then return end
+
+	--// HARD only (owner, Oct 11 2026 - Interactions.Tidiness): elsewhere the
+	--// challenge starts already over, so the bar hides and no grime spawns
+	local tidyOn = Config.TidinessOn(difficultyName())
+	if vacuumPrompt then vacuumPrompt.Enabled = tidyOn end
+	if not tidyOn then
+		tidinessEnded = true
+		publish()
+		return
+	end
 
 	--// passive ambient drip (stops once the inspection ends the challenge)
 	task.spawn(function()

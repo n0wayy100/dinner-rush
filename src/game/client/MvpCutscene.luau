@@ -933,6 +933,14 @@ function MvpCutscene.Run(payload, options)
 		return
 	end
 
+	--// OWNER (Oct 11 2026): the pose screen ends BEFORE the awards and the
+	--// report open - fade out now and hand back the normal camera.
+	--// Config.MvpCutscene.HoldBehindUI = true brings the old hold back.
+	if settings.HoldBehindUI ~= true then
+		release()
+		return
+	end
+
 	--// THE HOLD. The frozen shot sits behind the ceremony and the report
 	--// until the server's ride home teleports everyone to the lobby. Studio
 	--// never teleports, so it lets go on the same clock; a live server gives

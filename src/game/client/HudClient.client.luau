@@ -852,6 +852,13 @@ end
 
 local lastState
 local dumpedGeometry = false
+--// The end text shows only AFTER the report closes: ShiftReportClient stamps
+--// playerGui.EndTextAt (os.clock) on dismiss, and the text holds for
+--// Config.Shift.EndTextSeconds from then (owner, Oct 11 2026)
+local function endTextShowing()
+	local at = playerGui:GetAttribute("EndTextAt")
+	return type(at) == "number" and os.clock() - at < (Config.Shift.EndTextSeconds or 2)
+end
 
 --// Walks from a label up to the ScreenGui reporting what each ancestor does
 --// to visibility. A zero AbsoluteSize, an off-screen AbsolutePosition, or a
@@ -923,9 +930,10 @@ local function refresh()
 		introValue.Visible = false
 		setHudVisible(false)
 	elseif state == "ENDED" then
-		intro.Enabled = true
-		introTitle.Visible = true
-		introValue.Visible = true
+		local showEnd = endTextShowing()
+		intro.Enabled = showEnd
+		introTitle.Visible = showEnd
+		introValue.Visible = showEnd
 		introTitle.Text = ShiftState:GetAttribute("EndText") or "SHIFT OVER"
 		--// The end-of-shift reveal: just the count, no target framing
 		introValue.Text = ("%d parties served"):format(

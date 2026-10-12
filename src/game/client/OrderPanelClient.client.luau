@@ -43,7 +43,9 @@ local VIP_GOLD = Color3.fromRGB(255, 200, 60)
 local BAR_BACK = Color3.fromRGB(40, 40, 40)
 local WHITE = Color3.fromRGB(255, 255, 255)
 
-local ROW_HEIGHT = 42
+local ICON = PANEL.IconPixels or 20 --// food icon size on a ticket
+local ROW_HEIGHT = ICON + 22 --// icon line + the patience bar under it
+local TOP_Y = 3 + (ICON - 18) / 2 --// tag + star centred on the icon line
 
 local function patienceColor(fraction)
 	if fraction > 0.5 then
@@ -82,6 +84,10 @@ root.BackgroundTransparency = 1
 root.AutomaticSize = Enum.AutomaticSize.Y
 root.Visible = false
 root.Parent = gui
+
+local rootScale = Instance.new("UIScale")
+rootScale.Scale = PANEL.Scale or 1
+rootScale.Parent = root
 
 local layout = Instance.new("UIListLayout")
 layout.SortOrder = Enum.SortOrder.LayoutOrder
@@ -165,7 +171,7 @@ local function buildRow(order, index)
 	--// #N · T2 chip
 	local tag = Instance.new("TextLabel")
 	tag.AnchorPoint = Vector2.new(0, 0)
-	tag.Position = UDim2.fromOffset(8, 4)
+	tag.Position = UDim2.fromOffset(8, TOP_Y)
 	tag.Size = UDim2.fromOffset(58, 18)
 	tag.BackgroundTransparency = 1
 	tag.Font = Enum.Font.FredokaOne
@@ -182,7 +188,7 @@ local function buildRow(order, index)
 	if order.VIP then
 		local star = Instance.new("TextLabel")
 		star.AnchorPoint = Vector2.new(0, 0)
-		star.Position = UDim2.fromOffset(66, 3)
+		star.Position = UDim2.fromOffset(66, TOP_Y)
 		star.Size = UDim2.fromOffset(18, 18)
 		star.BackgroundTransparency = 1
 		star.Font = Enum.Font.FredokaOne
@@ -196,7 +202,7 @@ local function buildRow(order, index)
 	local icons = Instance.new("Frame")
 	icons.AnchorPoint = Vector2.new(1, 0)
 	icons.Position = UDim2.new(1, -8, 0, 3)
-	icons.Size = UDim2.fromOffset(120, 20)
+	icons.Size = UDim2.fromOffset(150, ICON)
 	icons.BackgroundTransparency = 1
 	icons.Parent = row
 	local iconsLayout = Instance.new("UIListLayout")
@@ -210,7 +216,7 @@ local function buildRow(order, index)
 		local icon = dishIcon(dishName)
 		if icon then
 			local img = Instance.new("ImageLabel")
-			img.Size = UDim2.fromOffset(20, 20)
+			img.Size = UDim2.fromOffset(ICON, ICON)
 			img.BackgroundTransparency = 1
 			img.ScaleType = Enum.ScaleType.Fit
 			img.Image = icon
@@ -218,7 +224,7 @@ local function buildRow(order, index)
 			img.Parent = icons
 		else
 			local txt = Instance.new("TextLabel")
-			txt.Size = UDim2.fromOffset(40, 20)
+			txt.Size = UDim2.fromOffset(40, ICON)
 			txt.BackgroundTransparency = 1
 			txt.Font = Enum.Font.FredokaOne
 			txt.TextScaled = true
@@ -255,8 +261,8 @@ local function buildRow(order, index)
 	--// low-patience ❗ flag
 	if fraction <= (PANEL.LowPatienceBelow or 0.25) and not order.Walkout then
 		local bang = Instance.new("TextLabel")
-		bang.AnchorPoint = Vector2.new(1, 0)
-		bang.Position = UDim2.new(1, -6, 0, 22)
+		bang.AnchorPoint = Vector2.new(0, 0)
+		bang.Position = UDim2.fromOffset(order.VIP and 86 or 66, TOP_Y) --// beside the tag, clear of the icons
 		bang.Size = UDim2.fromOffset(18, 18)
 		bang.BackgroundTransparency = 1
 		bang.Font = Enum.Font.FredokaOne

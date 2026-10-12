@@ -10,7 +10,7 @@
 	  Extinguisher, Plunger, Broom, Vacuum, CautionCone
 	A model that is not there keeps the old code-built look - nothing breaks.
 	Models live in the place (like ServerStorage.DishMeshes), not loaded by
-	id: InsertService is a backdoor primitive the security scan flags, and a
+	id: runtime asset insertion is a backdoor primitive the security scan flags, and a
 	runtime load could fail mid-shift.
 
 	A model may carry a small part named "Grip" (from Blender): that is where

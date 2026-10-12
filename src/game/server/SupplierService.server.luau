@@ -341,6 +341,11 @@ supplierRemote.OnServerEvent:Connect(function(player, action, payload)
 	local order, crates = {}, 0
 	for _, name in ipairs(ingredientNames()) do
 		local wanted = tonumber(payload[name]) or 0
+		--// SECURITY: a client can send NaN / infinity, which slips past every
+		--// comparison and once poisoned the shared till. Finite numbers only.
+		if wanted ~= wanted or wanted == math.huge or wanted == -math.huge then
+			wanted = 0
+		end
 		wanted = math.clamp(math.floor(wanted), 0, SUPPLIER.MaxCratesPerIngredient)
 		order[name] = wanted
 		crates += wanted

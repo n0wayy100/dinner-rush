@@ -31,6 +31,7 @@ local playerGui = player:WaitForChild("PlayerGui")
 local reportRemote = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("ShiftReportRemote")
 local MvpCutscene = require(script.Parent:WaitForChild("MvpCutscene"))
 local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
+local UIKit = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("UIKit"))
 local SfxLocal = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("SfxLocal"))
 local SCORE = Config.Score
 
@@ -52,6 +53,7 @@ local TONE_COLOR = {
 ----------------------------------------------------------------
 local gui = Instance.new("ScreenGui")
 gui.Name = "ShiftReport_UI"
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling --// art layers sit under their text
 gui.ResetOnSpawn = false
 gui.IgnoreGuiInset = true
 gui.DisplayOrder = 60 --// above the HUD's centre overlay (50)
@@ -177,6 +179,118 @@ receipts.Visible = false
 receipts.Parent = panel
 
 ----------------------------------------------------------------
+-- THE ART SKIN (owner, Oct 11 2026 - Config.ShiftReport.Art). The
+-- clipboard shows square (its metal clip cannot stretch), so with art
+-- the panel locks to 1:1 and everything re-lays out on the paper. Any
+-- blank Image keeps that piece code-drawn.
+----------------------------------------------------------------
+local REPORT = Config.ShiftReport
+local kit = UIKit.artKit(REPORT.Art or {})
+local skinned = kit.skin(panel, "Report_Panel")
+local STAMP_SIZE = UDim2.fromScale(0.55, 0.16)
+local stampArt = nil --// the tinted Stamp_Frame image, when there is one
+
+if skinned then
+	panel.Size = UDim2.fromScale(0.6, 0.86)
+	local square = Instance.new("UIAspectRatioConstraint")
+	square.AspectRatio = 1
+	square.Parent = panel
+
+	--// the ribbon sits just under the clip, the title rides on it
+	local ribbon = kit.image(panel, "Report_Header", "Header")
+	if ribbon then
+		ribbon.AnchorPoint = Vector2.new(0.5, 0)
+		ribbon.Position = UDim2.fromScale(0.5, 0.165)
+		ribbon.Size = UDim2.fromScale(0.8, 0.15)
+		title.Parent = ribbon
+		title.AnchorPoint = Vector2.new(0.5, 0.5)
+		title.Position = UDim2.fromScale(0.5, 0.47)
+		title.Size = UDim2.fromScale(0.6, 0.5)
+		title.TextColor3 = Color3.new(1, 1, 1)
+		local titleStroke = Instance.new("UIStroke")
+		titleStroke.Thickness = 2.5
+		titleStroke.Color = CHOC
+		titleStroke.Parent = title
+	else
+		title.Position = UDim2.fromScale(0.5, 0.17)
+	end
+
+	--// the X sits on the clipboard's top-right wood corner
+	closeBtn.AnchorPoint = Vector2.new(0.5, 0.5)
+	closeBtn.Position = UDim2.fromScale(0.925, 0.075)
+	closeBtn.Size = UDim2.fromScale(0.1, 0.1)
+
+	rowsHolder.Position = UDim2.fromScale(0.5, 0.32)
+	rowsHolder.Size = UDim2.fromScale(0.8, 0.4)
+
+	stamp.Position = UDim2.fromScale(0.5, 0.79)
+	STAMP_SIZE = UDim2.fromScale(0.62, 0.17)
+	receipts.Position = UDim2.fromScale(0.5, 0.875)
+	receipts.Size = UDim2.fromScale(0.8, 0.055)
+end
+
+if kit.skin(closeBtn, "Close_Button") then
+	closeBtn.Text = ""
+	local round = Instance.new("UIAspectRatioConstraint")
+	round.AspectRatio = 1
+	round.Parent = closeBtn
+end
+
+--// The stamp frame is WHITE art: tinted to the verdict, and the word is
+--// painted in that colour with a dark outline instead of white on a block
+stampArt = kit.image(stamp, "Stamp_Frame", "Art")
+if stampArt then
+	stampArt.Size = UDim2.fromScale(1, 1)
+	stampArt.ZIndex = 0
+	stamp.BackgroundTransparency = 1
+	stampCorner:Destroy()
+	stampStroke.Thickness = 2.5
+	stampStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual --// outlines the letters now
+	stampPad.PaddingLeft = UDim.new(0.12, 0)
+	stampPad.PaddingRight = UDim.new(0.12, 0)
+	stampPad.PaddingTop = UDim.new(0.2, 0)
+	stampPad.PaddingBottom = UDim.new(0.2, 0)
+	--// the padding would shrink the art too: undo it for the image
+	stampArt.Position = UDim2.new(-0.12 / 0.76, 0, -0.2 / 0.6, 0)
+	stampArt.Size = UDim2.fromScale(1 / 0.76, 1 / 0.6)
+end
+
+--// the dust puff that bursts under the stamp as it lands (4x4 flipbook)
+local stampDust = kit.image(panel, "Stamp_Dust", "StampDust")
+if stampDust then
+	stampDust.AnchorPoint = Vector2.new(0.5, 0.5)
+	stampDust.Size = UDim2.fromScale(0.75, 0.45)
+	stampDust.ImageRectSize = Vector2.new(256, 256)
+	stampDust.Visible = false
+	stampDust.ZIndex = 0
+end
+
+local function playStampDust()
+	if not stampDust then return end
+	stampDust.Position = stamp.Position
+	stampDust.Visible = true
+	task.spawn(function()
+		local frameTime = (REPORT.StampDustSeconds or 0.5) / 16
+		for frame = 0, 15 do
+			stampDust.ImageRectOffset = Vector2.new((frame % 4) * 256, math.floor(frame / 4) * 256)
+			task.wait(frameTime)
+		end
+		stampDust.Visible = false
+	end)
+end
+
+--// paint the verdict colour onto the stamp, art or code-drawn
+local function paintStamp(color)
+	if stampArt then
+		stampArt.ImageColor3 = color
+		stamp.TextColor3 = color
+		stampStroke.Color = CHOC
+	else
+		stamp.BackgroundColor3 = color
+	end
+end
+
+----------------------------------------------------------------
 -- Rows
 --
 -- THREE STATS, SLAPPED ON (owner, Oct 2026): parties served, money
@@ -184,7 +298,6 @@ receipts.Parent = panel
 -- from big to its real size with a thud and a jolt of the panel, then the
 -- verdict stamp drops hardest of all.
 ----------------------------------------------------------------
-local STAMP_SIZE = UDim2.fromScale(0.55, 0.16)
 local PANEL_HOME = UDim2.fromScale(0.5, 0.47)
 
 --// The server's judgement, painted as each row's bar colour. The yellow
@@ -193,7 +306,11 @@ local STAT_COLOR = {
 	good = BASIL,
 	mid = Color3.fromRGB(236, 162, 24),
 	bad = TOMATO,
+	coins = BASIL, --// your own take-home (gold pill art when skinned)
 }
+
+--// which pill art each tone wears
+local ROW_ART = { good = "Row_Good", mid = "Row_Mid", bad = "Row_Bad", coins = "Row_Coins" }
 
 local function clearRows()
 	for _, child in ipairs(rowsHolder:GetChildren()) do
@@ -207,10 +324,10 @@ end
 --// the verdict stamp's look in miniature (owner, Oct 2026). The layout
 --// only ever sees the fixed-size SLOT; the card inside it is what grows
 --// and shrinks, so a slapping row never shoves its neighbours around.
-local function buildRow(order, labelText, valueText, tone)
+local function buildRow(order, labelText, valueText, tone, height, iconSlot)
 	local slot = Instance.new("Frame")
 	slot.Name = "Row" .. order
-	slot.Size = UDim2.fromScale(1, 0.29)
+	slot.Size = UDim2.fromScale(1, height or 0.29)
 	slot.BackgroundTransparency = 1
 	slot.LayoutOrder = order
 	slot.Parent = rowsHolder
@@ -250,6 +367,19 @@ local function buildRow(order, labelText, valueText, tone)
 	border.Color = CHOC
 	border.Parent = bar
 
+	--// THE ART: the tone's pill, and the stat's sticker on the left end
+	local pill = ROW_ART[tone] and kit.skin(bar, ROW_ART[tone])
+	local icon = iconSlot and kit.image(card, iconSlot, "Icon")
+	if icon then
+		icon.AnchorPoint = Vector2.new(0, 0.5)
+		icon.Position = UDim2.fromScale(0, 0.5)
+		icon.Size = UDim2.fromScale(1, 1)
+		icon.ZIndex = 2
+		local round = Instance.new("UIAspectRatioConstraint")
+		round.AspectRatio = 1
+		round.Parent = icon
+	end
+
 	--// White letters with a thin dark outline, readable on every colour
 	local function barText(text, alignment, anchorX, positionX, width)
 		local label = Instance.new("TextLabel")
@@ -269,8 +399,11 @@ local function buildRow(order, labelText, valueText, tone)
 		letters.Color = CHOC
 		letters.Parent = label
 	end
-	barText(labelText, Enum.TextXAlignment.Left, 0, 0.04, 0.6)
-	barText(valueText, Enum.TextXAlignment.Right, 1, 0.96, 0.32)
+	--// text clears the sticker and the pill's round ends
+	local left = icon and 0.17 or (pill and 0.07 or 0.04)
+	local right = pill and 0.93 or 0.96
+	barText(labelText, Enum.TextXAlignment.Left, 0, left, 0.58 - (left - 0.04))
+	barText(valueText, Enum.TextXAlignment.Right, 1, right, 0.32)
 
 	return { Card = card, Scale = scale }
 end
@@ -321,20 +454,25 @@ local function dropStamp()
 	stamp.Size = STAMP_SIZE
 	stamp.Rotation = -24
 	stampScale.Scale = 3.4
-	stamp.BackgroundTransparency = 0.5
+	stamp.BackgroundTransparency = stampArt and 1 or 0.5 --// the art IS the stamp's body
 	stamp.TextTransparency = 0.5
 	stampStroke.Transparency = 0.5
+	if stampArt then stampArt.ImageTransparency = 0.5 end
 	stamp.Visible = true
 
 	local fall = TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
 	TweenService:Create(stamp, fall,
-		{ Rotation = -8, BackgroundTransparency = 0, TextTransparency = 0 }):Play()
+		{ Rotation = -8, BackgroundTransparency = stampArt and 1 or 0, TextTransparency = 0 }):Play()
 	TweenService:Create(stampStroke, fall, { Transparency = 0 }):Play()
+	if stampArt then
+		TweenService:Create(stampArt, fall, { ImageTransparency = 0 }):Play()
+	end
 	local land = TweenService:Create(stampScale, fall, { Scale = 1 })
 	land:Play()
 	land.Completed:Wait()
 
 	SfxLocal.Play("ReportStamp")
+	playStampDust()
 	shake(16, 0.35)
 	stampScale.Scale = 0.86
 	TweenService:Create(stampScale, TweenInfo.new(0.32, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
@@ -347,19 +485,35 @@ end
 local seq = 0
 local hiddenIntro = nil --// HudClient's centre overlay, restored on dismiss
 
+local rideAsked = false --// once per server: this client asked for the ride home
+
 local function dismiss()
 	seq += 1
+	local wasOpen = gui.Enabled
 	gui.Enabled = false
 	if hiddenIntro and hiddenIntro.Parent then
 		hiddenIntro.Enabled = true
 	end
 	hiddenIntro = nil
+
+	--// THE RIDE HOME (owner, Oct 11 2026): the report closing starts the
+	--// end text (HudClient shows it for EndTextSeconds from EndTextAt),
+	--// then RideHomeAfterTextSeconds later we ask the server to send us home
+	if wasOpen and not rideAsked then
+		rideAsked = true
+		playerGui:SetAttribute("EndTextAt", os.clock())
+		local wait = (Config.Shift.EndTextSeconds or 2) + (Config.Shift.RideHomeAfterTextSeconds or 5)
+		task.delay(wait, function()
+			reportRemote:FireServer("RideHome")
+		end)
+	end
 end
 
 closeBtn.Activated:Connect(dismiss)
 
 local function showReport(payload)
 	seq += 1
+	rideAsked = false --// a new report earns a new ride (Studio re-tests)
 	local mySeq = seq
 
 	clearRows()
@@ -379,11 +533,24 @@ local function showReport(payload)
 	--// server's verdict. Still the plain count with no "/ target" -
 	--// the colour does the judging now.
 	local tones = type(payload.Tones) == "table" and payload.Tones or {}
+	--// YOUR COINS: the 4th row, this player's own take-home with their
+	--// game pass bonus showing (owner, Oct 2026). Four rows share the
+	--// holder, so each slot shrinks to fit.
+	local mine = type(payload.YourCoins) == "table" and payload.YourCoins[tostring(player.UserId)] or nil
+	local height = mine and 0.22 or 0.29
 	local rows = {
-		buildRow(1, "Parties served", tostring(payload.Served or 0), tones.Served),
-		buildRow(2, "Money earned", "$" .. tostring(payload.Earned or 0), tones.Money),
-		buildRow(3, "Final reputation", tostring(payload.Reputation or 0), tones.Reputation),
+		buildRow(1, "Parties served", tostring(payload.Served or 0), tones.Served, height, "Icon_Served"),
+		buildRow(2, "Money earned", "$" .. tostring(payload.Earned or 0), tones.Money, height, "Icon_Money"),
+		buildRow(3, "Final reputation", tostring(payload.Reputation or 0), tones.Reputation, height, "Icon_Rep"),
 	}
+	if type(mine) == "table" then
+		local bonus = tonumber(mine.Bonus) or 0
+		local value = "$" .. tostring(tonumber(mine.Coins) or 0)
+		if bonus > 0 then
+			value ..= " (+" .. bonus .. "%)"
+		end
+		table.insert(rows, buildRow(4, "Your coins", value, "coins", height, "Icon_Coins"))
+	end
 
 	gui.Enabled = true
 
@@ -401,7 +568,7 @@ local function showReport(payload)
 
 		--// The stamp drops onto the board
 		stamp.Text = payload.Grade or "?"
-		stamp.BackgroundColor3 = TONE_COLOR[payload.GradeTone] or TOMATO
+		paintStamp(TONE_COLOR[payload.GradeTone] or TOMATO)
 		dropStamp()
 
 		--// The receipts
@@ -502,6 +669,132 @@ local function avatarUrl(userId)
 	return ("rbxthumb://type=AvatarHeadShot&id=%d&w=150&h=150"):format(userId)
 end
 
+----------------------------------------------------------------
+-- THE CEREMONY ART SKIN (owner, Oct 11 2026 - Config.ShiftReport
+-- .AwardsArt). Each piece falls back to the code-drawn look when blank.
+----------------------------------------------------------------
+awardsGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling --// art layers sit under their text
+local awardKit = UIKit.artKit(REPORT.AwardsArt or {})
+local CARD_ASPECT = 512 / 768
+
+--// the spotlight stage: slightly see-through so the frozen MVP shot stays
+local backdrop = awardKit.image(awardsGui, "Crew_Backdrop", "Backdrop")
+if backdrop then
+	backdrop.Size = UDim2.fromScale(1, 1)
+	backdrop.ScaleType = Enum.ScaleType.Crop
+	backdrop.ImageTransparency = REPORT.BackdropTransparency or 0.2
+	backdrop.ZIndex = 0
+	dim.BackgroundTransparency = 1 --// the stage is already dark
+end
+
+--// the header rides on the ribbon (the ribbon has its own stars)
+local headerRibbon = awardKit.image(awardsGui, "Crew_TitleRibbon", "HeaderRibbon")
+if headerRibbon then
+	headerRibbon.AnchorPoint = Vector2.new(0.5, 0)
+	headerRibbon.Position = UDim2.fromScale(0.5, 0.05)
+	headerRibbon.Size = UDim2.fromScale(0.62, 0.16)
+	awardsHeader.Parent = headerRibbon
+	awardsHeader.AnchorPoint = Vector2.new(0.5, 0.5)
+	awardsHeader.Position = UDim2.fromScale(0.5, 0.47)
+	awardsHeader.Size = UDim2.fromScale(0.58, 0.48)
+	awardsHeader.TextColor3 = Color3.new(1, 1, 1)
+	awardsHeader.TextStrokeTransparency = 1
+	local headerStroke = Instance.new("UIStroke")
+	headerStroke.Thickness = 2.5
+	headerStroke.Color = CHOC
+	headerStroke.Parent = awardsHeader
+end
+
+local function setHeader(text)
+	--// the ribbon already wears stars, so drop the emoji ones on it
+	awardsHeader.Text = headerRibbon and (text:gsub("⭐%s*", ""):gsub("%s*$", "")) or text
+end
+
+--// the "tap to continue" pill (cursor on its left, words on its right)
+local tapPill = awardKit.image(awardsGui, "Tap_Hint", "TapHint")
+if tapPill then
+	tapPill.AnchorPoint = Vector2.new(0.5, 1)
+	tapPill.Position = UDim2.fromScale(0.5, 0.97)
+	tapPill.Size = UDim2.fromScale(0.24, 0.07)
+	local pillShape = Instance.new("UIAspectRatioConstraint")
+	pillShape.AspectRatio = 4
+	pillShape.Parent = tapPill
+	tapHint.Parent = tapPill
+	tapHint.AnchorPoint = Vector2.new(0, 0.5)
+	tapHint.Position = UDim2.fromScale(0.24, 0.5)
+	tapHint.Size = UDim2.fromScale(0.68, 0.5)
+	tapHint.TextColor3 = CHOC
+	tapHint.TextTransparency = 0
+end
+
+--// one confetti burst (4x4 flipbook) over `target`, then it cleans up
+local function playConfetti(target, sizeMult)
+	local id = awardKit.id("Confetti_Sheet")
+	if not id or not target then return end
+	local burst = Instance.new("ImageLabel")
+	burst.Name = "Confetti"
+	burst.BackgroundTransparency = 1
+	burst.Image = id
+	burst.ImageRectSize = Vector2.new(256, 256)
+	burst.AnchorPoint = Vector2.new(0.5, 0.5)
+	burst.Position = UDim2.fromScale(0.5, 0.4)
+	burst.Size = UDim2.fromScale(sizeMult or 1.6, sizeMult or 1.6)
+	burst.ZIndex = 5
+	local square = Instance.new("UIAspectRatioConstraint")
+	square.AspectRatio = 1
+	square.DominantAxis = Enum.DominantAxis.Width
+	square.Parent = burst
+	burst.Parent = target
+	task.spawn(function()
+		local frameTime = (REPORT.ConfettiSeconds or 0.8) / 16
+		for frame = 0, 15 do
+			if not burst.Parent then return end
+			burst.ImageRectOffset = Vector2.new((frame % 4) * 256, math.floor(frame / 4) * 256)
+			task.wait(frameTime)
+		end
+		burst:Destroy()
+	end)
+end
+
+--// Re-lay a ticket card's pieces onto the art: avatar inside the ring,
+--// then name, emoji on the title badge, title above the scalloped edge
+local function layOutTicket(card, avatar, nameLabel, emojiLabel, titleLabel)
+	local shape = Instance.new("UIAspectRatioConstraint")
+	shape.AspectRatio = CARD_ASPECT
+	shape.Parent = card
+
+	avatar.AnchorPoint = Vector2.new(0.5, 0.5)
+	avatar.Position = UDim2.fromScale(0.5, 0.225)
+	avatar.Size = UDim2.fromScale(0.36, 0.36)
+	avatar.BackgroundTransparency = 1
+	local ring = avatar:FindFirstChildOfClass("UIStroke")
+	if ring then ring:Destroy() end --// the art draws the ring
+
+	nameLabel.Position = UDim2.fromScale(0.5, 0.42)
+	nameLabel.Size = UDim2.fromScale(0.86, 0.1)
+
+	if emojiLabel then
+		local badge = awardKit.image(card, "Title_Badge", "TitleBadge")
+		if badge then
+			badge.AnchorPoint = Vector2.new(0.5, 0.5)
+			badge.Position = UDim2.fromScale(0.5, 0.635)
+			badge.Size = UDim2.fromScale(0.34, 0.34)
+			local round = Instance.new("UIAspectRatioConstraint")
+			round.AspectRatio = 1
+			round.Parent = badge
+			emojiLabel.Parent = badge
+			emojiLabel.AnchorPoint = Vector2.new(0.5, 0.5)
+			emojiLabel.Position = UDim2.fromScale(0.5, 0.5)
+			emojiLabel.Size = UDim2.fromScale(0.6, 0.6)
+		else
+			emojiLabel.Position = UDim2.fromScale(0.5, 0.54)
+		end
+	end
+
+	titleLabel.Position = UDim2.fromScale(0.5, 0.77)
+	titleLabel.Size = UDim2.fromScale(0.86, 0.11)
+end
+
 --// One title card: avatar in a circle, name, emoji, title
 local function buildTitleCard(order, entry)
 	local card = Instance.new("Frame")
@@ -581,7 +874,11 @@ local function buildTitleCard(order, entry)
 	titleText.Text = entry.Title or ""
 	titleText.Parent = card
 
-	return scale
+	if awardKit.skin(card, "Crew_Card") then
+		layOutTicket(card, avatar, name, emoji, titleText)
+	end
+
+	return scale, card
 end
 
 --// The MVP screen: crown, big avatar, name, receipt lines
@@ -675,6 +972,65 @@ mvpReceipts.TextTransparency = 0.2
 mvpReceipts.Text = ""
 mvpReceipts.Parent = mvpFrame
 
+--// THE MVP ART: the gold ticket, a crown that drops onto the avatar ring,
+--// and slow golden rays turning behind the card
+local mvpCrownArt = nil
+local mvpRays = nil
+local CROWN_HOME = UDim2.fromScale(0.5, 0.07)
+if awardKit.skin(mvpFrame, "Crew_Card_MVP") then
+	mvpFrame.Size = UDim2.fromScale(0.34, 0.72)
+	layOutTicket(mvpFrame, mvpAvatar, mvpName, nil, mvpReceipts)
+	--// the ticket's text column: banner, name, then the receipts
+	mvpBanner.Position = UDim2.fromScale(0.5, 0.4)
+	mvpBanner.Size = UDim2.fromScale(0.7, 0.1)
+	mvpName.Position = UDim2.fromScale(0.5, 0.5)
+	mvpName.Size = UDim2.fromScale(0.86, 0.09)
+	mvpReceipts.Position = UDim2.fromScale(0.5, 0.61)
+	mvpReceipts.Size = UDim2.fromScale(0.82, 0.28)
+
+	mvpCrownArt = awardKit.image(mvpFrame, "MVP_Crown", "CrownArt")
+	if mvpCrownArt then
+		crown.Visible = false
+		mvpCrownArt.AnchorPoint = Vector2.new(0.5, 0.5)
+		mvpCrownArt.Position = CROWN_HOME
+		mvpCrownArt.Size = UDim2.fromScale(0.4, 0.4)
+		mvpCrownArt.Rotation = -10
+		mvpCrownArt.ZIndex = 4
+		local square = Instance.new("UIAspectRatioConstraint")
+		square.AspectRatio = 1
+		square.DominantAxis = Enum.DominantAxis.Width
+		square.Parent = mvpCrownArt
+	end
+end
+
+mvpRays = awardKit.image(awardsGui, "MVP_Rays", "MvpRays")
+if mvpRays then
+	mvpRays.AnchorPoint = Vector2.new(0.5, 0.5)
+	mvpRays.Position = mvpFrame.Position
+	mvpRays.Size = UDim2.fromScale(1.1, 1.1)
+	mvpRays.ZIndex = 1
+	mvpFrame.ZIndex = 2 --// the card over its rays
+	mvpRays.Visible = false
+	local square = Instance.new("UIAspectRatioConstraint")
+	square.AspectRatio = 1
+	square.DominantAxis = Enum.DominantAxis.Height
+	square.Parent = mvpRays
+	TweenService:Create(mvpRays,
+		TweenInfo.new(REPORT.RaysSpinSeconds or 14, Enum.EasingStyle.Linear, Enum.EasingDirection.In, -1),
+		{ Rotation = 360 }):Play()
+end
+
+--// the crown falls from above the card and lands on the ring with a bounce
+local function dropMvpCrown()
+	if not mvpCrownArt then return end
+	mvpCrownArt.Position = CROWN_HOME - UDim2.fromScale(0, 0.45)
+	mvpCrownArt.Rotation = -40
+	task.delay(0.35, function()
+		TweenService:Create(mvpCrownArt, TweenInfo.new(0.5, Enum.EasingStyle.Bounce, Enum.EasingDirection.Out),
+			{ Position = CROWN_HOME, Rotation = -10 }):Play()
+	end)
+end
+
 local ceremonySeq = 0
 local ceremonyTapped = false
 
@@ -694,6 +1050,7 @@ end
 local function endCeremony()
 	awardsGui.Enabled = false
 	mvpFrame.Visible = false
+	if mvpRays then mvpRays.Visible = false end
 end
 
 local function runCeremony(awards, done)
@@ -714,19 +1071,23 @@ local function runCeremony(awards, done)
 	end
 	mvpFrame.Visible = false
 	cardsHolder.Visible = true
-	awardsHeader.Text = "⭐ TONIGHT'S CREW ⭐"
+	if mvpRays then mvpRays.Visible = false end
+	setHeader("⭐ TONIGHT'S CREW ⭐")
 
-	local scales = {}
+	local scales, cards = {}, {}
 	for order, entry in ipairs(awards.Players) do
-		table.insert(scales, buildTitleCard(order, entry))
+		local scale, card = buildTitleCard(order, entry)
+		table.insert(scales, scale)
+		table.insert(cards, card)
 	end
 
 	awardsGui.Enabled = true
 
 	task.spawn(function()
 		--// Phase 1: the crew, one card at a time (a tap deals the rest)
-		for _, scale in ipairs(scales) do
+		for index, scale in ipairs(scales) do
 			if ceremonySeq ~= mySeq then return end
+			playConfetti(cards[index])
 			TweenService:Create(scale,
 				TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
 				{ Scale = 1 }):Play()
@@ -744,13 +1105,16 @@ local function runCeremony(awards, done)
 		--// Phase 2: the crown
 		if awards.MVP then
 			cardsHolder.Visible = false
-			awardsHeader.Text = awards.Solo and "AND TONIGHT'S HERO..." or "AND TONIGHT'S MVP..."
+			setHeader(awards.Solo and "AND TONIGHT'S HERO..." or "AND TONIGHT'S MVP...")
 			mvpBanner.Text = awards.Solo and (SCORE.SoloBanner .. "!") or "MVP!"
 			mvpAvatar.Image = avatarUrl(awards.MVP.UserId)
 			mvpName.Text = awards.MVP.Name or "?"
 			mvpReceipts.Text = table.concat(awards.MVP.Receipts or {}, "\n")
 			mvpFrame.Visible = true
 			mvpScale.Scale = 0
+			if mvpRays then mvpRays.Visible = true end
+			dropMvpCrown()
+			playConfetti(mvpFrame, 1.8)
 			TweenService:Create(mvpScale,
 				TweenInfo.new(0.45, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
 				{ Scale = 1 }):Play()

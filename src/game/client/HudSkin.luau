@@ -509,17 +509,35 @@ function HudSkin.new(playerGui)
 	------------------------------------------------ money
 	local moneyLabel, moneyBefore = nil, nil
 	function skin.DressMoney(label)
-		moneyLabel = label
 		local holder = badge(label, { X = 0, Size = a.MoneyBadgeSize or 1.15 }, 2)
 		holder.Holder.AnchorPoint = Vector2.new(0, 0.5)
 		holder.SetIcon(idOf(a.CoinIcon), "💰")
-		local pad = Instance.new("UIPadding")
-		pad.Parent = label
+		--// the AMOUNT gets its own label right of the coin, on top of
+		--// everything (the old padded text was hidden behind the badge),
+		--// white with a dark outline so it reads on any wall
+		label.TextTransparency = 1
+		label.TextStrokeTransparency = 1
+		local amount = Instance.new("TextLabel")
+		amount.Name = "Amount"
+		amount.BackgroundTransparency = 1
+		amount.AnchorPoint = Vector2.new(0, 0.5)
+		amount.Size = UDim2.fromScale(0.8, 1.1)
+		amount.Font = Enum.Font.FredokaOne
+		amount.TextScaled = true
+		amount.TextXAlignment = Enum.TextXAlignment.Left
+		amount.TextColor3 = Color3.new(1, 1, 1)
+		amount.TextStrokeColor3 = CHOC
+		amount.TextStrokeTransparency = 0
+		amount.Text = "$0"
+		amount.ZIndex = 6
+		amount.Parent = label
 		local function fit()
-			pad.PaddingLeft = UDim.new(0, label.AbsoluteSize.Y * ((a.MoneyBadgeSize or 1.15) + 0.2))
+			local h = label.AbsoluteSize.Y
+			amount.Position = UDim2.new(0, h * ((a.MoneyBadgeSize or 1.15) + 0.15), 0.5, 0)
 		end
 		label:GetPropertyChangedSignal("AbsoluteSize"):Connect(fit)
 		fit()
+		moneyLabel = amount
 		skin.MoneyBadge = holder
 	end
 

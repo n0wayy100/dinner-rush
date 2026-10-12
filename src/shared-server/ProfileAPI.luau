@@ -317,6 +317,7 @@ end
 --// and wallet mutations stay in one auditable place.
 function ProfileAPI.Deposit(player, amount)
 	amount = math.floor(tonumber(amount) or 0)
+	if amount ~= amount or amount == math.huge then return false end --// SECURITY: NaN / infinity
 	if amount <= 0 then return false end
 
 	local data = profileFor(player)
@@ -1078,12 +1079,30 @@ function ProfileAPI.MvpState(player)
 	return { Owned = owned, Equipped = ProfileAPI.MvpChoice(player) or "", Wallet = data.Wallet or 0 }
 end
 
-function ProfileAPI.BuyMvp(player, name)
+--// vipFree: the VIP pass's one free pick. The CALLER (MvpShopServer) must
+--// have checked the VIP pass with Purchases.OwnsPass first - never trust a
+--// client for it. The save remembers the pick so it happens once ever.
+function ProfileAPI.VipMvpPickUsed(player)
+	local data = profileFor(player)
+	return data ~= nil and data.VipMvpPickUsed == true
+end
+
+function ProfileAPI.BuyMvp(player, name, vipFree)
 	local slot = type(name) == "string" and mvpSlot(name) or nil
 	if not slot then return false, "That celebration does not exist" end
 	local data = profileFor(player)
 	if not data or not Profiles then return false, NOT_READY end
 	if ownsMvp(data, slot) then return false, "Already owned!" end
+	if vipFree == true then
+		if data.VipMvpPickUsed == true then return false, "Your VIP pick is already used!" end
+		data.VipMvpPickUsed = true
+		if type(data.OwnedMvp) ~= "table" then data.OwnedMvp = {} end
+		data.OwnedMvp[slot.Name] = true
+		data.EquippedMvp = slot.Name
+		changed:Fire(player)
+		print(("[ProfileAPI] %s took %s as their free VIP MVP pick"):format(player.Name, slot.Name))
+		return true
+	end
 	if not Profiles.TrySpendWallet(player, slot.Price or 0) then
 		return false, ("Need %d more coins!"):format(math.max(0, (slot.Price or 0) - (data.Wallet or 0)))
 	end

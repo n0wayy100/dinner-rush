@@ -52,7 +52,7 @@ local valueLabel = need(playersCard, "ValueLabel")
 local minusBtn = need(playersCard, "MinusButton")
 local plusBtn = need(playersCard, "PlusButton")
 
-local MIN_PLAYERS = Config.MinPlayers --// 3: the hard minimum (owner, Oct 2026)
+local MIN_PLAYERS = Config.MinPlayers --// 1: solo + duo allowed again (owner, Oct 11 2026)
 local MAX_PLAYERS = Config.MaxPlayers
 local playerCount = 3
 

@@ -284,6 +284,11 @@ function Profiles.AddWallet(player, amount)
 	end
 
 	amount = math.floor(tonumber(amount) or 0)
+	--// SECURITY: NaN / infinity would poison the saved wallet for good
+	if amount ~= amount or amount == math.huge or amount == -math.huge then
+		warn(("[Profiles] AddWallet: refused a non-finite amount for %s"):format(player.Name))
+		return data.Wallet
+	end
 
 	--// Never debt (spec 6). A negative net deposits zero.
 	data.Wallet = math.max(0, data.Wallet + amount)
@@ -300,6 +305,7 @@ function Profiles.TrySpendWallet(player, cost)
 	end
 
 	cost = math.floor(tonumber(cost) or 0)
+	if cost ~= cost or cost == math.huge then return false end --// SECURITY: NaN / infinity
 	if cost < 0 or data.Wallet < cost then
 		return false
 	end

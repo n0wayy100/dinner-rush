@@ -36,6 +36,9 @@ Config.Shift = {
 	--// countdown drops straight to SkipToSeconds (never lengthens it).
 	SkipToSeconds = 5,
 	SkipVoteFraction = 0.5,           -- 0.5 = half the team (rounded up), min 1 vote
+	EndTextSeconds = 2,               -- the big SHIFT COMPLETE / FAILED text shows this long once the report closes
+	RideHomeAfterTextSeconds = 5,     -- then this long later the player is sent back to the lobby
+	                                  -- (ReturnToLobbySeconds below stays as the backstop for everyone)
 
 	--// When the clock runs out the doors close but the room is not empty.
 	--// CLOSING lets everyone already inside finish eating and paying; no new
@@ -693,6 +696,7 @@ Config.Tutorial = {
 				"One more floor skill, rookie! See that TIDY bar? A messy diner makes everyone grumpy.",
 				"Grime builds up as you work. Grab the vacuum off the wall, then clean the mess up!",
 				"Oh, and watch for the HEALTH INSPECTOR. He drops by to judge how clean we are, so keep that bar high and he will love us!",
+				"Good news though: all this cleaning is for HARD mode only! On Easy and Normal, the floor stays spotless.",
 			},
 			Objective = "Vacuum up the grime!",
 		},
@@ -1140,6 +1144,7 @@ Config.Difficulty = {
 			CookMinigame = true,
 			PlungeMinigame = true,
 			SweepMinigame = true,     -- the drag-the-broom spill panel
+			Tidiness = false,         -- HARD only (owner, Oct 11 2026): no bar, grime or inspector
 		},
 		Rewards = {
 			CoinMult = 0.8, CompletionBonus = 100,
@@ -1199,6 +1204,7 @@ Config.Difficulty = {
 			CookMinigame = true,      -- the timing-arrow collect
 			PlungeMinigame = true,    -- the spam-tap plunge bar
 			SweepMinigame = true,     -- the drag-the-broom spill panel
+			Tidiness = false,         -- HARD only (owner, Oct 11 2026)
 		},
 		Rewards = {
 			CoinMult = 1.0, CompletionBonus = 150,
@@ -1261,6 +1267,7 @@ Config.Difficulty = {
 			CookMinigame = true,
 			PlungeMinigame = true,
 			SweepMinigame = true,     -- the drag-the-broom spill panel
+			Tidiness = true,          -- tidiness bar, grime + vacuum, Health Inspector (owner, Oct 11 2026: HARD only)
 		},
 		Rewards = {
 			CoinMult = 1.5, CompletionBonus = 250,
@@ -1442,7 +1449,7 @@ Config.Money = {
 	ShiftStartingTill = 0,
 	RemainderToFirstPlayer = true,  -- odd coins go somewhere rather than vanishing
 	--// THE GROUP SHARE (owner, Oct 5 2026): at shift end EVERY player takes
-	--// home this fraction of the whole till (never less than an even split).
+	--// home this fraction of the whole till - solo and duo too (owner, Oct 11 2026).
 	--// 0.45 with 4 players = 180% paid out in total - bigger teams earn more
 	--// each, which suits the 3-6 player game. nil = the old even split.
 	PlayerShareFraction = 0.45,
@@ -1458,15 +1465,32 @@ Config.Money = {
 -- Open decision: solo players default to EASY at matchmaking (recommended).
 ----------------------------------------------------------------
 Config.PartySizeSpawnMult = {
-	[1] = 0.6, [2] = 0.75, [3] = 0.9, [4] = 1.0, [5] = 1.15, [6] = 1.3,
+	[1] = 0.4, [2] = 0.55, [3] = 0.9, --// solo / duo much calmer (SmallCrew)
+	 [4] = 1.0, [5] = 1.15, [6] = 1.3,
 }
 
 --// THE HARD MINIMUM (owner ruling, Oct 5 2026): a shift needs at least 3
 --// players - "it really cannot work with less than 3". The lobby queue will
 --// not start a party below this, and the party-size picker starts here.
 --// (Studio is exempt in QueueServer so the lobby flow can be tested solo.)
-Config.MinPlayers = 3
+Config.MinPlayers = 1 --// solo + duo are back (owner, Oct 11 2026) - eased by Config.SmallCrew below
 Config.MaxPlayers = 6
+
+--// THE SMALL-CREW EASE (owner, Oct 11 2026): solo and duo shifts are
+--// SIGNIFICANTLY easier than 3+. Keyed by the live player count; 3+ = no
+--// ease. Stacks with the difficulty tier (EASY / NORMAL / HARD).
+--//   Patience       multiplies both patience bars (longer = kinder)
+--//   EventGap       multiplies the time between random events (and the
+--//                  quiet opening before the first one)
+--//   Target         multiplies the parties needed for a good grade
+--// (fewer customers come too - see PartySizeSpawnMult)
+Config.SmallCrew = {
+	[1] = { Patience = 1.6, EventGap = 2.2, Target = 0.45 },
+	[2] = { Patience = 1.35, EventGap = 1.6, Target = 0.65 },
+}
+function Config.SmallCrewFor(playerCount)
+	return Config.SmallCrew[math.max(1, playerCount or 1)] or { Patience = 1, EventGap = 1, Target = 1 }
+end
 
 ----------------------------------------------------------------
 -- INTERACTION / UI CONSTANTS
@@ -1679,6 +1703,7 @@ Config.Payment = {
 	--// pile up as a free buffer" - see LingerSeconds below for the one piece
 	--// of pressure kept.
 	LingerSeconds = 0,            -- 0 = never vanishes; >0 = seconds on the table
+	SignScale = 2,                -- size of the "$9" money sign over a table (1 = the old small one)
 	CollectHoldSeconds = 1.0,     -- hold time on the collect prompt
 }
 
@@ -1937,6 +1962,7 @@ Config.MinigameIntro = {
 ----------------------------------------------------------------
 Config.MvpCutscene = {
 	Enabled = true,
+	HoldBehindUI = false,    -- false = the pose screen fades out before the awards + report open (owner, Oct 11 2026)
 
 	FadeSeconds = 0.6,       -- each fade to and from black
 	HoldBlackSeconds = 0.3,  -- a beat of black before the scene appears
@@ -2004,7 +2030,7 @@ Config.MvpCutscene = {
 	--// longer than the animation.
 	--// STUDIO ONLY (live-ignored): the Name of one slot below to play EVERY
 	--// time while testing (e.g. "MVP Siu"). "" = random, like live servers.
-	StudioForce = "MVP Bow",
+	StudioForce = "",
 
 	--// HOW TO ADD AN ANIMATION: copy a { ... } block below, give it a Name,
 	--// and paste the published animation's id into AnimId. A slot with an
@@ -2162,6 +2188,43 @@ Config.ShiftReport = {
 	--// Any FAILED shift (reputation zero, kitchen burned down) stamps this
 	--// regardless of the thresholds; the failure reason prints under it.
 	FailGrade = { Grade = "CLOSED DOWN!", Tone = "bad" },
+
+	--// THE REPORT ART (owner, Oct 11 2026 - Claude Design set). Blank an
+	--// Image ("") and that piece falls back to the code-drawn look.
+	--// Rows are 3-slice pills (ends kept crisp, middle stretches).
+	Art = {
+		Report_Panel  = { Image = "rbxassetid://111667274096071" },  -- clipboard, shown square (Fit)
+		Report_Header = { Image = "rbxassetid://87575259920740" },   -- tomato ribbon, title on top
+		Row_Good  = { Image = "rbxassetid://70507152185308",  Size = { 1024, 128 }, Slice = { 72, 40, 952, 88 }, SliceBy = "Height" },
+		Row_Mid   = { Image = "rbxassetid://71255821820991",  Size = { 1024, 128 }, Slice = { 72, 40, 952, 88 }, SliceBy = "Height" },
+		Row_Bad   = { Image = "rbxassetid://115495604958790", Size = { 1024, 128 }, Slice = { 72, 40, 952, 88 }, SliceBy = "Height" },
+		Row_Coins = { Image = "rbxassetid://140653234431130", Size = { 1024, 128 }, Slice = { 120, 40, 904, 88 }, SliceBy = "Height" },
+		Icon_Served = { Image = "rbxassetid://76333479261866" },
+		Icon_Money  = { Image = "rbxassetid://117316882592544" },
+		Icon_Rep    = { Image = "rbxassetid://95766306036265" },
+		Icon_Coins  = { Image = "rbxassetid://79981779922426" },
+		Stamp_Frame = { Image = "rbxassetid://121937256121233" },  -- WHITE, tinted to the verdict
+		Stamp_Dust  = { Image = "rbxassetid://112950249498040" },  -- 4x4 flipbook of 256px cells
+		Close_Button = { Image = "rbxassetid://104015193594332" },
+	},
+	StampDustSeconds = 0.5,       -- how long the dust puff plays when the stamp lands
+
+	--// THE AWARDS CEREMONY ART ("Tonight's Crew", Oct 11 2026 - Claude
+	--// Design set). Blank an Image ("") and that piece stays code-drawn.
+	AwardsArt = {
+		Crew_Backdrop    = { Image = "rbxassetid://79467232019313" },   -- 1920x1080 spotlight stage
+		Crew_TitleRibbon = { Image = "rbxassetid://126221926071215" },  -- mustard ribbon, header on top
+		Crew_Card        = { Image = "rbxassetid://88247104902945" },   -- 512x768 ticket, avatar ring at top
+		Crew_Card_MVP    = { Image = "rbxassetid://78224716248117" },   -- same geometry, gold
+		MVP_Crown        = { Image = "rbxassetid://127719650336911" },
+		MVP_Rays         = { Image = "rbxassetid://121011443233573" },  -- spins behind the MVP card
+		Confetti_Sheet   = { Image = "rbxassetid://132714028210919" },  -- 4x4 flipbook of 256px cells
+		Title_Badge      = { Image = "rbxassetid://128783585153153" },  -- holds the title's emoji
+		Tap_Hint         = { Image = "rbxassetid://130523884301466" },  -- pill, cursor on the left
+	},
+	BackdropTransparency = 0.2,   -- 0 = solid stage, higher = more of the frozen MVP shot shows through
+	ConfettiSeconds = 0.8,        -- one confetti burst (16 frames)
+	RaysSpinSeconds = 14,         -- one full turn of the MVP rays
 }
 
 ----------------------------------------------------------------
@@ -2179,6 +2242,8 @@ Config.OrderPanel = {
 	MaxRows = 6,                 -- rows shown before a "+N more" chip
 	LowPatienceBelow = 0.25,     -- a ticket flags red/❗ under this patience
 	                             -- (same threshold as the wall board's pulse)
+	Scale = 1.2,                 -- whole panel size (1 = the old small one)
+	IconPixels = 30,             -- food icon size on each ticket, before Scale (was 20)
 }
 
 Config.OrderBoard = {
@@ -3139,8 +3204,8 @@ Config.Ultimates = {
 	--// Ignored on live servers. Set StudioFullCharge = false (and the
 	--// key "") when ultimate testing ends, or charge earning can never
 	--// be playtested in Studio.
-	StudioFullCharge = true, --// TEMP Janitor test (Sep 30 2026) - set false for real play
-	StudioClassKey = "Janitor", --// TEMP Janitor test - set "" for real play
+	StudioFullCharge = false, --// off (real charge rules). true = always-full ultimate for testing
+	StudioClassKey = "", --// off (your real equipped class)
 
 	--// THE CAST BANNER (Sep 2026). Cosmetic only - nothing here touches
 	--// charge, abilities or THE LAW. Caster sees their own avatar posed
@@ -3278,6 +3343,15 @@ function Config.ForDifficulty(name)
 	local diff = Config.Difficulty[name]
 	assert(diff ~= nil, "Unknown difficulty: " .. tostring(name))
 	return diff
+end
+
+--// is the TIDINESS mechanic (bar, grime, vacuum, Health Inspector) on for
+--// this difficulty? Master switch Tidiness.Enabled AND the difficulty's
+--// Interactions.Tidiness gate (owner, Oct 11 2026: HARD only).
+function Config.TidinessOn(difficultyName)
+	if not (Config.Tidiness and Config.Tidiness.Enabled) then return false end
+	local block = Config.Difficulty[difficultyName]
+	return block ~= nil and block.Interactions ~= nil and block.Interactions.Tidiness == true
 end
 
 function Config.IsValidDifficulty(name)
@@ -4147,7 +4221,7 @@ Config.Daily = {
 	--// ONE class to get at MAX LEVEL, free. Once per player, ever. Membership
 	--// is checked by the server against Roblox, never trusted from the client.
 	Group = {
-		GroupId = 0,                      -- <- the group's ID (0 = tab shows "coming soon")
+		GroupId = 697688465,              -- Magistrate Studios (0 = tab shows "coming soon")
 		GroupName = "Magistrate Studios", -- shown on the tab
 		Choices = { "Chef", "Waiter" },   -- the classes offered (owner pick)
 	},
@@ -4441,6 +4515,7 @@ Config.Profile = {
 		--// when this player is MVP. Price-0 slots count as owned for everyone.
 		OwnedMvp = {},                -- ["MVP Siu"] = true
 		EquippedMvp = "",             -- "" = the free default
+		VipMvpPickUsed = false,       -- the VIP pass's one free MVP celebration has been taken
 
 		--// ROBUX RECEIPTS (Oct 2026): the PurchaseId of every developer-product
 		--// receipt already granted, newest last, capped at
@@ -4515,17 +4590,20 @@ Config.Monetization = {
 	--// placeholder art until Image (an uploaded asset id) is set.
 	GamePasses = {
 		VIP = {
-			Id = 0,
+			Id = 2026509028, --// the VIP pass (Creator Hub, Oct 2026)
 			Display = "VIP",
 			Description = "Gold name tag, VIP outfit, and +25% coins from every shift",
-			Bullets = { "Gold name", "VIP beside name", "+25% coins" }, --// shown as a list on the card
+			Bullets = { "Gold name + VIP tag", "Free MVP animation", "+25% coins" },
+			FreeMvpPick = true, --// PERK: pick ONE MVP celebration free (once per player, shop MVP tab)
+			CoinBonus = 0.25, --// PERK: +25% on top of your shift payout (minted, never from the team)
 			Emoji = "👑", Image = "rbxassetid://104590028335428", Order = 1,
 		},
 		DoubleCoins = {
-			Id = 0,
+			Id = 2026389041, --// the 2x Coins pass (Creator Hub, Oct 2026)
 			Display = "2x Coins",
 			Description = "Double the coins you take home from every shift",
 			Bullets = { "2x shift coins", "To your wallet" },
+			CoinBonus = 1.0,  --// PERK: +100% = double your shift payout (bonuses ADD: VIP + 2x = +125%)
 			Emoji = "💰", Image = "rbxassetid://116464553241999", Order = 2,
 			Badge = "2x", -- a live sticker over the art (the badge art has no text)
 		},
@@ -4534,13 +4612,13 @@ Config.Monetization = {
 	--// Repeatable buys. Coins = how many coins land in the wallet per buy.
 	--// Featured = the big "best value" card on top of the Coins tab.
 	Products = {
-		CoinsSmall  = { Id = 0, Display = "Pile of Coins",  Coins = 500,
+		CoinsSmall  = { Id = 3718063667, Display = "Pile of Coins",  Coins = 500,
 			Emoji = "🪙", Image = "rbxassetid://125974545023323", Order = 1 },
-		CoinsMedium = { Id = 0, Display = "Bag of Coins",   Coins = 1200,
+		CoinsMedium = { Id = 3718063892, Display = "Bag of Coins",   Coins = 1200,
 			Emoji = "💰", Image = "rbxassetid://118410203960355", Order = 2 },
-		CoinsLarge  = { Id = 0, Display = "Chest of Coins", Coins = 3000,
+		CoinsLarge  = { Id = 3718064010, Display = "Chest of Coins", Coins = 3000,
 			Emoji = "🧰", Image = "rbxassetid://119886693973918", Order = 3 },
-		CoinsHuge   = { Id = 0, Display = "Vault of Coins", Coins = 7000,
+		CoinsHuge   = { Id = 3718064149, Display = "Vault of Coins", Coins = 7000,
 			Emoji = "🏦", Image = "rbxassetid://87812219301694", Order = 4, Featured = true },
 	},
 

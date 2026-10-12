@@ -31,6 +31,18 @@ if not remote then
 	remote.Parent = remotes
 end
 
+--// the VIP pass's free pick: ownership asked of Roblox HERE (server-side,
+--// fails closed) - a client can never claim it
+local Purchases = nil
+pcall(function()
+	Purchases = require(ServerStorage:WaitForChild("Shared"):WaitForChild("Purchases"))
+end)
+local function vipFreeAvailable(player)
+	if not Purchases or ProfileAPI.VipMvpPickUsed(player) then return false end
+	local ok, owns = pcall(Purchases.OwnsPass, player, "VIP")
+	return ok and owns == true
+end
+
 local busy = {}
 Players.PlayerRemoving:Connect(function(player) busy[player] = nil end)
 
@@ -39,9 +51,12 @@ remote.OnServerInvoke = function(player, action, name)
 	busy[player] = true
 	local ok, a, b = pcall(function()
 		if action == "State" then
-			return ProfileAPI.MvpState(player)
+			local state = ProfileAPI.MvpState(player)
+			if state then state.VipFree = vipFreeAvailable(player) end
+			return state
 		elseif action == "Buy" then
-			return ProfileAPI.BuyMvp(player, name)
+			--// a VIP with the pick unused takes this one free; else coins
+			return ProfileAPI.BuyMvp(player, name, vipFreeAvailable(player))
 		elseif action == "Equip" then
 			return ProfileAPI.EquipMvp(player, name)
 		end

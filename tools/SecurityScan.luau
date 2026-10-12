@@ -106,6 +106,9 @@ local ODD_PARENTS = {
 local NAMED_SUSPECTS = {
 	"PoseTexture", "LightConfig", "DishRack", "Electrical Box", "WaterStation",
 	"darksynapse", --// Sep 2026 backdoor payload node name
+	"Connector",   --// Sep 27 2026 payload node name (StarterCharacterScripts)
+	--// Oct 2026: models that look like Toolbox imports (no-Toolbox law)
+	"Sarge", "pizzeria", "Teddy Bear", "TP Holder", "Strawberry & Chocolate Cake",
 }
 
 ----------------------------------------------------------------

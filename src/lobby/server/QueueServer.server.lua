@@ -51,7 +51,8 @@ local COUNTDOWN_SECONDS = 30
 local FULL_PARTY_SECONDS = 5
 
 --// How many players a party needs before the countdown starts: the HARD
---// MINIMUM of 3 (owner ruling, Oct 5 2026 - Config.MinPlayers). Studio is
+--// minimum, Config.MinPlayers - 1 since Oct 11 2026 (solo/duo are back,
+--// eased by Config.SmallCrew in the game). Studio is
 --// exempt so the lobby flow can still be tested alone (it cannot teleport
 --// there anyway).
 local MIN_PLAYERS_TO_START = game:GetService("RunService"):IsStudio() and 1 or MIN_PLAYERS

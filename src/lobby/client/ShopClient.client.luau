@@ -1549,13 +1549,15 @@ refreshMvpCards = function()
 			card.ButtonText.Text = "EQUIPPED"
 		elseif owned then
 			card.ButtonText.Text = "EQUIP"
+		elseif mvpState.VipFree then
+			card.ButtonText.Text = "FREE (VIP)" --// the VIP pass's one free pick
 		else
 			local price = card.Slot.Price or 0
 			card.ButtonText.Text = price > 0 and commas(price) or "FREE"
 		end
 		card.Button.BackgroundColor3 = equipped and BASIL_DARK or BASIL
 		--// the coin sits left of the price; text shifts right to make room
-		local buying = not owned and (card.Slot.Price or 0) > 0
+		local buying = not owned and not mvpState.VipFree and (card.Slot.Price or 0) > 0
 		if card.PriceCoin then card.PriceCoin.Visible = buying end
 		card.ButtonText.Position = UDim2.fromScale(buying and card.PriceCoin and 0.58 or 0.5, 0.48)
 		card.ButtonText.Size = UDim2.fromScale(buying and card.PriceCoin and 0.6 or 0.86, 0.62)
