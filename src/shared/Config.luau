@@ -108,7 +108,10 @@ end
 --// Icon: fill these in with your uploaded images.
 --//   RawPatty -> raw_patty   RawSteak -> raw_steak   RawPotato -> raw_potato
 Config.Ingredients = {
-	--// Stock is what the kitchen opens the shift with. Deliberately generous:
+	--// Stock is what the kitchen opens the shift with. LOW ON PURPOSE (owner,
+	--// Oct 2026): every ingredient starts at 5 so the Supplier board gets
+	--// used - restock crates refill it mid-shift. (Old note below.)
+	--// Was deliberately generous:
 	--// until the Supplier delivery system exists there is no way to refill,
 	--// so running dry would soft-lock a shift rather than create pressure.
 	--// Potato is highest because fries are the cheap, common order.
@@ -117,17 +120,17 @@ Config.Ingredients = {
 	RawPatty = {
 		Display = "Raw Patty", Icon = "rbxassetid://126279923200605",
 		Source = "Fridge", Color = Color3.fromRGB(190, 95, 95),
-		Stock = 18,
+		Stock = 5,
 	},
 	RawSteak = {
 		Display = "Raw Steak", Icon = "rbxassetid://95127663931794",
 		Source = "Fridge", Color = Color3.fromRGB(160, 70, 80),
-		Stock = 12,
+		Stock = 5,
 	},
 	RawPotato = {
 		Display = "Raw Potato", Icon = "rbxassetid://136806783641400",
 		Source = "DryShelf", Color = Color3.fromRGB(200, 175, 130),
-		Stock = 15,
+		Stock = 5,
 	},
 
 	--// YAMASAKI SUSHI (only stocked on maps whose Menu cooks them).
@@ -135,17 +138,17 @@ Config.Ingredients = {
 	RawChicken = {
 		Display = "Raw Chicken", Icon = "rbxassetid://129069316269579",
 		Source = "Fridge", Color = Color3.fromRGB(235, 180, 160),
-		Stock = 18,
+		Stock = 5,
 	},
 	RawShrimp = {
 		Display = "Raw Shrimp", Icon = "rbxassetid://130809960695275",
 		Source = "Fridge", Color = Color3.fromRGB(238, 168, 158),
-		Stock = 15,
+		Stock = 5,
 	},
 	RawNoodles = {
 		Display = "Noodle Brick", Icon = "rbxassetid://134060384410956",
 		Source = "DryShelf", Color = Color3.fromRGB(238, 220, 150),
-		Stock = 12,
+		Stock = 5,
 	},
 
 	--// MANILA KITCHEN. Icons pending the owner's uploads - "" ships
@@ -153,17 +156,17 @@ Config.Ingredients = {
 	RawPork = {
 		Display = "Pork Belly", Icon = "rbxassetid://133374495233508", -- raw_pork
 		Source = "Fridge", Color = Color3.fromRGB(214, 146, 140),
-		Stock = 18,
+		Stock = 5,
 	},
 	RawRice = {
 		Display = "Rice", Icon = "rbxassetid://120240808119103", -- uncooked_rice
 		Source = "DryShelf", Color = Color3.fromRGB(245, 240, 228),
-		Stock = 18,
+		Stock = 5,
 	},
 	RawLumpia = {
 		Display = "Lumpia Rolls", Icon = "rbxassetid://91680745975302", -- uncooked_lumpia
 		Source = "Fridge", Color = Color3.fromRGB(236, 214, 170),
-		Stock = 15,
+		Stock = 5,
 	},
 
 	--// PARIS BISTRO (the French map). Icons pending the owner's uploads -
@@ -172,17 +175,17 @@ Config.Ingredients = {
 	RawCroissant = {
 		Display = "Croissant Dough", Icon = "rbxassetid://107902100919898", -- raw_croissant
 		Source = "Fridge", Color = Color3.fromRGB(240, 222, 190),
-		Stock = 18,
+		Stock = 5,
 	},
 	RawVeggies = {
 		Display = "Chopped Veggies", Icon = "rbxassetid://135801382230619", -- raw_ratatouille
 		Source = "DryShelf", Color = Color3.fromRGB(150, 170, 80),
-		Stock = 15,
+		Stock = 5,
 	},
 	RawSeafood = {
 		Display = "Seafood", Icon = "rbxassetid://115031377832379", -- raw_bouillabaisse
 		Source = "Fridge", Color = Color3.fromRGB(232, 196, 186),
-		Stock = 15,
+		Stock = 5,
 	},
 }
 
@@ -1815,6 +1818,7 @@ Config.HudArt = {
 		Filipino = "87007459314481",  -- cooked rice
 		French   = "137909655636183", -- croissant
 		Diner    = "",
+		US       = "",
 	},
 
 	--// LAYOUT (shares of the screen's height unless noted)
@@ -3456,6 +3460,23 @@ Config.Pass = {
 	--// default. Manila's plates rest flush, Yamasaki's need the 0.35.
 	TablePlateLiftByMap = {
 		Filipino = 0.02,
+		US = 0.02, --// owner playtest Oct 2026: the default 0.35 floated
+	},
+	--// (PlateTowardChairByMap maps) how far a plate's centre stays back from
+	--// the tabletop's real edge - about half a plate
+	TablePlateRadiusStuds = 0.6,
+	--// Studs to pull each plate in toward the table's middle, per map
+	--// (owner playtest Oct 2026: US plates sat on the edge). Unlisted = 0.
+	TablePlatePullInByMap = {
+		US = 0.6,
+	},
+
+	--// Maps where each dish goes in front of the ChairSeat its customer is
+	--// sitting on, instead of the table's fixed near / far sides. For tables
+	--// whose seats are not on those sides (the US map's booths). Maps not
+	--// listed are unchanged.
+	PlateTowardChairByMap = {
+		US = true,
 	},
 
 	--// Keeps a served plate off the very edge of the table. Raise it if plates
@@ -3516,6 +3537,18 @@ Config.Maps = {
 		--// weight), and through it which ingredients its kitchen stocks -
 		--// the recommend picker and the fridge/shelf menus follow this
 		--// list too. A map with no Menu falls back to Config.OrderWeights.
+		Menu = { Burger = 5, Fries = 4, GrilledSteak = 3 },
+	},
+	{
+		--// THE REMODELLED US MAP (owner, Oct 2026). The Diner above stays as
+		--// the TUTORIAL map; this is its own playable restaurant.
+		Id = "US", --// MUST match the model name in ServerStorage.Maps
+		Display = "US Diner", --// rename freely; the Id is the plumbing
+		ImageId = "", --// owner's banner pending; shows a lettered placeholder
+		--// false until the model is in ServerStorage.Maps: the lobby cannot
+		--// pick it yet. Studio playtests still run it (Config.StudioMapId).
+		Available = false,
+		ShiftBarIcon = "🍔",
 		Menu = { Burger = 5, Fries = 4, GrilledSteak = 3 },
 	},
 	{
@@ -3623,7 +3656,7 @@ Config.PhaseBanner = {
 --// ingredients - without the lobby handoff or a per-test command line.
 --// "" falls back to DefaultMapId. Live servers ignore this completely:
 --// the lobby's teleport data always wins there.
-Config.StudioMapId = "Filipino" --// playtesting Manila Kitchen, the Filipino map (Oct 2026)
+Config.StudioMapId = "US" --// playtesting the remodelled US map (Oct 2026)
 
 --// STUDIO-ONLY spawn burst: this many parties march in the moment the
 --// shift goes RUNNING, so route/seating tests need no command bar.

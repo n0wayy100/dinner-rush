@@ -379,6 +379,11 @@ local PLATE_SINK = {
 	Croissant = 0.3,
 	Ratatouille = 0.3,
 	Bouillabaisse = 0.3,
+
+	--// THE US DINER (Oct 2026): the steak hovered over its plate. The
+	--// burger's and fries' flat bottoms sank THROUGH the plate at 0.3, so
+	--// they rest on it as modelled (no entry = no drop).
+	GrilledSteak = 0.3,
 }
 
 --// Placing a dish ON A PLATE: how far down from the plate's surface the
@@ -438,6 +443,11 @@ local GRIP_NUDGE = {
 	Ratatouille = Vector3.new(0.3, 0.1, -0.3),
 	RawSeafood = Vector3.new(0.3, 0.1, -0.3),
 	Bouillabaisse = Vector3.new(0.3, 0.1, -0.3),
+
+	--// THE US DINER (Oct 2026): these models' pivots are at their BOTTOM,
+	--// so the half-height lift leaves the tall burger hovering over the
+	--// fist - bring it back down onto the hand
+	Burger = Vector3.new(0, -0.2, 0),
 }
 
 --// THE MESH SWAP PATH (Sep 2026): the team's OWN generated meshes -
@@ -498,6 +508,21 @@ local function applyTrim(model, itemName, trim)
 	return kept > 0
 end
 
+--// Auto-fit (see dressWithMesh): a mesh wider than AUTO_FIT_ABOVE or
+--// narrower than AUTO_FIT_BELOW studs is resized to its FIT_STUDS width -
+--// the sizes the models were made at in Blender (widest side).
+local AUTO_FIT_ABOVE = 3
+local AUTO_FIT_BELOW = 0.2
+local FIT_DEFAULT = 1.3
+local FIT_STUDS = {
+	Burger = 1.24,
+	RawPatty = 1.05,
+	RawSteak = 1.30,
+	GrilledSteak = 1.30,
+	RawPotato = 1.08,
+	Fries = 1.21,
+}
+
 local function dressWithMesh(basePart, itemName, forGrip, trim)
 	local folder = game:GetService("ServerStorage"):FindFirstChild("DishMeshes")
 	local template = folder and folder:FindFirstChild(itemName)
@@ -544,6 +569,25 @@ local function dressWithMesh(basePart, itemName, forGrip, trim)
 	end
 
 	local boxCF, boxSize = model:GetBoundingBox()
+
+	--// AUTO-FIT A WRONGLY SIZED IMPORT (owner playtest, Oct 2026: the US
+	--// meats came in many times too big and hung in the air - Blender
+	--// exports in metres and the import can blow that up). Food is about
+	--// 1-1.5 studs, so anything far outside that is shrunk / grown to its
+	--// intended width (FIT_STUDS) instead of only being warned about.
+	local widestNow = math.max(boxSize.X, boxSize.Y, boxSize.Z)
+	if widestNow > AUTO_FIT_ABOVE or widestNow < AUTO_FIT_BELOW then
+		local target = FIT_STUDS[itemName] or FIT_DEFAULT
+		local ok = pcall(function()
+			model:ScaleTo(model:GetScale() * (target / widestNow))
+		end)
+		if ok then
+			warnOnce("fit:" .. itemName,
+				("DishMeshes.%s was %.2f studs across - shown at %.2f instead (scale it in ServerStorage to silence this)")
+					:format(itemName, widestNow, target))
+			boxCF, boxSize = model:GetBoundingBox()
+		end
+	end
 	local pivot = model:GetPivot()
 
 	--// Import 3D leaves the pivot wherever the file's origin was, which

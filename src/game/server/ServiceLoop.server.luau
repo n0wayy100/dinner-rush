@@ -1311,8 +1311,24 @@ local function platePlacement(tableId, seatIndex)
 	local tablePart = tableById[tableId]
 	if not tablePart then return nil end
 
-	local seats = seatPositions(tablePart, math.max(seatIndex, 1))
-	local seat = seats[seatIndex] or seats[#seats]
+	--// PLATE IN FRONT OF THE REAL SEAT (Config.Pass.PlateTowardChairByMap,
+	--// owner, Oct 2026): the US map's booths put the sofas on sides the
+	--// fixed near/far pattern below does not match, so there each dish goes
+	--// toward the ChairSeat its customer actually sits on (the same nearest-
+	--// first order seatSpots seats them in). Every other map is unchanged.
+	local seat = nil
+	local towardChairs = Config.Pass.PlateTowardChairByMap
+	if towardChairs and towardChairs[workspace:GetAttribute("MatchMapId")] then
+		local spots = seatSpots(tablePart, math.max(seatIndex, 1))
+		local spot = spots[seatIndex]
+		if spot and spot.Sit then
+			seat = spot.Walk
+		end
+	end
+	if not seat then
+		local seats = seatPositions(tablePart, math.max(seatIndex, 1))
+		seat = seats[seatIndex] or seats[#seats]
+	end
 	if not seat then return nil end
 
 	local centre = tablePart.Position
@@ -1351,6 +1367,49 @@ local function platePlacement(tableId, seatIndex)
 	local limit = math.max(reach - Config.Pass.TablePlateEdgeMargin, 0)
 
 	local out = math.min(distance * Config.Pass.TablePlateInset, limit)
+
+	--// FIND THE REAL EDGE (maps in PlateTowardChairByMap - the US booths,
+	--// owner playtest Oct 2026): there the tagged part is bigger than the
+	--// wood you see, so its size let plates hang past the edge. Instead,
+	--// test straight down every 0.2 studs from the middle toward the seat;
+	--// the plate stops a plate's width before the first spot that is not
+	--// tabletop. (Decor on the table counts as table - only a drop is an
+	--// edge.) Other maps keep the size-based limit above.
+	if towardChairs and towardChairs[workspace:GetAttribute("MatchMapId")] and out > 0.4 then
+		local sanity = Config.Pass.TablePlateSanityStuds
+		local samples, woodHeights = {}, {}
+		for along = 0.4, out + 0.001, 0.2 do
+			local point = centre + direction * along
+			local y = surfaceYAt(point.X, point.Z, boxTop)
+			if y and math.abs(y - boxTop) > sanity then
+				y = nil
+			end
+			table.insert(samples, { Along = along, Y = y })
+			if y then
+				table.insert(woodHeights, y)
+			end
+		end
+		--// no wood seen at all: the tagged part IS the visible top (the rays
+		--// skip it) - its own size is right then, so keep the limit above
+		if #woodHeights > 0 then
+			table.sort(woodHeights)
+			local wood = woodHeights[math.ceil(#woodHeights / 2)]
+			local lastGood = 0
+			for _, sample in ipairs(samples) do
+				if sample.Y and sample.Y >= wood - decorTolerance then
+					lastGood = sample.Along
+				else
+					break
+				end
+			end
+			out = math.clamp(lastGood - (Config.Pass.TablePlateRadiusStuds or 0.6), 0, out)
+		end
+	end
+	--// per-map nudge toward the middle (Config.Pass.TablePlatePullInByMap)
+	local pullIn = (Config.Pass.TablePlatePullInByMap or {})[workspace:GetAttribute("MatchMapId")]
+	if pullIn then
+		out = math.max(out - pullIn, 0)
+	end
 	local spot = centre + direction * out
 
 	--// Ray per candidate spot. A hit well ABOVE the table's own top is
