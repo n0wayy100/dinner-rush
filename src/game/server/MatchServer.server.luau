@@ -16,8 +16,17 @@ print("[MatchServer] script started")
 local DEFAULTS = {
 	MaxPlayers = 3,
 	Difficulty = "NORMAL",
-	MapId = "Diner",
+	--// Joining this place directly (Studio, or a stray link) skips the lobby
+	--// and so brings no map choice. One source of truth for that fallback.
+	MapId = Config.DefaultMapId,
 }
+
+--// Studio playtests target the map being built (Config.StudioMapId) so
+--// nobody has to re-type a MatchMapId override every single test. Real
+--// teleport data from the lobby still wins over this.
+if game:GetService("RunService"):IsStudio() and Config.StudioMapId ~= "" then
+	DEFAULTS.MapId = Config.StudioMapId
+end
 
 --// Settled by whoever arrives first, then reused for everyone else in the
 --// party so late arrivals cannot change the map out from under the match.
@@ -38,6 +47,15 @@ end
 
 local function LoadMap(MapId)
 	if MapLoaded then return end
+
+	if not Config.LoadMapOnStart then
+		warn("[MatchServer] ================================================")
+		warn("[MatchServer]  MAP LOADING IS OFF (Config.LoadMapOnStart)")
+		warn("[MatchServer]  Playing whatever is already in Workspace.")
+		warn("[MatchServer]  Set it back to true before publishing.")
+		warn("[MatchServer] ================================================")
+		return
+	end
 
 	local Maps = ServerStorage:FindFirstChild("Maps")
 	if not Maps then
@@ -78,11 +96,25 @@ local function OnPlayerAdded(Plr)
 		MatchSettings = Data
 		Tuning = Config.ForDifficulty(Data.Difficulty)
 
+		--// TUTORIAL (Sep 2026): the lobby's HOW TO PLAY teleport sends
+		--// Mode = "TUTORIAL"; anything else is a normal shift. The Studio
+		--// knob (Config.Tutorial.StudioTutorial, live-ignored) lets the
+		--// tutorial be tested before the lobby button exists.
+		local mode = Data.Mode == "TUTORIAL" and "TUTORIAL" or "SHIFT"
+		if game:GetService("RunService"):IsStudio()
+			and Config.Tutorial and Config.Tutorial.StudioTutorial then
+			mode = "TUTORIAL"
+		end
+
 		--// Published as attributes so other server systems (and later the HUD,
 		--// since attributes replicate) read the shift settings from one place
 		workspace:SetAttribute("MatchDifficulty", Data.Difficulty)
 		workspace:SetAttribute("MatchPlayerCount", #Players:GetPlayers())
 		workspace:SetAttribute("MatchMapId", Data.MapId or DEFAULTS.MapId)
+		workspace:SetAttribute("MatchMode", mode)
+		if mode == "TUTORIAL" then
+			print("[MatchServer] TUTORIAL mode - Bruno is teaching this shift")
+		end
 
 		print(("[MatchServer] match settings: map %s, %s (%s), up to %s players"):format(
 			tostring(Data.MapId), Tuning.Label, Data.Difficulty, tostring(Data.MaxPlayers)))

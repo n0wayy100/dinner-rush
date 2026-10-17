@@ -50,14 +50,16 @@ local COUNTDOWN_SECONDS = 30
 --// A full party has nobody left to wait for, so the countdown snaps down
 local FULL_PARTY_SECONDS = 5
 
---// How many players a party needs before the countdown starts. At 1 the host
---// can start alone, which is what makes solo testing possible. Set it to 2 to
---// require someone other than the host.
-local MIN_PLAYERS_TO_START = 1
+--// How many players a party needs before the countdown starts: the HARD
+--// minimum, Config.MinPlayers - 1 since Oct 11 2026 (solo/duo are back,
+--// eased by Config.SmallCrew in the game). Studio is
+--// exempt so the lobby flow can still be tested alone (it cannot teleport
+--// there anyway).
+local MIN_PLAYERS_TO_START = game:GetService("RunService"):IsStudio() and 1 or MIN_PLAYERS
 
 --// The MainGame place inside the DinnerRush experience.
 --// Left at 0 the countdown still runs, it just does not teleport anyone.
-local GAME_PLACE_ID = 97952115394249 --// MainGame place inside the group's DinnerRush experience
+local GAME_PLACE_ID = Config.Places.GamePlaceId --// ONE place for both ids: Config.Places
 
 local ZoneData = {}
 local PlayerZone = {} --// [Player] = TpZones the player is currently queued in
@@ -70,6 +72,7 @@ function SanitizeSettings(Settings)
         MaxPlayers = 3,
         Difficulty = "NORMAL",
         FriendsOnly = false,
+        MapId = Config.DefaultMapId,
     }
 
     if typeof(Settings) ~= "table" then
@@ -79,6 +82,18 @@ function SanitizeSettings(Settings)
     local Max = tonumber(Settings.MaxPlayers)
     if Max then
         Clean.MaxPlayers = math.clamp(math.floor(Max), MIN_PLAYERS, MAX_PLAYERS)
+    end
+
+    --// NEVER trust a MapId from a client. A modified one could ask for a map
+    --// that is not built yet, or does not exist at all, and MatchServer would
+    --// clone nothing - a shift in an empty world. Anything unrecognised falls
+    --// back to the default rather than being refused, so a stale client
+    --// still gets a playable game.
+    if typeof(Settings.MapId) == "string" and Config.IsPlayableMap(Settings.MapId) then
+        Clean.MapId = Settings.MapId
+    elseif Settings.MapId ~= nil and Settings.MapId ~= Config.DefaultMapId then
+        warn(("[QueueServer] rejected map '%s' - falling back to %s"):format(
+            tostring(Settings.MapId), Config.DefaultMapId))
     end
 
     if typeof(Settings.Difficulty) == "string" then
@@ -125,9 +140,26 @@ function TeleportTo(Plr, Object)
     Char:PivotTo(CFrame.lookAt(Position, Position + Flat.Unit))
 end
 
+--// A map revamp can leave an old LobbyPos behind, so pick the one CLOSEST
+--// to where the player is standing (the zone they just left), never just
+--// the first one found
+local function NearestLobbyPos(Plr)
+    local Char = Plr.Character
+    local Root = Char and Char:FindFirstChild("HumanoidRootPart")
+    local Best, BestDistance = nil, math.huge
+    for _, Found in ipairs(workspace:GetDescendants()) do
+        if Found.Name == "LobbyPos" and (Found:IsA("BasePart") or Found:IsA("Model")) then
+            local Distance = Root and (Found:GetPivot().Position - Root.Position).Magnitude or 0
+            if Distance < BestDistance then
+                Best, BestDistance = Found, Distance
+            end
+        end
+    end
+    return Best
+end
+
 function SendToLobby(Plr)
-    local LobbyPos = Teleport_zone:FindFirstChild("LobbyPos", true)
-        or workspace:FindFirstChild("LobbyPos", true)
+    local LobbyPos = NearestLobbyPos(Plr)
     if not LobbyPos then
         warn("[QueueServer] Teleport_zone.LobbyPos is missing - cannot return player to the lobby")
         return
@@ -170,6 +202,10 @@ function UpdateBillboard(TpZones)
             StateLabel.Text = STATE_STARTING:format(Data.Remaining)
         elseif Count >= Max then
             StateLabel.Text = STATE_FULL
+        elseif Count < MIN_PLAYERS_TO_START then
+            --// below the hard minimum: say exactly how many more are needed
+            local need = MIN_PLAYERS_TO_START - Count
+            StateLabel.Text = ("Need %d more player%s"):format(need, need == 1 and "" or "s")
         else
             StateLabel.Text = STATE_WAITING
         end
@@ -244,6 +280,15 @@ end
 function StartMatch(TpZones)
     local Data = ZoneData[TpZones]
 
+    --// Last-second check of the hard minimum: someone may have dropped out
+    --// (or disconnected) as the countdown ran out. Wait for more instead.
+    if #Data.Players < MIN_PLAYERS_TO_START then
+        print(("[QueueServer] start cancelled: only %d player(s), need %d"):format(
+            #Data.Players, MIN_PLAYERS_TO_START))
+        UpdateBillboard(TpZones)
+        return
+    end
+
     print(("[QueueServer] match starting: %d player(s), difficulty %s"):format(
         #Data.Players, Data.Settings.Difficulty))
 
@@ -267,7 +312,12 @@ function StartMatch(TpZones)
     end)
 
     if not Ok then
+        --// free the zone again, or it stays locked for good
         warn("[QueueServer] ReserveServer failed:", Code)
+        Data.Teleporting = false
+        for _, Member in ipairs(Data.Players) do
+            QueueRemote:FireClient(Member, "MatchFailed")
+        end
         return
     end
 
@@ -277,7 +327,7 @@ function StartMatch(TpZones)
         MaxPlayers = Data.Settings.MaxPlayers,
         Difficulty = Data.Settings.Difficulty,
         FriendsOnly = Data.Settings.FriendsOnly,
-        MapId = Data.Settings.MapId or "Diner",
+        MapId = Data.Settings.MapId or Config.DefaultMapId,
     })
 
     local Sent, Err = pcall(function()
@@ -399,8 +449,8 @@ function CreateParty(Plr, Settings)
     QueueRemote:FireClient(Plr, "PartyCreated", Data.Settings)
     UpdateBillboard(TpZones) --// size is decided, so the count can show now
 
-    --// At MIN_PLAYERS_TO_START = 1 the host alone is enough, so the countdown
-    --// begins the moment the party exists
+    --// The countdown begins once the party reaches MIN_PLAYERS_TO_START (3 -
+    --// the hard minimum; 1 in Studio only)
     if #Data.Players >= MIN_PLAYERS_TO_START then
         StartCountdown(TpZones)
     end
@@ -460,12 +510,50 @@ end
 
 local Connected = 0
 
-for _, TpZones in pairs(Teleport_zone:GetChildren()) do
-    if TpZones:IsA("Model") then
+--// Which objects are queue zones. Map revamps keep moving things around,
+--// so be forgiving: any child of Teleport_zone (Model OR Folder) holding a
+--// ZoneContainer counts; if that finds nothing, every ZoneContainer anywhere
+--// in Workspace counts, its zone being the Model (or folder) around it.
+local function CollectZones()
+    local Zones, Seen = {}, {}
+    local function Add(Zone)
+        if Zone and not Seen[Zone] then
+            Seen[Zone] = true
+            table.insert(Zones, Zone)
+        end
+    end
+
+    for _, Child in ipairs(Teleport_zone:GetChildren()) do
+        if Child.Name ~= "ZoneContainer" and Child:FindFirstChild("ZoneContainer", true) then
+            Add(Child)
+        end
+    end
+
+    if #Zones == 0 then
+        warn("[QueueServer] nothing under " .. Teleport_zone:GetFullName()
+            .. " holds a ZoneContainer - searching all of Workspace instead")
+        for _, Found in ipairs(workspace:GetDescendants()) do
+            if Found.Name == "ZoneContainer" then
+                local Around = Found:FindFirstAncestorWhichIsA("Model") or Found.Parent
+                Add((Around and Around ~= workspace) and Around or Found)
+            end
+        end
+    end
+
+    --// what the map actually has, so a broken layout is easy to spot
+    for _, Child in ipairs(Teleport_zone:GetChildren()) do
+        print(("[QueueServer]   Teleport_zone has: %s (%s)"):format(Child.Name, Child.ClassName))
+    end
+    return Zones
+end
+
+for _, TpZones in ipairs(CollectZones()) do
+    do
 
         --// A zone with no ZoneContainer is skipped rather than allowed to
         --// throw, otherwise one unfinished model breaks every zone after it.
-        local ZoneContainer = TpZones:FindFirstChild("ZoneContainer", true)
+        local ZoneContainer = TpZones.Name == "ZoneContainer" and TpZones
+            or TpZones:FindFirstChild("ZoneContainer", true)
         if not ZoneContainer then
             warn(("[QueueServer] %s has no ZoneContainer - skipping this zone"):format(TpZones.Name))
             continue

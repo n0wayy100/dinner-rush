@@ -23,8 +23,9 @@ local Players = game:GetService("Players")
 --// openBy    = name of the dock button that opens it (optional)
 --// MatchMaking_UI is deliberately absent - PartySettings owns that one.
 local PANELS = {
-	{ gui = "Codes_UI",    openBy = "OpenCodesButton" },
-	{ gui = "FreeGift_UI", openBy = "OpenGiftButton" },
+	--// (Oct 2026) Codes_UI and FreeGift_UI retired: GiftClient owns the
+	--// FREE! button now (gift + codes tabs) and the CODES! slot became
+	--// DAILY! (DailyClient). The old Studio ScreenGuis can be deleted.
 }
 
 local player = Players.LocalPlayer
