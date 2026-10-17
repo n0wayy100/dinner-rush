@@ -406,12 +406,39 @@ local function buildSourceIcons(part, sourceTag, offered)
 	local count = #offered
 	if count == 0 then return end
 
+	--// THE TOP OF THE WHOLE SOURCE, not just the part the prompt sits on
+	--// (owner playtest, Oct 2026: on the US fridge that part is short and
+	--// low, so the icons floated INSIDE the fridge body). A tagged model -
+	--// or the small model the tagged part belongs to - is measured whole.
+	local topY = part.Position.Y + part.Size.Y / 2
+	local measure = nil
+	local node = part
+	while node and node ~= workspace do
+		if CollectionService:HasTag(node, sourceTag) then
+			measure = node
+			break
+		end
+		node = node.Parent
+	end
+	if measure and measure:IsA("BasePart") and measure.Parent and measure.Parent:IsA("Model") then
+		--// a tagged anchor part inside a fridge model: use the fridge model,
+		--// but never something map-sized
+		local _, parentSize = measure.Parent:GetBoundingBox()
+		if parentSize.Y <= (ICONS.MaxSourceHeightStuds or 16) then
+			measure = measure.Parent
+		end
+	end
+	if measure and measure:IsA("Model") then
+		local boxCFrame, boxSize = measure:GetBoundingBox()
+		topY = math.max(topY, boxCFrame.Position.Y + boxSize.Y / 2)
+	end
+
 	local billboard = Instance.new("BillboardGui")
 	billboard.Name = "SourceIcons"
 	billboard.Adornee = part
-	--// float above the part, world-up, whatever its rotation
+	--// float above the source, world-up, whatever its rotation
 	billboard.StudsOffsetWorldSpace =
-		Vector3.new(0, part.Size.Y / 2 + (ICONS.HoverStuds or 3), 0)
+		Vector3.new(0, topY - part.Position.Y + (ICONS.HoverStuds or 3), 0)
 	billboard.Size = UDim2.new(iconStuds * count, 0,
 		iconStuds * (ICONS.ShowLabel and 1.5 or 1), 0)
 	billboard.MaxDistance = ICONS.MaxDistanceStuds or 45
