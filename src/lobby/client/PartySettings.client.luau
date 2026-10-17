@@ -241,20 +241,23 @@ local function buildMapCard(map, parent, order)
 
 	else
 		--// PLACEHOLDER, not a broken card. Until the art is uploaded the bar
-		--// shows the map's initial, so the layout is already right and only
-		--// the picture is missing.
-		local initial = Instance.new("TextLabel")
-		initial.Name = "Placeholder"
-		initial.Size = UDim2.fromScale(1, 1)
-		initial.BackgroundTransparency = 1
-		initial.Font = MAP_FONT
-		initial.TextSize = 52
-		initial.TextXAlignment = Enum.TextXAlignment.Right
-		initial.Position = UDim2.fromOffset(-24, 0)
-		--// Was almost the same colour as the card behind it
-		initial.TextColor3 = Color3.fromRGB(196, 172, 138)
-		initial.Text = string.sub(map.Display or "?", 1, 1)
-		initial.Parent = card
+		--// shows the map's NAME on the left, clear of the CHOOSE button
+		--// (owner, Oct 17 2026 - the old initial hid behind the button).
+		local nameLabel = Instance.new("TextLabel")
+		nameLabel.Name = "Placeholder"
+		nameLabel.AnchorPoint = Vector2.new(0, 0.5)
+		nameLabel.Position = UDim2.new(0, 18, 0.5, 0)
+		nameLabel.Size = UDim2.new(1, -18 - 128 - 30, 0.6, 0) --// stops short of the button
+		nameLabel.BackgroundTransparency = 1
+		nameLabel.Font = MAP_FONT
+		nameLabel.TextScaled = true
+		nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+		nameLabel.TextColor3 = Color3.fromRGB(59, 43, 32)
+		nameLabel.Text = string.upper(map.Display or map.Id or "?")
+		nameLabel.Parent = card
+		local nameCap = Instance.new("UITextSizeConstraint")
+		nameCap.MaxTextSize = 34
+		nameCap.Parent = nameLabel
 	end
 
 	local pick = Instance.new("TextButton")

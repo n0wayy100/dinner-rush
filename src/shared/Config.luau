@@ -3545,9 +3545,9 @@ Config.Maps = {
 		Id = "US", --// MUST match the model name in ServerStorage.Maps
 		Display = "US Diner", --// rename freely; the Id is the plumbing
 		ImageId = "", --// owner's banner pending; shows a lettered placeholder
-		--// false until the model is in ServerStorage.Maps: the lobby cannot
-		--// pick it yet. Studio playtests still run it (Config.StudioMapId).
-		Available = false,
+		--// LIVE (owner, Oct 17 2026): pickable in the lobby. Needs the model
+		--// named "US" in the GAME place's ServerStorage.Maps.
+		Available = true,
 		ShiftBarIcon = "🍔",
 		Menu = { Burger = 5, Fries = 4, GrilledSteak = 3 },
 	},
@@ -3656,7 +3656,7 @@ Config.PhaseBanner = {
 --// ingredients - without the lobby handoff or a per-test command line.
 --// "" falls back to DefaultMapId. Live servers ignore this completely:
 --// the lobby's teleport data always wins there.
-Config.StudioMapId = "US" --// playtesting the remodelled US map (Oct 2026)
+Config.StudioMapId = "" --// off: Studio plays the default map (set a map Id to playtest it)
 
 --// STUDIO-ONLY spawn burst: this many parties march in the moment the
 --// shift goes RUNNING, so route/seating tests need no command bar.
@@ -4062,7 +4062,7 @@ Config.Music = {
 	Enabled = true,
 	--// STUDIO ONLY (live-ignored): every Studio playtest starts with music
 	--// muted, lobby and shift alike. Press M to hear it anyway.
-	StudioMuted = true,
+	StudioMuted = false,
 
 	--// 0..1. Background music should sit UNDER the prompts and event stings -
 	--// if players turn it off to hear the game, it is too loud.
@@ -4148,6 +4148,11 @@ Config.Music = {
 			},
 		},
 	},
+
+	--// A map with no MapSoundtracks entry of its own (US, Diner, Manila,
+	--// Paris for now) plays THIS map's set instead of silence (owner, Oct 17
+	--// 2026). Give a map its own entry above and it uses that. "" = silence.
+	FallbackSoundtrack = "Sushi",
 
 	--// How the shift music moves between states
 	ShiftFadeInSeconds = 2,      -- a phase track rises in rather than cutting on
@@ -4578,12 +4583,12 @@ Config.Profile = {
 	--// playtest. This writes to the REAL save, exactly like a shift's
 	--// earnings would.
 	PlaytestGrant = {
-		Enabled = true,
+		Enabled = false, --// OFF for launch (Oct 17 2026)
 		GrantWallet = 10000,
 
 		--// PLAYTEST: give the 10k to EVERY player who joins, so no name
 		--// list to maintain. Set false to fall back to the Usernames list.
-		GrantEveryone = true,
+		GrantEveryone = false,
 
 		--// Only used when GrantEveryone = false: exact Roblox usernames
 		--// (case-insensitive) that get the wallet grant.
@@ -4601,7 +4606,7 @@ Config.Profile = {
 		--// PLAYTEST: unlock EVERY class for EVERY player who joins, so any
 		--// class can be equipped without buying. Written to the REAL save.
 		--// Set false after the playtest.
-		UnlockAllClasses = true,
+		UnlockAllClasses = false,
 	},
 }
 

@@ -340,7 +340,9 @@ local function refresh()
 	end
 
 	local mapId = workspace:GetAttribute("MatchMapId") or Config.DefaultMapId
-	local set = SOUNDTRACKS[mapId]
+	--// a map with no soundtrack of its own borrows the fallback set
+	--// (Config.Music.FallbackSoundtrack) instead of playing in silence
+	local set = SOUNDTRACKS[mapId] or SOUNDTRACKS[MUSIC.FallbackSoundtrack or ""]
 
 	--// The tutorial has one track of its own rather than a per-map set
 	local track = (stage == "Tutorial") and MUSIC.TutorialTrack or (set and set[stage])
