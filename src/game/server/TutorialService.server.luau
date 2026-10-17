@@ -527,7 +527,7 @@ task.spawn(function()
 	--// way MatchServer's notes demand: TeleportAsync cannot run in
 	--// Studio, and an unset PlaceId means the lobby wiring pass has
 	--// not happened yet - both fall back to free practice.
-	local placeId = tonumber(TUT.LobbyPlaceId) or 0
+	local placeId = tonumber(Config.Places.LobbyPlaceId) or 0
 	if placeId > 0 and not game:GetService("RunService"):IsStudio() then
 		task.wait(TUT.TeleportDelaySeconds or 3)
 		local ok, err = pcall(function()

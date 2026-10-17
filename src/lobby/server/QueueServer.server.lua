@@ -59,7 +59,7 @@ local MIN_PLAYERS_TO_START = game:GetService("RunService"):IsStudio() and 1 or M
 
 --// The MainGame place inside the DinnerRush experience.
 --// Left at 0 the countdown still runs, it just does not teleport anyone.
-local GAME_PLACE_ID = 97952115394249 --// MainGame place inside the group's DinnerRush experience
+local GAME_PLACE_ID = Config.Places.GamePlaceId --// ONE place for both ids: Config.Places
 
 local ZoneData = {}
 local PlayerZone = {} --// [Player] = TpZones the player is currently queued in
@@ -140,9 +140,26 @@ function TeleportTo(Plr, Object)
     Char:PivotTo(CFrame.lookAt(Position, Position + Flat.Unit))
 end
 
+--// A map revamp can leave an old LobbyPos behind, so pick the one CLOSEST
+--// to where the player is standing (the zone they just left), never just
+--// the first one found
+local function NearestLobbyPos(Plr)
+    local Char = Plr.Character
+    local Root = Char and Char:FindFirstChild("HumanoidRootPart")
+    local Best, BestDistance = nil, math.huge
+    for _, Found in ipairs(workspace:GetDescendants()) do
+        if Found.Name == "LobbyPos" and (Found:IsA("BasePart") or Found:IsA("Model")) then
+            local Distance = Root and (Found:GetPivot().Position - Root.Position).Magnitude or 0
+            if Distance < BestDistance then
+                Best, BestDistance = Found, Distance
+            end
+        end
+    end
+    return Best
+end
+
 function SendToLobby(Plr)
-    local LobbyPos = Teleport_zone:FindFirstChild("LobbyPos", true)
-        or workspace:FindFirstChild("LobbyPos", true)
+    local LobbyPos = NearestLobbyPos(Plr)
     if not LobbyPos then
         warn("[QueueServer] Teleport_zone.LobbyPos is missing - cannot return player to the lobby")
         return
@@ -295,7 +312,12 @@ function StartMatch(TpZones)
     end)
 
     if not Ok then
+        --// free the zone again, or it stays locked for good
         warn("[QueueServer] ReserveServer failed:", Code)
+        Data.Teleporting = false
+        for _, Member in ipairs(Data.Players) do
+            QueueRemote:FireClient(Member, "MatchFailed")
+        end
         return
     end
 
@@ -488,12 +510,50 @@ end
 
 local Connected = 0
 
-for _, TpZones in pairs(Teleport_zone:GetChildren()) do
-    if TpZones:IsA("Model") then
+--// Which objects are queue zones. Map revamps keep moving things around,
+--// so be forgiving: any child of Teleport_zone (Model OR Folder) holding a
+--// ZoneContainer counts; if that finds nothing, every ZoneContainer anywhere
+--// in Workspace counts, its zone being the Model (or folder) around it.
+local function CollectZones()
+    local Zones, Seen = {}, {}
+    local function Add(Zone)
+        if Zone and not Seen[Zone] then
+            Seen[Zone] = true
+            table.insert(Zones, Zone)
+        end
+    end
+
+    for _, Child in ipairs(Teleport_zone:GetChildren()) do
+        if Child.Name ~= "ZoneContainer" and Child:FindFirstChild("ZoneContainer", true) then
+            Add(Child)
+        end
+    end
+
+    if #Zones == 0 then
+        warn("[QueueServer] nothing under " .. Teleport_zone:GetFullName()
+            .. " holds a ZoneContainer - searching all of Workspace instead")
+        for _, Found in ipairs(workspace:GetDescendants()) do
+            if Found.Name == "ZoneContainer" then
+                local Around = Found:FindFirstAncestorWhichIsA("Model") or Found.Parent
+                Add((Around and Around ~= workspace) and Around or Found)
+            end
+        end
+    end
+
+    --// what the map actually has, so a broken layout is easy to spot
+    for _, Child in ipairs(Teleport_zone:GetChildren()) do
+        print(("[QueueServer]   Teleport_zone has: %s (%s)"):format(Child.Name, Child.ClassName))
+    end
+    return Zones
+end
+
+for _, TpZones in ipairs(CollectZones()) do
+    do
 
         --// A zone with no ZoneContainer is skipped rather than allowed to
         --// throw, otherwise one unfinished model breaks every zone after it.
-        local ZoneContainer = TpZones:FindFirstChild("ZoneContainer", true)
+        local ZoneContainer = TpZones.Name == "ZoneContainer" and TpZones
+            or TpZones:FindFirstChild("ZoneContainer", true)
         if not ZoneContainer then
             warn(("[QueueServer] %s has no ZoneContainer - skipping this zone"):format(TpZones.Name))
             continue

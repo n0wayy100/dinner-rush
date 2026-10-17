@@ -32,7 +32,7 @@ local PORTAL = Config.TutorialPortal
 local TAG = "TutorialGuide"
 
 --// The MainGame place - the same id QueueServer sends shifts to
-local GAME_PLACE_ID = 97952115394249
+local GAME_PLACE_ID = Config.Places.GamePlaceId --// ONE place for both ids: Config.Places
 
 local CREAM = Color3.fromRGB(255, 246, 233)
 local CHOC = Color3.fromRGB(59, 43, 32)

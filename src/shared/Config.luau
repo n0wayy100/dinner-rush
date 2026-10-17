@@ -540,7 +540,7 @@ Config.Tutorial = {
 	--// THE EXIT: when the tutorial ends, everyone teleports back to
 	--// the lobby (owner-provided PlaceId, Sep 2026). Studio always
 	--// stays put (TeleportAsync cannot run there).
-	LobbyPlaceId = 132877152120112,
+	--// (the lobby id itself lives in Config.Places - TutorialService reads it there)
 	TeleportDelaySeconds = 3,     -- goodbye breath before the send
 
 	TypeCharsPerSecond = 28,      -- Bruno's typewriter pace on the card
