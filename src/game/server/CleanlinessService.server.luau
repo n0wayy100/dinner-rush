@@ -1152,13 +1152,20 @@ local function startShift()
 	clearJanitorState()
 	clearAllGrime()
 	publish()
+	ShiftState:SetAttribute("TidinessOn", false) --// decided just below, per shift
 
 	--// the tutorial freezes the shift to teach one loop - never dirty it there
 	if tutorialMode() then return end
 
-	--// HARD only (owner, Oct 11 2026 - Interactions.Tidiness): elsewhere the
-	--// challenge starts already over, so the bar hides and no grime spawns
-	local tidyOn = Config.TidinessOn(difficultyName())
+	--// HARD, or a crew of Tidiness.MinPlayersAnyDifficulty+ on any
+	--// difficulty (owner, Oct 11 + Oct 17 2026). Decided ONCE here and
+	--// published as ShiftState.TidinessOn, so the inspector and the tidy VIP
+	--// boost read the same locked answer even if someone leaves mid-shift.
+	--// Off = the challenge starts already over: no bar, no grime.
+	local tidyOn = Config.TidinessOn(difficultyName(), #Players:GetPlayers())
+	ShiftState:SetAttribute("TidinessOn", tidyOn)
+	print(("[Tidiness] %s this shift (%s, %d player(s))"):format(
+		tidyOn and "ON" or "off", difficultyName(), #Players:GetPlayers()))
 	if vacuumPrompt then vacuumPrompt.Enabled = tidyOn end
 	if not tidyOn then
 		tidinessEnded = true

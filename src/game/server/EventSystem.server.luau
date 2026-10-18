@@ -2885,11 +2885,12 @@ task.spawn(function()
 				IsActive = function() return inspector.Active end,
 				--// owner spec: only in the MIDDLE phase (internal "Building" =
 				--// HUD "BUSY"), and only once per shift.
-				--// HARD only with the tidiness it judges (Interactions.Tidiness)
+				--// only on shifts that HAVE the tidiness it judges: HARD, or a
+				--// big crew - the answer CleanlinessService locked at shift start
 				Eligible = function()
-					local _, dname = difficultyBlock()
+					local shiftState = ReplicatedStorage:FindFirstChild("ShiftState")
 					return not inspectorDone and shiftInfo().Phase == "Building"
-						and Config.TidinessOn(dname)
+						and shiftState ~= nil and shiftState:GetAttribute("TidinessOn") == true
 				end,
 			})
 		else

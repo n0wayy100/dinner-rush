@@ -1279,6 +1279,9 @@ local function playOpening(result, quick)
 		--// then flashes blue / purple / gold faster and faster while the crate
 		--// shakes harder - and the LAST flash is the rarity you actually got.
 		local SHAKE = 2.4
+		--// the drumroll rolls under the shake; stopped when the crate pops
+		local drumroll = (SfxLocal and Config.Sfx.Sounds.CrateDrumroll and Config.Sfx.Sounds.CrateDrumroll.Id ~= "")
+			and select(2, pcall(SfxLocal.Play, "CrateDrumroll")) or nil
 		glow.ImageColor3 = Color3.new(1, 1, 1)
 		tween(glow, SHAKE, { Size = UDim2.fromScale(1.25, 1.25), ImageTransparency = 0.12 })
 		local roulette = Instance.new("ImageLabel") --// a ring that pulses with each flash
@@ -1306,7 +1309,6 @@ local function playOpening(result, quick)
 				roulette.ImageTransparency = 0.1
 				roulette.Size = UDim2.fromScale(0.65, 0.65)
 				tween(roulette, gap, { Size = UDim2.fromScale(0.85, 0.85), ImageTransparency = 0.5 })
-				sfx("ShopClick")
 				task.wait(gap)
 				gap = math.max(0.07, gap * 0.86)
 			end
@@ -1342,7 +1344,8 @@ local function playOpening(result, quick)
 		crate.Position = UDim2.fromScale(0.5, 0.55)
 
 		--// 3. POP: the bow flies, the lid blasts off, poof + shockwave + flash
-		sfx(legendary and "UltimateReady" or "AnswerRight")
+		if typeof(drumroll) == "Instance" and drumroll:IsA("Sound") then drumroll:Stop() end
+		sfx("Crate" .. rarity) --// CrateCommon / Rare / Epic / Legendary
 		tween(bow, 0.7, { Position = UDim2.fromScale(-0.4, -0.9), Rotation = -540, ImageTransparency = 1 })
 		task.wait(0.08)
 		tween(lid, 0.6, { Position = UDim2.fromScale(0.75, -1.1), Rotation = 35, ImageTransparency = 1 })
@@ -1439,7 +1442,7 @@ local function playOpening(result, quick)
 	cardName.Text = passive.Display
 	cardName.ZIndex = 11
 	tween(card, 0.22, { Size = UDim2.fromScale(CARD_W, CARD_H) }, Enum.EasingStyle.Back)
-	sfx("ShopPurchase")
+	if quick then sfx("Crate" .. rarity) end --// no shake = no pop, so the card brings the sound
 
 	if big then
 		local shine = sprite(card, "Shine_Sweep")

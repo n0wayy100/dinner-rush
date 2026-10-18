@@ -4223,7 +4223,8 @@ end
 local function tidyVIPChance()
 	local base = diff.VIPChance
 	local T = Config.Tidiness
-	if not (T and T.Enabled) or not Config.TidinessOn(DIFFICULTY) then return base end
+	--// only shifts that have the tidiness challenge (locked at shift start)
+	if not (T and T.Enabled) or ShiftState:GetAttribute("TidinessOn") ~= true then return base end
 	local val = ShiftState:GetAttribute("Tidiness")
 	local max = ShiftState:GetAttribute("TidinessMax")
 	local frac = (val and max and max > 0) and (val / max) or 1

@@ -699,7 +699,7 @@ Config.Tutorial = {
 				"One more floor skill, rookie! See that TIDY bar? A messy diner makes everyone grumpy.",
 				"Grime builds up as you work. Grab the vacuum off the wall, then clean the mess up!",
 				"Oh, and watch for the HEALTH INSPECTOR. He drops by to judge how clean we are, so keep that bar high and he will love us!",
-				"Good news though: all this cleaning is for HARD mode only! On Easy and Normal, the floor stays spotless.",
+				"Good news though: on Easy and Normal, the floor only gets messy with a big crew of four or more! On Hard, it's always messy.",
 			},
 			Objective = "Vacuum up the grime!",
 		},
@@ -1020,6 +1020,11 @@ Config.Reputation = {
 --// (CleanRestore) is FLAT on every difficulty.
 Config.Tidiness = {
 	Enabled = true,
+	--// BIG CREWS CLEAN TOO (owner, Oct 17 2026): on ANY difficulty, a shift
+	--// that STARTS with this many players or more gets the tidiness bar,
+	--// grime and the Health Inspector (HARD always has them). Locked at
+	--// shift start, so a player leaving mid-shift never switches it off.
+	MinPlayersAnyDifficulty = 4,
 	Start = 100,
 	Max = 100,
 	--// passive ambient drip per second (DEMAND - scales by difficulty)
@@ -3351,11 +3356,18 @@ end
 
 --// is the TIDINESS mechanic (bar, grime, vacuum, Health Inspector) on for
 --// this difficulty? Master switch Tidiness.Enabled AND the difficulty's
---// Interactions.Tidiness gate (owner, Oct 11 2026: HARD only).
-function Config.TidinessOn(difficultyName)
+--// Interactions.Tidiness gate (owner, Oct 11 2026: HARD only) - OR a crew
+--// of Tidiness.MinPlayersAnyDifficulty+ on any difficulty (Oct 17 2026).
+--// Systems mid-shift read the LOCKED answer from ShiftState.TidinessOn
+--// (CleanlinessService decides it once at shift start), not this.
+function Config.TidinessOn(difficultyName, playerCount)
 	if not (Config.Tidiness and Config.Tidiness.Enabled) then return false end
 	local block = Config.Difficulty[difficultyName]
-	return block ~= nil and block.Interactions ~= nil and block.Interactions.Tidiness == true
+	if block ~= nil and block.Interactions ~= nil and block.Interactions.Tidiness == true then
+		return true
+	end
+	local crew = tonumber(Config.Tidiness.MinPlayersAnyDifficulty)
+	return crew ~= nil and (playerCount or 0) >= crew
 end
 
 function Config.IsValidDifficulty(name)
@@ -3656,7 +3668,7 @@ Config.PhaseBanner = {
 --// ingredients - without the lobby handoff or a per-test command line.
 --// "" falls back to DefaultMapId. Live servers ignore this completely:
 --// the lobby's teleport data always wins there.
-Config.StudioMapId = "" --// off: Studio plays the default map (set a map Id to playtest it)
+Config.StudioMapId = "US" --// Studio playtests the US map (Oct 17 2026); "" = the default map
 
 --// STUDIO-ONLY spawn burst: this many parties march in the moment the
 --// shift goes RUNNING, so route/seating tests need no command bar.
@@ -3885,10 +3897,23 @@ Config.Sfx = {
 		--// bar (green = right, red = wrong).
 		AnswerRight = { Id = "100414462804328", Volume = 0.9 },
 		AnswerWrong = { Id = "96876122441863", Volume = 0.9 },
-		--// THE SHOP (Oct 2026). ShopPurchase borrows AnswerRight's chime until
-		--// a proper cha-ching is picked; ShopClick is silent until one is set.
-		ShopPurchase = { Id = "100414462804328", Volume = 0.9 },
+		--// THE SHOP (Oct 2026). ShopPurchase = the owner's "Cash buy"
+		--// cha-ching (Oct 17 2026): purchases, claims, gifts, codes.
+		--// ShopClick is silent until one is set.
+		ShopPurchase = { Id = "77713738501650", Volume = 0.9 },
+
+		--// CRATE OPENING (owner, Oct 17 2026). The drumroll rolls while the
+		--// crate shakes; the moment it pops, the rarity you got plays its own.
+		CrateDrumroll  = { Id = "102082368678355", Volume = 0.8 },
+		CrateCommon    = { Id = "96107358277163",  Volume = 0.9 },
+		CrateRare      = { Id = "113269786266037", Volume = 0.9 },
+		CrateEpic      = { Id = "93241103231801",  Volume = 1.0 },
+		CrateLegendary = { Id = "96257814638512",  Volume = 1.0 },
 		ShopClick = { Id = "", Volume = 0.5 },
+		--// THE TAP (owner, Oct 17 2026): every button pressed in the LOBBY UI
+		--// (UiTapClient hooks them all). ShopClick stays silent so a button
+		--// never taps twice.
+		UiTap = { Id = "94324705780171", Volume = 0.6 },
 
 		--// THE SHIFT REPORT. LOCAL - every player has their own report on
 		--// screen. A thud as each stat slaps onto the board, and a heavier
@@ -3998,12 +4023,12 @@ Config.Sfx = {
 
 		--// Chef R (SOUS CHEF): the summon, from the moment the Chef starts the
 		--// gesture - covers the wind-up and the smoke burst she appears from
-		SousChefSummon = { Id = "", Volume = 0.9, MinStuds = 12, MaxStuds = 60 },
+		SousChefSummon = { Id = "102334002941845", Volume = 0.9, MinStuds = 12, MaxStuds = 60 },
 
 		--// Fixer ULTIMATE (SPEED DIAL): the thumb hitting the big red button.
 		--// Timed by Config.Ultimates.RemoteClickDelay to land on the press in
 		--// the animation. Plays ON TOP of UltimateUsed, which fires at the cast.
-		SpeedDialButton = { Id = "", Volume = 0.9, MinStuds = 12, MaxStuds = 60 },
+		SpeedDialButton = { Id = "105863227705200", Volume = 0.9, MinStuds = 12, MaxStuds = 60 },
 
 		--// RHYTHM TAP (the cooking minigame). LOCAL, for the player playing it
 		--// only - same reasoning as AnswerRight/Wrong. Played on the press
@@ -4015,8 +4040,8 @@ Config.Sfx = {
 
 		--// HEALTH INSPECTOR verdict. Global: the whole team passed or failed
 		--// together. The first-visit WARNING ("let it slide") plays neither.
-		InspectorPass = { Id = "", Volume = 0.9, Global = true },
-		InspectorFail = { Id = "", Volume = 0.9, Global = true },
+		InspectorPass = { Id = "108173030847070", Volume = 0.9, Global = true },
+		InspectorFail = { Id = "128053411446834", Volume = 0.9, Global = true },
 
 		--// SHIFT ---------------------------------------------------------
 		--// Everyone hears these together, wherever they happen to be.
