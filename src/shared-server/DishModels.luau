@@ -380,10 +380,12 @@ local PLATE_SINK = {
 	Ratatouille = 0.3,
 	Bouillabaisse = 0.3,
 
-	--// THE US DINER (Oct 2026): the steak hovered over its plate. The
-	--// burger's and fries' flat bottoms sank THROUGH the plate at 0.3, so
-	--// they rest on it as modelled (no entry = no drop).
-	GrilledSteak = 0.3,
+	--// THE US DINER (Oct 2026): at 0.3 all three sank THROUGH the plate,
+	--// at 0 the burger and fries hovered - the plate's well is shallower
+	--// than the French one, so they settle halfway
+	GrilledSteak = 0.15,
+	Burger = 0.15,
+	Fries = 0.15,
 }
 
 --// Placing a dish ON A PLATE: how far down from the plate's surface the

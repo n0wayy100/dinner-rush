@@ -27,6 +27,7 @@ local ServerStorage = game:GetService("ServerStorage")
 
 local Sfx = require(ServerStorage:WaitForChild("Shared"):WaitForChild("Sfx"))
 local DishModels = require(ServerStorage:WaitForChild("Shared"):WaitForChild("DishModels"))
+local HoldTool = require(ServerStorage:WaitForChild("Shared"):WaitForChild("HoldTool")) --// one item in the hand at a time
 local MinigameIntro = require(ServerStorage:WaitForChild("Shared"):WaitForChild("MinigameIntro"))
 local Players = game:GetService("Players")
 
@@ -282,7 +283,7 @@ local function giveIngredient(player, ingredientName)
 	if not data or not character then return end
 
 	local tool = makeTool(data.Display, data.Icon, data.Color, { Ingredient = ingredientName })
-	tool.Parent = character
+	HoldTool.Give(player, tool)
 	print(("[Kitchen] %s took %s"):format(player.Name, ingredientName))
 end
 
@@ -1910,7 +1911,7 @@ local function applyDoubleBatch(player, character, recipe, dishName, quality)
 		Dish = dishName,
 		Quality = quality,
 	})
-	extra.Parent = character
+	HoldTool.Stow(player, extra) --// the second plate waits on the hotbar
 	print(("[Kitchen] DOUBLE BATCH: %s plated a second %s"):format(player.Name, dishName))
 end
 
@@ -1943,7 +1944,7 @@ local function collect(station, player)
 		Dish = dishName,
 		Quality = quality,
 	})
-	tool.Parent = character
+	HoldTool.Give(player, tool)
 	applyDoubleBatch(player, character, recipe, dishName, quality)
 
 	--// The perfect COLLECT is the skill moment - career and ultimate charge
@@ -2042,7 +2043,7 @@ function grantFromMinigame(station, player, quality)
 		Dish = dishName,
 		Quality = quality,
 	})
-	tool.Parent = character
+	HoldTool.Give(player, tool)
 	applyDoubleBatch(player, character, recipe, dishName, quality)
 
 	reportCookResult(player, quality)

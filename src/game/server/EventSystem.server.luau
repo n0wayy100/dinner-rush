@@ -33,6 +33,7 @@ local ServerStorage = game:GetService("ServerStorage")
 local Sfx = require(ServerStorage:WaitForChild("Shared"):WaitForChild("Sfx"))
 local MinigameIntro = require(ServerStorage:WaitForChild("Shared"):WaitForChild("MinigameIntro"))
 local ToolModels = require(ServerStorage:WaitForChild("Shared"):WaitForChild("ToolModels"))
+local HoldTool = require(ServerStorage:WaitForChild("Shared"):WaitForChild("HoldTool")) --// one item in the hand at a time
 --// the props placed at the mounts hide while their tool is out
 local plungerShelf = ToolModels.MountTracker("PlungerMount")
 local broomShelf = ToolModels.MountTracker("BroomMount")
@@ -320,7 +321,7 @@ local function givePlungerTo(player)
 	cup.CFrame = handle.CFrame * CFrame.new(0, -2, 0) * CFrame.Angles(0, 0, math.rad(90))
 
 	ToolModels.Dress(tool, "Plunger") --// the team's model, when it is in
-	tool.Parent = character
+	HoldTool.Give(player, tool)
 	plungerTools[player] = tool
 	plungerShelf.Add(tool) --// off the wall until it comes back
 	print(("[Events] %s took a plunger"):format(player.Name))
@@ -458,7 +459,7 @@ local function giveBroomTo(player)
 	brush.CFrame = handle.CFrame * CFrame.new(0, -2.8, 0)
 
 	ToolModels.Dress(tool, "Broom") --// the team's model, when it is in
-	tool.Parent = character
+	HoldTool.Give(player, tool)
 	broomTools[player] = tool
 	broomShelf.Add(tool) --// off the wall until it comes back
 	print(("[Events] %s took a broom"):format(player.Name))
@@ -1381,7 +1382,7 @@ local function giveExtinguisherTo(player)
 	if extinguisherDisplay then
 		extinguisherDisplay.Hide() --// there is only one: off the wall, into the hand
 	end
-	tool.Parent = character
+	HoldTool.Give(player, tool)
 	extinguisherTool = tool
 	extinguisherShelf.Add(tool) --// off the wall until it comes back
 	extinguisherHolder = player

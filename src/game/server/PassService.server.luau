@@ -38,6 +38,7 @@ local ServerStorage = game:GetService("ServerStorage")
 
 local Config = require(ReplicatedStorage.Shared.Config)
 local DishModels = require(ServerStorage:WaitForChild("Shared"):WaitForChild("DishModels"))
+local HoldTool = require(ServerStorage:WaitForChild("Shared"):WaitForChild("HoldTool")) --// one item in the hand at a time
 
 local SLOT_TAG = "PassSlot"
 
@@ -625,7 +626,7 @@ local function onTriggered(slot, player)
 		end
 
 		local dishName = slot.Dish
-		tool.Parent = character
+		HoldTool.Give(player, tool)
 		goCarried(slot, player)
 		print(("[Pass] %s took %s from slot %d"):format(player.Name, dishName, slot.Id))
 	end

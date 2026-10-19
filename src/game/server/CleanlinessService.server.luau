@@ -37,6 +37,7 @@ local Debris = game:GetService("Debris")
 local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Config"))
 local MinigameIntro = require(ServerStorage:WaitForChild("Shared"):WaitForChild("MinigameIntro"))
 local ToolModels = require(ServerStorage:WaitForChild("Shared"):WaitForChild("ToolModels"))
+local HoldTool = require(ServerStorage:WaitForChild("Shared"):WaitForChild("HoldTool")) --// one item in the hand at a time
 --// the prop placed at the vacuum mount hides while a vacuum is out
 local vacuumShelf = ToolModels.MountTracker("VacuumMount", true) --// returnable: "Put back"
 local TID = Config.Tidiness
@@ -190,7 +191,7 @@ local function giveVacuumTo(player)
 	returnVacuumFor(player)
 	local tool = buildVacuumTool()
 	ToolModels.Dress(tool, "Vacuum") --// the team's model, when it is in
-	tool.Parent = character
+	HoldTool.Give(player, tool)
 	vacuumShelf.Add(tool, player) --// off the wall until it comes back
 	vacuumTools[player] = tool
 	print(("[Tidiness] %s grabbed the vacuum"):format(player.Name))
