@@ -425,7 +425,7 @@ end
 
 --// Big and tilted to flat and full size, accelerating INTO the board,
 --// then the thud. Yields until it lands.
-local function slapRow(row)
+local function slapRow(row, isLast)
 	local card, scale = row.Card, row.Scale
 	scale.Scale = 2.4
 	card.Rotation = math.random(-7, 7)
@@ -440,7 +440,13 @@ local function slapRow(row)
 	land:Play()
 	land.Completed:Wait()
 
-	SfxLocal.Play("ReportSlap")
+	--// the last row lands with the heavy slap (if it has an id)
+	local finalSlap = Config.Sfx and Config.Sfx.Sounds and Config.Sfx.Sounds.ReportSlapFinal
+	if isLast and finalSlap and finalSlap.Id ~= "" then
+		SfxLocal.Play("ReportSlapFinal")
+	else
+		SfxLocal.Play("ReportSlap")
+	end
 	shake(6, 0.15)
 	--// a little squash as it hits
 	scale.Scale = 0.93
@@ -556,9 +562,9 @@ local function showReport(payload)
 
 	--// The drumroll
 	task.spawn(function()
-		for _, row in ipairs(rows) do
+		for index, row in ipairs(rows) do
 			if seq ~= mySeq then return end
-			slapRow(row)
+			slapRow(row, index == #rows)
 			task.wait(payload.RowReveal or 0.55)
 		end
 

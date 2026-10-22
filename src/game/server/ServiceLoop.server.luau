@@ -1144,8 +1144,37 @@ local function routePoints(route)
 	return points
 end
 
+--// THE CHOMP (owner, Oct 2026): while a party EATS - food arrived, bill
+--// not yet due - one of them chomps every few seconds (a random gap from
+--// Config.Sfx.Sounds.CustomerEating.EverySeconds). Stops by itself the
+--// moment the state moves on or the party is gone.
+local function startEatingSounds(party)
+	party.EatingSeq = (party.EatingSeq or 0) + 1
+	local mySeq = party.EatingSeq
+	local entry = Config.Sfx and Config.Sfx.Sounds and Config.Sfx.Sounds.CustomerEating
+	if not entry or (entry.Id or "") == "" then return end
+	local gap = entry.EverySeconds or { 5, 10 }
+	local low, high = gap[1] or 5, gap[2] or gap[1] or 10
+	task.spawn(function()
+		task.wait(1 + math.random() * 1.5) --// first bite soon after the plates land
+		while party.EatingSeq == mySeq and party.State == "EATING" and parties[party.Id] do
+			local members = party.Members or {}
+			local member = members[math.random(1, math.max(#members, 1))]
+			local at = (member and member.Root) or party.Root
+			if at and at.Parent then
+				Sfx.Play("CustomerEating", at)
+			end
+			task.wait(low + math.random() * math.max(high - low, 0))
+		end
+	end)
+end
+
 local function setPartyState(party, newState)
+	local oldState = party.State
 	party.State = newState
+	if newState == "EATING" and oldState ~= "EATING" then
+		startEatingSounds(party)
+	end
 	if party.Label then
 		local prefix = party.IsCritic and "🧐 " or (party.IsVIP and "* " or "")
 		party.Label.Text = ("%sParty of %d - %s"):format(prefix, party.Size, newState)
@@ -2732,6 +2761,7 @@ dashEscaped = function(party)
 	end
 	shift.DashesEscaped = (shift.DashesEscaped or 0) + 1
 	ShiftState:SetAttribute("DashesEscaped", shift.DashesEscaped)
+	Sfx.Play("DashEscape") --// global: out of the door, bill gone
 	print(("[Service] Party %d ESCAPED without paying - $%d lost"):format(
 		party.Id, party.DashBill or 0))
 end
@@ -2747,6 +2777,9 @@ local function dashCaught(party, puncher)
 		refreshTablePrompt(party.TableId)
 	end
 	removeBar(party)
+
+	--// THE HIT, at the dashers (before they go flying)
+	Sfx.Play("DashPunch", party.Root or puncher.Character)
 
 	local value = math.floor((party.DashBill or 0) * DASH.CatchBonusMult)
 	addToTill(value, "dine-and-dash caught")
@@ -2845,6 +2878,7 @@ local function beginDashWarning(party, tableId)
 	for _, member in ipairs(party.Members or {}) do
 		attachDashMark(member)
 	end
+	Sfx.Play("DashWarning", party.Root) --// the ❗ goes up
 
 	shift.DashesStarted = (shift.DashesStarted or 0) + 1
 	ShiftState:SetAttribute("DashAlert", shift.DashesStarted) --// Bruno's cue

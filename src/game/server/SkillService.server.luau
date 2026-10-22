@@ -940,6 +940,7 @@ local function runSkill(player, skillDef, aim)
 		--// arm the next cook to plate two; clear it if unused in time
 		player:SetAttribute("ChefDoubleBatch", true)
 		showDoubleBatchTag(player) --// "2x" over the head until it fires/expires
+		Sfx.Play("ChefDoubleBatch", player.Character)
 		local armFor = skillDef.ArmSeconds or 20
 		task.delay(armFor, function()
 			if player and player.Parent then

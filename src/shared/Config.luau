@@ -3918,8 +3918,11 @@ Config.Sfx = {
 		--// THE SHIFT REPORT. LOCAL - every player has their own report on
 		--// screen. A thud as each stat slaps onto the board, and a heavier
 		--// one for the verdict stamp dropping onto it last.
-		ReportSlap = { Id = "", Volume = 0.9 },
-		ReportStamp = { Id = "", Volume = 1.0 },
+		ReportSlap = { Id = "72904268324523", Volume = 0.9 },
+		--// the LAST stat row's slap - the heavy one (owner, Oct 2026). The
+		--// rows before it repeat ReportSlap. Empty = ReportSlap here too.
+		ReportSlapFinal = { Id = "72126978093668", Volume = 1.0 },
+		ReportStamp = { Id = "72126978093668", Volume = 1.0 },
 
 		--// ULTIMATES --------------------------------------------------------
 		--// The bar hitting 100%. LOCAL, for that player only - it is a
@@ -3978,6 +3981,31 @@ Config.Sfx = {
 			MinStuds = 12, MaxStuds = 50,
 		},
 
+		--// THE CHOMP (owner, Oct 2026): a party EATING - from the food
+		--// arriving to the bill - chomps at its table every EverySeconds
+		--// (a random gap between the two numbers), quietly, near the table
+		CustomerEating = {
+			Id = "88879505068339", Volume = 0.7,
+			MinStuds = 6, MaxStuds = 30,
+			EverySeconds = { 5, 10 },
+		},
+
+		--// DINE AND DASH (owner, Oct 2026)
+		--// The ❗ goes up over a shifty party: wide radius, so the room
+		--// hears trouble brewing and roughly where
+		DashWarning = {
+			Id = "100229490449035", Volume = 0.9,
+			MinStuds = 15, MaxStuds = 100,
+		},
+		--// A player PUNCHES the dashers (the DBZ hit) - at the dashers
+		DashPunch = {
+			Id = "92171597145781", Volume = 1.0,
+			MinStuds = 12, MaxStuds = 70,
+		},
+		--// They got away out of the door. Global: the whole team just lost
+		--// that bill, wherever they were
+		DashEscape = { Id = "111607899485457", Volume = 0.9, Global = true },
+
 		--// At the customer, so you can tell WHICH table just gave up.
 		CustomerAngry = {
 			Id = "119046821634222", Volume = 0.9,
@@ -3988,7 +4016,7 @@ Config.Sfx = {
 		--// The order confirmation plays at the board you just used; the
 		--// arrival plays at the truck so it pulls your attention outside.
 		SupplyOrdered = {
-			Id = "", Volume = 0.9,
+			Id = "99170211111896", Volume = 0.9,
 			MinStuds = 8, MaxStuds = 35,
 		},
 		TruckArrived = {
@@ -4010,12 +4038,15 @@ Config.Sfx = {
 		--// the table is picked
 		BlowKiss = { Id = "", Volume = 0.9, MinStuds = 10, MaxStuds = 45 },
 
+		--// Chef Q (DOUBLE BATCH): the 2x buff arming, at the Chef
+		ChefDoubleBatch = { Id = "", Volume = 0.9, MinStuds = 10, MaxStuds = 45 },
+
 		--// Waiter Q (DASH): the burst forward
-		Dash = { Id = "", Volume = 0.9, MinStuds = 10, MaxStuds = 45 },
+		Dash = { Id = "102714580171763", Volume = 0.9, MinStuds = 10, MaxStuds = 45 },
 
 		--// Waiter R (PLATE JUGGLER): the plate leaving the hand, on the throw
 		--// beat (Classes.Waiter.SkillR.ThrowReleaseDelay), not the key press
-		PlateThrow = { Id = "", Volume = 0.9, MinStuds = 10, MaxStuds = 45 },
+		PlateThrow = { Id = "99170211111896", Volume = 0.9, MinStuds = 10, MaxStuds = 45 },
 
 		--// Fixer R (RUSH IN): the instant-transmission blink. Rides on the
 		--// Fixer, so it travels with them to the emergency.
