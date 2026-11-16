@@ -14,6 +14,7 @@
 local ServerStorage = game:GetService("ServerStorage")
 
 local ProfileAPI = require(ServerStorage:WaitForChild("Shared"):WaitForChild("ProfileAPI"))
+local Sfx = require(ServerStorage:WaitForChild("Shared"):WaitForChild("Sfx"))
 
 local bus = ServerStorage:WaitForChild("AddScore", 60)
 if not bus then
@@ -23,7 +24,12 @@ end
 
 bus.Event:Connect(function(player, key, amount)
 	if typeof(player) ~= "Instance" or not player:IsA("Player") or not player.Parent then return end
-	pcall(ProfileAPI.DailyProgress, player, key, amount or 1)
+	local ok, _, finished = pcall(ProfileAPI.DailyProgress, player, key, amount or 1)
+	if ok and (finished or 0) > 0 then
+		--// a mission just hit its goal mid-shift: a private "done!" for
+		--// that player only (Config.Sfx.Sounds.DailyMissionDone)
+		Sfx.PlayFor(player, "DailyMissionDone")
+	end
 end)
 
 print("[Daily] counting mission progress")

@@ -37,8 +37,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
 
 local Config = require(ReplicatedStorage.Shared.Config)
-local DishModels = require(ServerStorage:WaitForChild("Shared"):WaitForChild("DishModels"))
-local HoldTool = require(ServerStorage:WaitForChild("Shared"):WaitForChild("HoldTool")) --// one item in the hand at a time
+local DishModels = require(ServerStorage:WaitForChild("Shared"):WaitForChild("DishModels"))local HoldTool = require(ServerStorage:WaitForChild("Shared"):WaitForChild("HoldTool")) --// one item in the hand at a time
 
 local SLOT_TAG = "PassSlot"
 

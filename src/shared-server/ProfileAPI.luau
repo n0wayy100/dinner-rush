@@ -903,14 +903,18 @@ function ProfileAPI.DailyProgress(player, stat, amount)
 	if amount <= 0 or type(stat) ~= "string" then return false end
 	local d = ensureDaily(player, data)
 	local moved = false
+	local finished = 0 --// missions that hit their goal on THIS call
 	for _, mission in ipairs(d.Missions) do
 		local def = missionDef(mission.Key)
 		if def and def.Stat == stat and not mission.Claimed and mission.Progress < def.Goal then
 			mission.Progress = math.min(def.Goal, mission.Progress + amount)
 			moved = true
+			if mission.Progress >= def.Goal then
+				finished += 1
+			end
 		end
 	end
-	return moved
+	return moved, finished
 end
 
 --// The lobby screen's view of today (plain values only)

@@ -799,6 +799,12 @@ Config.Kitchen = {
 		Fry = "CookFry", Grill = "CookGrill", Ramen = "CookRamen",
 		Rice = "CookRice", Pot = "CookPot", Oven = "CookOven",
 	},
+	--// A method listed here STOPS its loop the moment the dish is ready and
+	--// plays this one-shot instead (the oven: ticking, then a ting). Methods
+	--// not listed keep their loop going until the dish is picked up.
+	CookDoneSfxByMethod = {
+		Oven = "CookOvenDone",
+	},
 	PickupHoldSeconds = 0,        -- fridge / dry shelf prompt
 	StationLoadHoldSeconds = 0,   -- starting a cook
 	CollectHoldSeconds = 0,       -- taking the result off the station
@@ -3852,17 +3858,23 @@ Config.Sfx = {
 		--// person - "" is silent, same as every unset sound here.
 		--// Manila: the rice cooker's hiss and the adobo pot's simmer
 		CookRice = {
-			Id = "", Volume = 0.45, Loop = true,
+			Id = "79978957985941", Volume = 0.45, Loop = true,
 			MinStuds = 8, MaxStuds = 25,
 		},
 		CookPot = {
-			Id = "", Volume = 0.5, Loop = true,
+			Id = "104633152213472", Volume = 0.5, Loop = true, --// "cook pot"
 			MinStuds = 8, MaxStuds = 28,
 		},
 		--// The Paris ovens: a low hum/crackle while something bakes
 		CookOven = {
-			Id = "", Volume = 0.5, Loop = true,
+			Id = "96597496671029", Volume = 0.5, Loop = true,
 			MinStuds = 8, MaxStuds = 28,
+		},
+		--// The oven's TING when the dish is ready. The ticking above stops at
+		--// that moment (Config.Kitchen.CookDoneSfxByMethod).
+		CookOvenDone = {
+			Id = "117956610926053", Volume = 0.9,
+			MinStuds = 10, MaxStuds = 40,
 		},
 
 		CookRamen = {
@@ -3877,10 +3889,10 @@ Config.Sfx = {
 		--// EMERGENCIES ---------------------------------------------------
 		--// Alerts carry across the whole restaurant - the point is that
 		--// nobody can miss them - so they are global.
-		ToiletAlert = { Id = "", Volume = 0.9, Global = true },
+		ToiletAlert = { Id = "125849011834476", Volume = 0.9, Global = true },
 		FireAlert   = { Id = "133849873643710", Volume = 0.7, Global = true },
-		PowerAlert  = { Id = "", Volume = 0.7, Global = true }, -- owner: louder.
-		SpillAlert  = { Id = "", Volume = 0.9, Global = true }, -- the splat (owner: id pending)
+		PowerAlert  = { Id = "95928889551213", Volume = 0.7, Global = true }, -- owner: louder.
+		SpillAlert  = { Id = "111818434661245", Volume = 0.9, Global = true }, -- the splat (owner: id pending)
 
 		--// Mopping it up. Positional and looping, like the other fixes, so
 		--// the room can hear someone dealing with it.
@@ -3960,7 +3972,7 @@ Config.Sfx = {
 
 		--// Relief beat when the lights come back. Global - everyone was in
 		--// the dark together.
-		PowerRestored = { Id = "", Volume = 0.9, Global = true },
+		PowerRestored = { Id = "87055568032543", Volume = 0.9, Global = true },
 
 		--// CUSTOMERS -----------------------------------------------------
 		--// The greeting when a party gives you their order - the "hi!" beat
@@ -3994,7 +4006,7 @@ Config.Sfx = {
 		--// The ❗ goes up over a shifty party: wide radius, so the room
 		--// hears trouble brewing and roughly where
 		DashWarning = {
-			Id = "100229490449035", Volume = 0.9,
+			Id = "111607899485457", Volume = 0.9, --// alert_dnd
 			MinStuds = 15, MaxStuds = 100,
 		},
 		--// A player PUNCHES the dashers (the DBZ hit) - at the dashers
@@ -4004,12 +4016,27 @@ Config.Sfx = {
 		},
 		--// They got away out of the door. Global: the whole team just lost
 		--// that bill, wherever they were
-		DashEscape = { Id = "111607899485457", Volume = 0.9, Global = true },
+		DashEscape = { Id = "100229490449035", Volume = 0.9, Global = true },
 
 		--// At the customer, so you can tell WHICH table just gave up.
 		CustomerAngry = {
 			Id = "119046821634222", Volume = 0.9,
 			MinStuds = 10, MaxStuds = 55,
+		},
+
+		--// SPECIAL GUESTS (owner, Nov 2026). Global, like the emergency
+		--// alerts: a VIP or the critic walking in is something the whole
+		--// team should notice, wherever they are.
+		VipArrives    = { Id = "84630774828186", Volume = 0.9, Global = true }, --// "vip enters"
+		CriticArrives = { Id = "72374214685460", Volume = 0.9, Global = true }, --// "food critic arrives"
+
+		--// The indecisive party's "hmm..." when they ask for a recommendation.
+		--// At the table. Delay = seconds after the OrderTaken greeting, so
+		--// the two don't land on top of each other.
+		CustomerHmm = {
+			Id = "109552488924969", Volume = 0.9, --// "Hmm sound"
+			MinStuds = 10, MaxStuds = 40,
+			Delay = 0.6,
 		},
 
 		--// SUPPLIER ------------------------------------------------------
@@ -4032,25 +4059,25 @@ Config.Sfx = {
 		--// Cash in hand: any player collecting a table's payment, and the
 		--// Charmer's Q (WORK THE ROOM) - which plays it ONCE for the whole
 		--// sweep, not once per table.
-		ChaChing = { Id = "", Volume = 0.9, MinStuds = 10, MaxStuds = 45 },
+		ChaChing = { Id = "90261691833708", Volume = 0.9, MinStuds = 10, MaxStuds = 45 },
 
 		--// Charmer R (SUPERFAN): the blown kiss, on the charm animation as
 		--// the table is picked
-		BlowKiss = { Id = "", Volume = 0.9, MinStuds = 10, MaxStuds = 45 },
+		BlowKiss = { Id = "107717595781438", Volume = 0.9, MinStuds = 10, MaxStuds = 45 },
 
 		--// Chef Q (DOUBLE BATCH): the 2x buff arming, at the Chef
-		ChefDoubleBatch = { Id = "", Volume = 0.9, MinStuds = 10, MaxStuds = 45 },
+		ChefDoubleBatch = { Id = "127517634697904", Volume = 0.9, MinStuds = 10, MaxStuds = 45 },
 
 		--// Waiter Q (DASH): the burst forward
 		Dash = { Id = "102714580171763", Volume = 0.9, MinStuds = 10, MaxStuds = 45 },
 
 		--// Waiter R (PLATE JUGGLER): the plate leaving the hand, on the throw
 		--// beat (Classes.Waiter.SkillR.ThrowReleaseDelay), not the key press
-		PlateThrow = { Id = "99170211111896", Volume = 0.9, MinStuds = 10, MaxStuds = 45 },
+		PlateThrow = { Id = "121710187096221", Volume = 0.9, MinStuds = 10, MaxStuds = 45 },
 
 		--// Fixer R (RUSH IN): the instant-transmission blink. Rides on the
 		--// Fixer, so it travels with them to the emergency.
-		RushInTeleport = { Id = "", Volume = 0.9, MinStuds = 12, MaxStuds = 60 },
+		RushInTeleport = { Id = "120209948583396", Volume = 0.9, MinStuds = 12, MaxStuds = 60 },
 
 		--// Chef R (SOUS CHEF): the summon, from the moment the Chef starts the
 		--// gesture - covers the wind-up and the smoke burst she appears from
@@ -4060,6 +4087,49 @@ Config.Sfx = {
 		--// Timed by Config.Ultimates.RemoteClickDelay to land on the press in
 		--// the animation. Plays ON TOP of UltimateUsed, which fires at the cast.
 		SpeedDialButton = { Id = "105863227705200", Volume = 0.9, MinStuds = 12, MaxStuds = 60 },
+
+		--// Janitor Q (QUICK SWEEP): the instant broom swipe, only when a mess
+		--// was actually cleaned (a denied press stays quiet)
+		JanitorSweep = { Id = "125338730585203", Volume = 0.9, MinStuds = 10, MaxStuds = 45 },
+
+		--// Janitor R (GUARDED ZONE): the cone thunking onto the floor
+		JanitorCone = { Id = "120785808530509", Volume = 0.9, MinStuds = 10, MaxStuds = 45 },
+
+		--// LOBBY: a passive equipped from the crate screen. LOCAL, for the
+		--// player who equipped it. Unequipping plays ShopClick instead.
+		PassiveEquip = { Id = "137730637237664", Volume = 0.8 },
+
+		--// Fixer Q (TOOLBELT): the right tool for the emergency landing in
+		--// hand. Only when a tool was actually given.
+		FixerToolbelt = { Id = "105863227705200", Volume = 0.9, MinStuds = 10, MaxStuds = 45 },
+
+		--// Janitor ULTIMATE (FLOOR BUFFER): the buffer's motor, looping on the
+		--// Janitor for the whole ride. Plays on top of UltimateUsed.
+		JanitorBuffer = {
+			Id = "75303760687435", Volume = 0.8, Loop = true,
+			MinStuds = 10, MaxStuds = 45,
+		},
+		--// ...and the one-shot when the ride ends (the loop above stops first)
+		JanitorBufferEnd = { Id = "104050790144912", Volume = 0.9, MinStuds = 10, MaxStuds = 45 },
+
+		--// TIDINESS ------------------------------------------------------
+		--// The vacuum running while someone cleans grime (the dust panel is
+		--// open). Loops at the grime spot; stops when they finish or leave.
+		Vacuum = {
+			Id = "75303760687435", Volume = 0.8, Loop = true,
+			MinStuds = 6, MaxStuds = 30,
+		},
+		--// ...and the one-shot when the grime is fully cleaned. Walking away
+		--// or timing out just stops the loop, with no finish sound.
+		VacuumDone = { Id = "104050790144912", Volume = 0.9, MinStuds = 8, MaxStuds = 35 },
+		--// A grime spot appearing on the floor, at the spot. The inspector's
+		--// batch plays it once, not once per spot.
+		GrimeAppear = { Id = "139239420103276", Volume = 0.8, MinStuds = 10, MaxStuds = 50 },
+
+		--// DAILY MISSIONS: a mission hitting its goal mid-shift. Only that
+		--// player hears it (Sfx.PlayFor). Shift-end missions finish under
+		--// the report and stay quiet.
+		DailyMissionDone = { Id = "74571856132002", Volume = 0.9 },
 
 		--// RHYTHM TAP (the cooking minigame). LOCAL, for the player playing it
 		--// only - same reasoning as AnswerRight/Wrong. Played on the press
@@ -4076,8 +4146,8 @@ Config.Sfx = {
 
 		--// SHIFT ---------------------------------------------------------
 		--// Everyone hears these together, wherever they happen to be.
-		ShiftStart = { Id = "", Volume = 0.9, Global = true },
-		ShiftEnd   = { Id = "", Volume = 0.9, Global = true },
+		ShiftStart = { Id = "104863437830042", Volume = 0.9, Global = true },
+		ShiftEnd   = { Id = "125761900736210",  Volume = 0.9, Global = true },
 	},
 }
 

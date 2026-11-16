@@ -3258,6 +3258,17 @@ local function resolveDialogue(dlg, pickedKey, notifyClient)
 		pickedKey and " (waiter's recommendation)" or ""))
 end
 
+--// The indecisive party's "hmm..." (Config.Sfx.Sounds.CustomerHmm), a beat
+--// after the OrderTaken greeting. Skipped if the party is gone by then.
+local function playCustomerHmm(party)
+	local entry = Config.Sfx.Sounds.CustomerHmm
+	task.delay(entry and entry.Delay or 0, function()
+		if party.Pawn and party.Pawn.Parent then
+			Sfx.Play("CustomerHmm", party.Pawn)
+		end
+	end)
+end
+
 --// THE HELPER'S order-taking: no dialogue, no recommend - the party
 --// orders exactly what they were always going to order. The same exit
 --// a timed-out dialogue takes, minus the panel. Never steals a table a
@@ -3319,6 +3330,9 @@ local function beginDialogue(player, party, tableId)
 	--// ask, Sep 19), not when the order finally resolves - the "hi!" is
 	--// the party turning to greet you as you walk up.
 	Sfx.Play("OrderTaken", party.Pawn)
+	if flow == "recommend" then
+		playCustomerHmm(party)
+	end
 
 	--// The server picks every phrase; the client only renders, substituting
 	--// {DISH} with DishText (direct) or the picked dish's display (recommend)
@@ -3416,6 +3430,9 @@ local function beginOrderTablet(player, party, tableId)
 	dlg.Anim = startOrderAnimation(player)
 
 	Sfx.Play("OrderTaken", party.Pawn)
+	if flow == "recommend" then
+		playCustomerHmm(party)
+	end
 	playGesture(party, "Point", true) --// the party points their order out
 
 	--// the ACTIVE map's menu as icon buttons
@@ -4367,6 +4384,11 @@ local function spawnParty(options)
 	attachQueuePrompts(party)
 	-- DOOR BAR STARTS HERE: the moment they exist
 	startDoorBar(party)
+	if party.IsCritic then
+		Sfx.Play("CriticArrives")
+	elseif party.IsVIP then
+		Sfx.Play("VipArrives")
+	end
 	if party.IsVIP then
 		print(("[Service] VIP party %d arrived - impatient, pays double"):format(party.Id))
 	end

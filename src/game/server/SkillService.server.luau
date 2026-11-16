@@ -956,6 +956,9 @@ local function runSkill(player, skillDef, aim)
 		local give = ServerStorage:FindFirstChild("GiveEventTool")
 		if not give then return false, "No emergency right now!" end
 		local ok, msg = give:Invoke(player)
+		if ok then
+			Sfx.Play("FixerToolbelt", player.Character) --// the tool landing in hand
+		end
 		return ok, msg
 
 	elseif id == "RushIn" then
@@ -1009,6 +1012,7 @@ local function runSkill(player, skillDef, aim)
 		--// Nothing close = denied, and the cooldown is not spent.
 		local ok, reason = bridgeInvoke("JanitorQuickSweep", player, skillDef.RangeStuds)
 		if not ok then return false, reason or "No mess nearby!" end
+		Sfx.Play("JanitorSweep", player.Character)
 		return true
 
 	elseif id == "GuardedZone" then
@@ -1016,6 +1020,7 @@ local function runSkill(player, skillDef, aim)
 		--// of its ring (CleanlinessService owns the spawn rule)
 		local ok, reason = bridgeInvoke("JanitorGuardZone", player, skillDef)
 		if not ok then return false, reason or "Can't place that here!" end
+		Sfx.Play("JanitorCone", player.Character)
 		return true
 	end
 

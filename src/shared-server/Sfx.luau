@@ -170,6 +170,41 @@ function Sfx.Play(name, target)
 	return sound
 end
 
+--// A one-shot only THIS player hears: flat, no position. A Sound inside a
+--// player's PlayerGui plays on that client alone - for private moments
+--// like a daily mission ticking over, with no remote or client script.
+function Sfx.PlayFor(player, name)
+	if not SETTINGS.Enabled then return nil end
+	if typeof(player) ~= "Instance" or not player:IsA("Player") then return nil end
+	local gui = player:FindFirstChildOfClass("PlayerGui")
+	if not gui then return nil end
+
+	local entry = SETTINGS.Sounds[name]
+	if not entry then
+		warnOnce("unknown:" .. tostring(name),
+			("[Sfx] no sound called '%s' in Config.Sfx.Sounds"):format(tostring(name)))
+		return nil
+	end
+	local id = normaliseId(entry.Id)
+	if not id then
+		warnOnce("empty:" .. name,
+			("[Sfx] '%s' has no asset id yet - staying silent"):format(name))
+		return nil
+	end
+
+	local sound = Instance.new("Sound")
+	sound.Name = "Sfx_" .. name
+	sound.SoundId = id
+	sound.Volume = (entry.Volume or 1) * (SETTINGS.MasterVolume or 1)
+	sound.Parent = gui
+	sound:Play()
+	sound.Ended:Once(function()
+		sound:Destroy()
+	end)
+	Debris:AddItem(sound, 30)
+	return sound
+end
+
 --// Returns a handle with :Stop(). Safe to call Stop more than once, and safe
 --// to hold across a target being destroyed.
 local Handle = {}

@@ -1104,7 +1104,8 @@ equip = function(key)
 		return crateRemote:InvokeServer("Equip", target)
 	end)
 	if ok and success then
-		sfx("ShopClick")
+		--// equipping gets its own "locked in" sound; unequipping stays a click
+		sfx(target ~= "" and "PassiveEquip" or "ShopClick")
 		flashNotice(target == "" and "Unequipped" or (P.List[target].Display .. " equipped!"), C.Basil)
 		selectedKey = key
 		refresh()

@@ -38,6 +38,7 @@ local Config = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Co
 local MinigameIntro = require(ServerStorage:WaitForChild("Shared"):WaitForChild("MinigameIntro"))
 local ToolModels = require(ServerStorage:WaitForChild("Shared"):WaitForChild("ToolModels"))
 local HoldTool = require(ServerStorage:WaitForChild("Shared"):WaitForChild("HoldTool")) --// one item in the hand at a time
+local Sfx = require(ServerStorage:WaitForChild("Shared"):WaitForChild("Sfx"))
 --// the prop placed at the vacuum mount hides while a vacuum is out
 local vacuumShelf = ToolModels.MountTracker("VacuumMount", true) --// returnable: "Put back"
 local TID = Config.Tidiness
@@ -68,6 +69,7 @@ end
 local tidiness = TID.Start
 local grimeSpots = {}   --// list of the grime Parts currently on the floor
 local poopMess = nil    --// the single poop-in-the-toilet mess, or nil
+local lastGrimeSoundAt = 0 --// throttles GrimeAppear when a batch spawns at once
 local generation = 0    --// bumped each RUNNING so old loops die
 local tidinessEnded = false --// once the inspector has judged, the BAR is over
                             --// for the shift: it hides and poop stops - but
@@ -385,6 +387,7 @@ local function cancelDust()
 	if not dustSession then return end
 	local s = dustSession
 	dustSession = nil
+	if s.Loop then s.Loop:Stop() end --// the vacuum hum
 	if s.Player and s.Player.Parent then
 		vacuumRemote:FireClient(s.Player, "Close", s.Token, false)
 	end
@@ -401,6 +404,9 @@ local function beginDustVacuum(player, grime)
 	dustSession = {
 		Player = player, Grime = grime, Sucked = 0,
 		Needed = needed, LastAt = 0, Token = token,
+		--// the vacuum running, at the grime, for as long as the panel is
+		--// open - every exit (done / cancel / timeout) stops it
+		Loop = Sfx.Loop("Vacuum", grime),
 	}
 	vacuumRemote:FireClient(player, "Open", { Token = token, DustCount = needed })
 	local myToken = token
@@ -433,6 +439,9 @@ vacuumRemote.OnServerEvent:Connect(function(player, action, token)
 
 	if s.Sucked >= s.Needed then
 		dustSession = nil
+		if s.Loop then s.Loop:Stop() end
+		--// the finish beat - at the player, since the grime is about to go
+		Sfx.Play("VacuumDone", player.Character)
 		vacuumRemote:FireClient(player, "Close", token, true)
 		cleanGrime(grime, player)
 		return
@@ -537,6 +546,12 @@ local function spawnGrime()
 	end)
 
 	table.insert(grimeSpots, grime)
+	--// The inspector dumps a whole batch at once - one splat for the
+	--// batch, not one per spot stacked on top of each other
+	if os.clock() - lastGrimeSoundAt > 0.5 then
+		lastGrimeSoundAt = os.clock()
+		Sfx.Play("GrimeAppear", grime)
+	end
 	if not tidinessEnded then --// after the inspection the bar is hidden
 		adjust(-TID.GrimeDropOnSpawn, "grime appeared")
 	end
@@ -1025,6 +1040,9 @@ local function startBuffer(player, seconds, radius)
 	if alreadyRunning then return true end --// a re-cast just extends the loop
 
 	task.spawn(function()
+		--// the floor buffer's motor, riding on the Janitor for the whole
+		--// ride (a re-cast extends the loop below, so this keeps going)
+		local hum = Sfx.Loop("JanitorBuffer", player.Character)
 		while player.Parent and bufferUntil[player] and os.clock() < bufferUntil[player] do
 			local character = player.Character
 			local root = character and character:FindFirstChild("HumanoidRootPart")
@@ -1043,6 +1061,10 @@ local function startBuffer(player, seconds, radius)
 				end
 			end
 			task.wait(0.1)
+		end
+		hum:Stop()
+		if player.Parent then
+			Sfx.Play("JanitorBufferEnd", player.Character) --// the motor winding down
 		end
 		bufferUntil[player] = nil
 	end)

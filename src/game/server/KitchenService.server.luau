@@ -822,6 +822,18 @@ local function cookSoundStop(station)
 	end
 end
 
+--// THE "DONE" BEAT (owner, Nov 2026): a method listed in
+--// Config.Kitchen.CookDoneSfxByMethod (the oven's ting) stops its loop the
+--// moment the dish is ready and plays its finish sound instead. Methods
+--// not listed keep sizzling until the dish is picked up, as before.
+--// Safe to call more than once: cookSoundStop is a no-op the second time.
+local function cookFinished(station)
+	local doneName = (Config.Kitchen.CookDoneSfxByMethod or {})[station.Method]
+	if not doneName or not station.SfxOn then return end
+	cookSoundStop(station)
+	Sfx.Play(doneName, station.Part)
+end
+
 --// THE FOOD ON THE PAN (owner request, Sep 2026): the raw model sits
 --// on the station while it cooks, swaps to the finished dish at the
 --// PERFECT turn, and chars black if it burns. Same DishModels builders
@@ -2458,6 +2470,9 @@ RunService.Heartbeat:Connect(function(dt)
 
 			refreshStationUi(station)
 			if station.State ~= previous then
+				if previous == "COOKING" then
+					cookFinished(station) --// the oven's ting
+				end
 				refreshStationPrompt(station)
 				refreshStationFood(station) --// raw -> cooked -> charcoal
 			end
@@ -2521,6 +2536,7 @@ local function flashFinishStation(station)
 	station.State = "PERFECT"
 	station.ForcedQuality = "Perfect"
 	station.FlashReady = true
+	cookFinished(station)         --// FLASH FRY rings the oven too
 	refreshStationFood(station)   --// raw -> cooked, visibly ready
 	refreshStationUi(station)
 	refreshStationPrompt(station)
